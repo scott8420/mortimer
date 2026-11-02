@@ -16,6 +16,9 @@
 #include <gtkmm/stringlist.h>
 #include <gtkmm/adjustment.h>
 #include <gtkmm/flowbox.h>
+#include <gtkmm/searchentry.h>
+#include <gtkmm/icontheme.h>
+#include <gdkmm/display.h>
 #include <gtkmm/menubutton.h>
 #include <gtkmm/popover.h>
 #include <gtkmm/separator.h>
@@ -421,6 +424,18 @@ void Inspector::prop_row(const std::string& type, const std::string& prop, bool 
                 if (e->get_text().raw() != want) e->set_text(want);
             };
             editor = e;
+            if (prop == "icon_name") {   // s015: typed, or picked
+                auto* box = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 2);
+                box->set_hexpand(true);
+                box->append(*e);
+                box->append(*icon_picker(*e, [this, prop, pack](const std::string& name) {
+                    if (m_painting || m_rebuilding) return;
+                    // A pick is a choice, not typing: its own undo step.
+                    if (pack) core::design::set_pack(m_j, m_d, m_key, prop, Value(name));
+                    else core::design::set_prop(m_j, m_d, m_key, prop, Value(name), false);
+                }));
+                editor = box;
+            }
             break;
         }
         case PropKind::Enum:
@@ -1025,6 +1040,106 @@ void Inspector::models_rows() {
 // nothing); a separator starts a new section. Up / down / delete per row.
 // The whole list is the property's value: each edit writes it back through
 // set_prop (typing in a label merges into one step).
+// ── s015: the icon picker ──────────────────────────────────────────────────
+// A button wearing the icon the entry names; it opens the project's own icons
+// (resources/icons/scalable/apps -- the canvas and the app both find them) and
+// the theme's symbolic ones, with a search. The list scrolls, capped (s012's
+// lesson: a popover taller than its room closes as it opens).
+Gtk::Widget* Inspector::icon_picker(Gtk::Entry& e, const std::function<void(const std::string&)>& pick) {
+    auto* b = Gtk::make_managed<Gtk::MenuButton>();
+    b->set_tooltip_text("Pick an icon: the project's own, or the theme's");
+    auto show_icon = [b, &e] {
+        const std::string n = e.get_text();
+        b->set_icon_name(n.empty() ? "image-x-generic-symbolic" : n);
+    };
+    show_icon();
+    e.signal_changed().connect(show_icon);
+
+    auto* pop = Gtk::make_managed<Gtk::Popover>();
+    auto* outer = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 4);
+    outer->set_margin(6);
+    auto* search = Gtk::make_managed<Gtk::SearchEntry>();
+    search->set_placeholder_text("Search icons");
+    outer->append(*search);
+    auto* scroll = Gtk::make_managed<Gtk::ScrolledWindow>();
+    scroll->set_policy(Gtk::PolicyType::NEVER, Gtk::PolicyType::AUTOMATIC);
+    scroll->set_propagate_natural_height(true);
+    scroll->set_max_content_height(300);
+    scroll->set_min_content_width(300);
+    auto* body = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 4);
+    scroll->set_child(*body);
+    outer->append(*scroll);
+    pop->set_child(*outer);
+    b->set_popover(*pop);
+
+    // The theme's symbolic names, read once.
+    static std::vector<std::string> theme;
+    if (theme.empty())
+        if (auto display = Gdk::Display::get_default()) {
+            for (const auto& n : Gtk::IconTheme::get_for_display(display)->get_icon_names())
+                if (n.raw().size() > 9 && n.raw().compare(n.raw().size() - 9, 9, "-symbolic") == 0) theme.push_back(n);
+            std::sort(theme.begin(), theme.end());
+            theme.erase(std::unique(theme.begin(), theme.end()), theme.end());
+        }
+
+    auto fill = [this, body, search, pop, pick] {
+        while (auto* c = body->get_first_child()) body->remove(*c);
+        const std::string q = search->get_text();
+        auto match = [&](const std::string& n) { return q.empty() || n.find(q) != std::string::npos; };
+        auto section = [&](const std::string& title, const std::vector<std::string>& names, std::size_t cap) {
+            std::vector<std::string> hit;
+            for (const auto& n : names) if (match(n)) hit.push_back(n);
+            if (hit.empty()) return;
+            auto* h = Gtk::make_managed<Gtk::Label>(title + (hit.size() > cap ? " (first " + std::to_string(cap) + " -- search to narrow)" : ""));
+            h->set_xalign(0);
+            h->add_css_class("dim-label");
+            h->add_css_class("caption");
+            body->append(*h);
+            auto* fb = Gtk::make_managed<Gtk::FlowBox>();
+            fb->set_selection_mode(Gtk::SelectionMode::NONE);
+            fb->set_max_children_per_line(8);
+            fb->set_min_children_per_line(6);
+            for (std::size_t i = 0; i < hit.size() && i < cap; ++i) {
+                const std::string n = hit[i];
+                auto* ib = Gtk::make_managed<Gtk::Button>();
+                ib->set_icon_name(n);
+                ib->set_has_frame(false);
+                ib->set_tooltip_text(n);
+                ib->signal_clicked().connect([pop, pick, n] { pop->popdown(); pick(n); });
+                fb->append(*ib);
+            }
+            body->append(*fb);
+        };
+        section("This project", m_project_icons, 200);
+        section("Theme", theme, 240);
+        if (!body->get_first_child()) {
+            auto* none = Gtk::make_managed<Gtk::Label>("No icon matches \u201C" + q + "\u201D");
+            none->add_css_class("dim-label");
+            body->append(*none);
+        }
+    };
+    if (!m_css_path.empty()) {   // in a project (s015 m2): bring one in, and pick it
+        auto* add = Gtk::make_managed<Gtk::Button>("Add an icon to the project\u2026");
+        add->set_has_frame(false);
+        add->set_tooltip_text("An .svg into resources/icons (bundled into the app), then picked here");
+        add->signal_clicked().connect([this, pop, pick] {
+            pop->popdown();
+            m_add_icon.emit(pick);
+        });
+        outer->append(*add);
+    }
+    search->signal_search_changed().connect(fill);
+    // Filled the first time it opens (hundreds of icons: not on every inspector
+    // rebuild), then on each search. (s012 found a popover's height, not filling it
+    // as it opens, was what closed one -- the list here is capped for that.)
+    auto filled = std::make_shared<bool>(false);
+    pop->signal_show().connect([search, fill, filled] {
+        if (!*filled) { *filled = true; fill(); }
+        search->grab_focus();
+    });
+    return b;
+}
+
 // ── s012: css_classes as chips ─────────────────────────────────────────────
 // A chip per class (✕ takes it off), then + : the classes the project's
 // stylesheet defines, GTK's own, or any name typed. Each add / remove is its

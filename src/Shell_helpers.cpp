@@ -2,6 +2,7 @@
 #include "Log.hpp"
 #include "core/Recents.hpp"
 #include "core/Project.hpp"
+#include "core/Resources.hpp"
 
 #include <gtkmm/alertdialog.h>
 #include <giomm/asyncresult.h>
@@ -139,6 +140,15 @@ void Shell::rebuild_forms_menu() {  // helper: the project's forms
         }
         m_canvas.set_stylesheet(css);
         m_inspector.set_stylesheet(css);
+        // s015: the project's own icons, for the icon picker.
+        std::vector<std::string> icons;
+        if (!m_app_dir.empty()) {
+            try {
+                for (const auto& r : core::list_resources(m_app_dir)) if (r.kind == "icon") icons.push_back(r.use);
+            } catch (const std::exception&) {}
+        }
+        m_icons = icons;
+        m_inspector.set_project_icons(std::move(icons));
         // ...and the canvas draws the project's own icons (resources/icons/scalable/apps/*.svg),
         // as the built app does from its bundle. Added once per project; GTK finds an
         // unthemed <name>.svg in a search-path folder.
@@ -271,7 +281,31 @@ void Shell::say_validation() {  // helper: the form's problems, or "ok"
         (i.error ? errors : warnings)++;
         if (!first || (i.error && !first->error)) first = &i;
     }
-    if (!first) { say(std::to_string(m_design.count()) + " widgets · the form is valid"); return; }
+    if (!first) {
+        // s015: an icon_name neither the project nor the theme has draws as "missing".
+        std::vector<std::string> missing;
+        auto theme = Gtk::IconTheme::get_for_display(get_display());
+        for (const auto& k : m_design.all()) {
+            const auto r = m_design.get(k);
+            for (const auto* m : {&r->props, &r->pack}) {
+                const auto it = m->find("icon_name");
+                if (it == m->end() || !std::holds_alternative<std::string>(it->second)) continue;
+                const auto& n = std::get<std::string>(it->second);
+                if (n.empty() || std::find(m_icons.begin(), m_icons.end(), n) != m_icons.end() || theme->has_icon(n))
+                    continue;
+                missing.push_back(r->name + ": \u201C" + n + "\u201D");
+            }
+        }
+        if (!missing.empty()) {
+            say((missing.size() > 1 ? std::to_string(missing.size()) + " icons missing -- " : std::string("icon missing -- ")) +
+                    missing.front() + " isn't in the project or this theme (it draws as missing; the picker adds one)",
+                1);
+            m_said_recently = false;
+            return;
+        }
+        say(std::to_string(m_design.count()) + " widgets · the form is valid");
+        return;
+    }
     std::string s = first->where + ": " + first->what;
     if (errors + warnings > 1) s = std::to_string(errors + warnings) + " problems -- " + s;
     say(s, errors ? 2 : 1);

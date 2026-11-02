@@ -253,11 +253,12 @@ void Shell::on_open_form(const std::string& stem) {  // handler: another form of
 
 // ── s009: the navigator's + and trash ─────────────────────────────────────
 
-void Shell::on_add_resource(const std::string& kind) {  // handler: + ▸ icon / image / data / stylesheet
+void Shell::on_add_resource(const std::string& kind, std::function<void(const std::string&)> then) {  // handler: + ▸ icon / image / data / stylesheet
     if (m_app_dir.empty()) { say("Resources belong to a project -- open one, or File ▸ New Project.", 1); return; }
     const std::string dir = m_app_dir;
-    auto done = [this](const core::Resource& r) {
+    auto done = [this, then](const core::Resource& r) {
         rebuild_forms_menu();
+        if (then && r.kind == "icon") then(r.use);   // s015: the picker's "Add an icon..." picks it too
         if (r.kind == "icon")
             say("Added icon " + r.use + " -- an Image's or Button's icon_name; rebuild the app to bundle it.");
         else if (r.kind == "css")

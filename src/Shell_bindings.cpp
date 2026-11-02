@@ -91,6 +91,12 @@ void Shell::bind_model() {  // bindings: design <-> journal <-> panes
     m_inspector.signal_share().connect(sigc::mem_fun(*this, &Shell::on_share_model));   // s013
     m_inspector.signal_edit_shared().connect(sigc::mem_fun(*this, &Shell::on_edit_shared));
     m_inspector.signal_unshare().connect(sigc::mem_fun(*this, &Shell::on_unshare));
+    m_inspector.signal_add_icon().connect([this](std::function<void(const std::string&)> pick) {   // s015 m2
+        on_add_resource("icon", [this, pick](const std::string& name) {
+            pick(name);
+            say("Added icon " + name + " to the project and picked it -- rebuild the app to bundle it.");
+        });
+    });
     m_canvas.signal_style_said().connect([this](const std::string& s, int level) { say(s, level); });   // s012
     m_hooks.signal_select().connect([this](const std::string& name) {
         if (const auto k = m_design.find(name); !k.empty()) on_select(k);

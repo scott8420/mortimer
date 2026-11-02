@@ -78,7 +78,8 @@ private:
     void on_open_project();                      // category: handler: folder -> its main form
     void on_add_form(const std::string& root_type);   // category: handler: ask a name -> add_form (Window / Dialog) -> open it
     void on_open_form(const std::string& stem);  // category: handler: another form of this project
-    void on_add_resource(const std::string& kind);
+    void on_add_resource(const std::string& kind,
+                         std::function<void(const std::string&)> then = {});   // s015: then(icon name) after an icon
     void on_add_about();
     void on_edit_style();
     void on_share_model(const std::string& name);
@@ -167,6 +168,7 @@ private:
     Glib::RefPtr<Gio::Menu>         m_forms_menu;     // this project's forms, rebuilt on load
     Glib::RefPtr<Gio::SimpleAction> m_act_add_form, m_act_add_dialog;
     Glib::RefPtr<Gio::SimpleAction> m_act_add_about;
+    std::vector<std::string>        m_icons;   // s015: the project's icon names (the picker; the missing-icon check)
     Glib::RefPtr<Gio::SimpleAction> m_act_edit_style;   // s012: greyed outside a project   // s010: greyed when the project has an About
     std::vector<Glib::RefPtr<Gio::SimpleAction>> m_act_add_res;   // s009: icon, image, data, stylesheet
     Glib::RefPtr<Gio::SimpleAction> m_act_undo, m_act_redo, m_act_delete, m_act_up, m_act_down;
