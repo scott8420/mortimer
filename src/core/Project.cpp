@@ -133,6 +133,7 @@ GenerateResult generate_project(const std::string& app_dir) {
     const Project pr = load_project(app_dir);
     GenerateResult r;
     std::set<std::string> produced;
+    std::vector<Form> keyed;   // s010: the forms that generated, for the shortcuts window
 
     auto emit = [&](const OutFile& f) {
         produced.insert(f.path);
@@ -159,6 +160,16 @@ GenerateResult generate_project(const std::string& app_dir) {
             r.issues.push_back({stem, {true, "form", "the file is " + stem + ".mort but its name is \"" +
                                                          form.name + "\" -- they must match"}});
         for (const auto& i : validate(form)) r.issues.push_back({stem, i});
+        // s010: a window an action opens must be another form of this project.
+        for (const auto& a : form.actions) {
+            if (a.opens.empty() || a.opens == kShortcutsTarget) continue;
+            const std::string where = "action " + a.name;
+            if (std::find(pr.forms.begin(), pr.forms.end(), a.opens) == pr.forms.end())
+                r.issues.push_back({stem, {true, where, "opens " + a.opens + ", which isn't a form of this project"}});
+            else if (a.opens == pr.main_form)
+                r.issues.push_back({stem, {true, where, "opens " + a.opens +
+                                                            ", the main window -- the app opens that one itself"}});
+        }
         bool bad = false;
         for (const auto& [s, i] : r.issues) bad = bad || (s == stem && i.error);
         if (bad) {
@@ -169,6 +180,7 @@ GenerateResult generate_project(const std::string& app_dir) {
         }
 
         for (const auto& f : generate_form(form, pr.app)) emit(f);
+        (stem == pr.main_form ? keyed.insert(keyed.begin(), form) : keyed.insert(keyed.end(), form));
 
         // Your half: written ONCE, for a form that has neither file yet.
         const fs::path uh = root / "include" / (stem + ".hpp");
@@ -189,6 +201,8 @@ GenerateResult generate_project(const std::string& app_dir) {
         emit({"generated/" + stem + ".hooks.json", report_manifest(rep)});
         r.reports.push_back(std::move(rep));
     }
+    // s010: the keyboard-shortcuts window, from every form that generated.
+    for (const auto& f : generate_shortcuts(keyed, pr.app)) emit(f);
     if (!main_seen)
         r.issues.push_back({pr.main_form, {true, "project", "main_form \"" + pr.main_form +
                                                                 "\" isn't in the forms list"}});
@@ -293,7 +307,8 @@ Form starter_form(const AppInfo& app) {
     // the hook are one fact (Form::actions).
     Node menu{"MenuButton", "menu",
               {{"icon_name", S("open-menu-symbolic")},
-               {"menu", Value(StringList{"Say Hello=win.hello", "-", "Quit=win.quit"})}},
+               {"menu", Value(StringList{"Say Hello=win.hello", "-", "Keyboard Shortcuts=win.shortcuts",
+                                         "About " + app.name + "=win.about", "-", "Quit=win.quit"})}},
               {{"slot", S("end")}}, {}, {}};
     Node header{"HeaderBar", "header", {}, {{"slot", S("titlebar")}}, {}, {open, menu}};
 
@@ -318,12 +333,81 @@ Form starter_form(const AppInfo& app) {
 
     Form f;
     f.name = "MainWindow";
-    f.actions = {{"hello", "<Control>h", false}, {"quit", "<Control>q", false}};
+    // s010: two actions open windows -- no hooks, no code: the shortcuts window
+    // (written from every form's keys) and the About dialog (forms/About.mort).
+    f.actions = {{"hello", "<Control>h", false},
+                 {"shortcuts", "<Control>question", false, "", kShortcutsTarget},
+                 {"about", "", false, "", "About"},
+                 {"quit", "<Control>q", false}};
     f.root = {"ApplicationWindow", "main_window",
               {{"title", Value(app.name)}, {"default_width", I(800)}, {"default_height", I(560)},
                {"remember", Value(true)}},   // s008: a new app comes back as it was left
               {}, {}, {header, body}};
     return f;
+}
+
+Form about_form(const AppInfo& app) {
+    auto S = [](const std::string& s) { return Value(s); };
+    auto I = [](std::int64_t v) { return Value(v); };
+    auto B = [](bool v) { return Value(v); };
+    Node logo{"Image", "logo", {{"icon_name", S(app.bin + "-logo-symbolic")}, {"pixel_size", I(96)}}, {}, {}, {}};
+    Node name{"Label", "app_name",
+              {{"use_markup", B(true)}, {"label", S("<span size='xx-large' weight='bold'>" + app.name + "</span>")}},
+              {}, {}, {}};
+    // Filled in by your half (src/About.cpp) from core::version() -- CMake's
+    // project(VERSION) -- so there is one place to change it.
+    Node version{"Label", "version", {{"label", S("Version")}, {"css_classes", Value(StringList{"dim-label"})}},
+                 {}, {}, {}};
+    Node blurb{"Label", "blurb",
+               {{"label", S("Made with Mortimer.")}, {"wrap", B(true)}, {"margin_top", I(6)}},
+               {}, {}, {}};
+    // GTK's own window.close action: no hook needed. It hides the dialog (hide on close).
+    Node close{"Button", "close",
+               {{"label", S("Close")}, {"action_name", S("window.close")}, {"halign", S("center")},
+                {"margin_top", I(12)}, {"css_classes", Value(StringList{"suggested-action", "pill"})}},
+               {}, {}, {}};
+    Node page{"Box", "page",
+              {{"orientation", S("vertical")}, {"spacing", I(6)}, {"margin", I(24)}, {"valign", S("center")}},
+              {}, {}, {logo, name, version, blurb, close}};
+    Form f;
+    f.name = "About";
+    f.root = {"Dialog", "about",
+              {{"title", S("About " + app.name)}, {"default_width", I(360)}, {"resizable", B(false)}},
+              {}, {}, {page}};
+    return f;
+}
+
+std::string add_about(const std::string& app_dir) {
+    const fs::path root(app_dir);
+    Project pr = load_project(app_dir);
+    const fs::path form = root / "forms" / "About.mort";
+    if (fs::exists(form) || std::find(pr.forms.begin(), pr.forms.end(), "About") != pr.forms.end())
+        throw std::runtime_error("this project already has an About form");
+    fs::create_directories(root / "forms");
+    const Form f = about_form(pr.app);
+    save_form(f, form.string());
+    // Your half, written once -- with the line that shows the version, so the
+    // dialog never says a stale one. (generate writes nothing over it.)
+    const fs::path uh = root / "include" / "About.hpp", uc = root / "src" / "About.cpp";
+    if (!fs::exists(uh) && !fs::exists(uc)) {
+        for (auto out : user_stubs(f, pr.app)) {
+            if (out.path == "src/About.cpp") {
+                out.content = replace_all(out.content, "#include \"Log.hpp\"\n",
+                                          "#include \"Log.hpp\"\n#include \"core/Version.hpp\"\n");
+                out.content = replace_all(out.content,
+                    "    // wired. Fill in models, load state, set what the form can't express.\n",
+                    "    // wired. Fill in models, load state, set what the form can't express.\n"
+                    "    //\n"
+                    "    // The version comes from CMake's project(VERSION) through core/ -- one place\n"
+                    "    // to change it, and this line follows.\n"
+                    "    m_version.set_label(\"Version \" + core::version());\n");
+            }
+            write_if_changed(root / out.path, out.content);
+        }
+    }
+    pr.forms.push_back("About");
+    save_project(pr, app_dir);
+    return form.string();
 }
 
 std::string create_workspace(const AppInfo& app, const std::string& parent) {
@@ -332,6 +416,7 @@ std::string create_workspace(const AppInfo& app, const std::string& parent) {
         throw std::runtime_error(ws.string() + " already exists -- Mortimer won't write over it");
     fs::create_directories(ws / "backups" / "Old");
     fs::create_directories(ws / "fixes");
+    fs::create_directories(ws / "docs");   // s010: filled only when Mortimer was built with seed docs
 
     std::string rules;
     for (const auto& t : project_templates())
@@ -352,6 +437,7 @@ std::string create_workspace(const AppInfo& app, const std::string& parent) {
     save_project(pr, app_dir.string());
     fs::create_directories(app_dir / "forms");
     save_form(starter_form(app), (app_dir / "forms" / "MainWindow.mort").string());
+    add_about(app_dir.string());   // s010: the starter's menu opens it
     generate_project(app_dir.string());
     return app_dir.string();
 }

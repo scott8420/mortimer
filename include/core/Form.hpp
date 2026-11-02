@@ -50,12 +50,24 @@ struct Node {
 // it, and optionally a key. Menus name it ("Save=win.save"); a Button can name
 // it too (action_name). One fact, three uses -- the key and the menu row can't
 // drift from the action, because there is only the one entry.
+//
+// s010 -- an action can OPEN a window instead of running a hook: `opens` names
+// another form of the project (an About dialog, Preferences) or "@shortcuts"
+// (the keyboard-shortcuts window, generated from every form's keys). The
+// generated code builds that window the first time, keeps it (it hides on
+// close), and presents it over this one every time after -- no hook, no code.
+// `title` is the row the shortcuts window shows for the key; "" = the label of
+// the menu row that runs it, else made from the name ("save_as" -> "Save as").
 struct ActionDef {
     std::string name;            // C++ identifier: "save_as" -> win.save-as, on_action_save_as()
     std::string accel;           // "<Control>s" (GTK syntax); "" = no key
     bool        required = false;// the hook is pure virtual
+    std::string title;           // s010: the shortcuts window's row; "" = derived
+    std::string opens;           // s010: a form stem or "@shortcuts"; "" = a hook
     bool operator==(const ActionDef&) const = default;
 };
+// s010 -- the shortcuts window's name as an `opens` target.
+inline const char* const kShortcutsTarget = "@shortcuts";
 
 // s005 -- a FILE DIALOG the form can ask: Gtk::FileDialog, generated async and
 // hooked. choose_<name>(initial) opens it over the window; the answer arrives
@@ -134,8 +146,15 @@ FileFilterRow parse_file_filter(const std::string& s);
 
 // "save_as" -> "save-as" (GIO action names allow letters, digits, '-', '.').
 std::string gio_action_name(const std::string& name);
-// The hook an action becomes.
+// The hook an action becomes (an action that opens a window has none).
 std::string action_hook(const ActionDef& a);
+// s010 -- the text a key's row shows: the title, else the label of this form's
+// menu row that runs it, else the name made readable ("save_as" -> "Save as").
+std::string action_title(const Form& f, const ActionDef& a);
+// "save_as" -> "Save as"; "MainWindow" -> "Main window".
+std::string readable(const std::string& name);
+// s010 -- the member that keeps an opened window: m_opens_<action>.
+std::string opens_member(const ActionDef& a);
 // A menu entry (MenuButton "menu" items): "Label=win.action", "-" between sections.
 struct MenuEntry {
     bool        separator = false;

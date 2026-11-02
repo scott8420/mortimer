@@ -17,12 +17,25 @@ find_package(spdlog REQUIRED)
 # template with it. Re-embedded whenever a template file changes.
 file(GLOB_RECURSE MORTIMER_TEMPLATE_FILES CONFIGURE_DEPENDS
      "${CMAKE_CURRENT_SOURCE_DIR}/templates/project/*")
+# s010: the docs a new workspace gets live OUTSIDE this repo -- the workspace's
+# docs/seed/ (private; never pushed). Present -> embedded as docs/*; absent (a
+# public clone) -> new workspaces get an empty docs/.
+set(MORTIMER_SEED_DOCS "${CMAKE_CURRENT_SOURCE_DIR}/../docs/seed" CACHE PATH
+    "Docs a new workspace gets (outside the repo)")
+if(IS_DIRECTORY "${MORTIMER_SEED_DOCS}")
+    file(GLOB_RECURSE MORTIMER_SEED_FILES CONFIGURE_DEPENDS "${MORTIMER_SEED_DOCS}/*")
+    message(STATUS "Mortimer: seed docs from ${MORTIMER_SEED_DOCS}")
+else()
+    set(MORTIMER_SEED_FILES "")
+    message(STATUS "Mortimer: no seed docs (${MORTIMER_SEED_DOCS}) -- new workspaces get an empty docs/")
+endif()
 set(MORTIMER_TEMPLATES_CPP "${CMAKE_CURRENT_BINARY_DIR}/mortimer-templates.cpp")
 add_custom_command(
     OUTPUT  "${MORTIMER_TEMPLATES_CPP}"
     COMMAND "${CMAKE_COMMAND}" -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/templates/project
-            -DOUT=${MORTIMER_TEMPLATES_CPP} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed.cmake
-    DEPENDS ${MORTIMER_TEMPLATE_FILES} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed.cmake"
+            -DOUT=${MORTIMER_TEMPLATES_CPP} -DSEED=${MORTIMER_SEED_DOCS}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed.cmake
+    DEPENDS ${MORTIMER_TEMPLATE_FILES} ${MORTIMER_SEED_FILES} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed.cmake"
     COMMENT "Embedding the new-project template"
     VERBATIM)
 

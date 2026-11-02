@@ -45,8 +45,9 @@ mortimer-gen catalog [Type]           # what can be placed: properties, signals,
 
 `new` lays out the house workspace -- `backups/` `backups/Old/` `docs/`
 `fixes/` `scripts/<bin>_backup.sh` `<bin>/` -- with build / install /
-uninstall scripts, a `.desktop` file and icons, RULES / CANON / HANDOFF in
-`docs/`, and a starter window that builds and runs.
+uninstall scripts, a `.desktop` file and icons, and a starter window that
+builds and runs. `docs/` starts empty (it is outside the app's repo -- your
+notes, never pushed).
 
 ## The designer
 

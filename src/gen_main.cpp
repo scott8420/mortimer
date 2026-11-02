@@ -32,6 +32,7 @@ int usage() {
         "  mortimer-gen resources [APP_DIR]                   the bundle: kind, file, what code names\n"
         "  mortimer-gen add icon|image|data FILE [APP_DIR]    copy into resources/ and bundle it\n"
         "  mortimer-gen add stylesheet [APP_DIR]              resources/<bin>.css, loaded for every window\n"
+        "  mortimer-gen add about [APP_DIR]                   forms/About.mort, an About dialog (+ your half)\n"
         "  mortimer-gen remove resource FILE [APP_DIR]        unbundle; the file moves to removed/\n"
         "  mortimer-gen remove form STEM [APP_DIR]            the form + your halves move to removed/\n";
     return 2;
@@ -161,6 +162,12 @@ int main(int argc, char** argv) {
             for (const auto& r : core::list_resources(a.size() > 1 ? a[1] : "."))
                 std::cout << "  " << r.kind << "  " << r.file << "  -> " << r.use << "\n";
             return 0;
+        }
+        if (cmd == "add" && a.size() >= 2 && a[1] == "about") {
+            const std::string dir = a.size() > 2 ? a[2] : ".";
+            const auto path = core::add_about(dir);
+            std::cout << "Added " << path << " -- give an action \"opens\": \"About\" to show it\n";
+            return cmd_generate(dir);
         }
         if (cmd == "add" && a.size() >= 2 && a[1] == "stylesheet") {
             const auto r = core::add_stylesheet(a.size() > 2 ? a[2] : ".");

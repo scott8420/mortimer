@@ -367,8 +367,10 @@ class X : public ui::XUi {
         }
         if (!dir.empty()) {
             const fs::path ws = tmp / "sample", ad = ws / "sample";
+            bool seeded = false;
+            for (const auto& t : core::project_templates()) seeded = seeded || std::string(t.path) == "docs/RULES.md";
             bool tree = fs::is_directory(ws / "backups" / "Old") && fs::is_directory(ws / "fixes") &&
-                        fs::is_regular_file(ws / "docs" / "HANDOFF.md") &&
+                        (!seeded || fs::is_regular_file(ws / "docs" / "HANDOFF.md")) &&
                         fs::is_regular_file(ws / "scripts" / "sample_backup.sh") &&
                         fs::is_regular_file(ad / "data" / "io.github.scott8420.Sample.desktop.in") &&
                         fs::is_regular_file(ad / "data" / "io.github.scott8420.Sample.svg") &&
@@ -393,12 +395,17 @@ class X : public ui::XUi {
                 }
             }
             check("workspace: no @TOKEN@ left unrendered", leftovers.empty(), leftovers);
-            const std::string handoff = slurp(ws / "docs" / "HANDOFF.md");
-            check("workspace: HANDOFF opens with the next session + files block",
-                  handoff.find("## Next session") < handoff.find("## Files to upload") &&
-                      has(handoff, "**`s001_first_form`**"), "");
-            check("workspace: HANDOFF carries RULES verbatim", has(handoff, "# Sample working rules") &&
-                  has(handoff, "## Milestones are the checkpoint boundary"), "");
+            if (seeded) {   // s010: only a build with the private seed docs writes them
+                const std::string handoff = slurp(ws / "docs" / "HANDOFF.md");
+                check("workspace: HANDOFF opens with the next session + files block",
+                      handoff.find("## Next session") < handoff.find("## Files to upload") &&
+                          has(handoff, "**`s001_first_form`**"), "");
+                check("workspace: HANDOFF carries RULES verbatim", has(handoff, "# Sample working rules") &&
+                      has(handoff, "## Milestones are the checkpoint boundary"), "");
+            } else {
+                check("workspace: no seed docs -> an empty docs/", fs::is_directory(ws / "docs") &&
+                      fs::is_empty(ws / "docs"), "");
+            }
             check("workspace: your half written", fs::is_regular_file(ad / "include" / "MainWindow.hpp") &&
                   fs::is_regular_file(ad / "src" / "MainWindow.cpp"), "");
 
@@ -433,12 +440,9 @@ class X : public ui::XUi {
 
     // ── the embedded template ───────────────────────────────────────────────
     {
-        bool cmake = false, rules = false;
-        for (const auto& t : core::project_templates()) {
-            cmake = cmake || std::string(t.path) == "@BIN@/CMakeLists.txt";
-            rules = rules || std::string(t.path) == "docs/RULES.md";
-        }
-        check("templates: embedded in the binary", cmake && rules,
+        bool cmake = false;
+        for (const auto& t : core::project_templates()) cmake = cmake || std::string(t.path) == "@BIN@/CMakeLists.txt";
+        check("templates: embedded in the binary", cmake,
               std::to_string(core::project_templates().size()) + " files");
         // XML forbids "--" inside a comment; GLib's parser forgives it, librsvg
         // doesn't (found s001: the icon wouldn't render).
@@ -761,5 +765,164 @@ class X : public ui::XUi {
           const auto o = core::generate_form(g, app);
           check("codegen edit: nothing editable -> no signal member, no EditableLabel",
                 !has(o[0].content, "m_notes_edited") && !has(o[1].content, "EditableLabel"), ""); }
+    }
+
+    // ── s010: actions that open windows; the shortcuts window; About ────────
+    {
+        using core::Value;
+        const auto app = core::derive_app("Opener");
+        core::Form f;
+        f.name = "MainWindow";
+        core::Node menu{"MenuButton", "menu", {{"menu", Value(core::StringList{"Save the Thing=win.save-it"})}}, {}, {}, {}};
+        core::Node box{"Box", "box", {}, {}, {}, {menu}};
+        f.root = {"ApplicationWindow", "main_window", {{"title", Value(std::string("Opener"))}}, {}, {}, {box}};
+        f.actions = {{"save_it", "<Control>s", false},
+                     {"show_keys", "<Control>question", false, "Show the keys", core::kShortcutsTarget},
+                     {"about", "", false, "", "About"},
+                     {"save_as", "<Control><Shift>s", false}};
+
+        // JSON: on disk only when set, and back exactly.
+        const std::string js = core::form_to_json(f);
+        check("s010 json: title / opens written when set", has(js, "\"opens\": \"About\"") &&
+              has(js, "\"title\": \"Show the keys\"") && has(js, "\"opens\": \"@shortcuts\""), "");
+        { core::Form g; g.name = "X"; g.root = {"Window", "x", {}, {}, {}, {}}; g.actions = {{"a", "", false}};
+          check("s010 json: unset -> not on disk", !has(core::form_to_json(g), "opens") &&
+                !has(core::form_to_json(g), "title"), ""); }
+        check("s010 json: round trip", core::form_from_json(js).actions == f.actions, "");
+
+        // The row a key shows.
+        check("s010 title: its own title first", core::action_title(f, f.actions[1]) == "Show the keys", "");
+        check("s010 title: else its menu row's label", core::action_title(f, f.actions[0]) == "Save the Thing", "");
+        check("s010 title: else the name, readable", core::action_title(f, f.actions[3]) == "Save as" &&
+              core::readable("MainWindow") == "Main window", core::action_title(f, f.actions[3]));
+
+        // Validate: opens names a form (or @shortcuts), never its own; no hook to require.
+        check("s010 validate: the form is valid", errors_of(f).empty(),
+              errors_of(f).empty() ? "" : errors_of(f)[0]);
+        { auto g = f; g.actions[2].opens = "not a form";
+          check("s010 validate: opens a non-name -> error", !errors_of(g).empty(), ""); }
+        { auto g = f; g.actions[2].opens = "MainWindow";
+          check("s010 validate: opens itself -> error", !errors_of(g).empty(), ""); }
+        { auto g = f; g.actions[2].required = true; bool w = false;
+          for (const auto& i : core::validate(g)) w = w || (!i.error && has(i.what, "no hook to require"));
+          check("s010 validate: required + opens warns", w && errors_of(g).empty(), ""); }
+        { auto g = f; g.root.children[0].children.push_back({"Label", "opens_about", {}, {}, {}, {}});
+          check("s010 validate: a widget named opens_about collides", !errors_of(g).empty(), ""); }
+        { auto g = f; g.actions.push_back({"x", "", false, "", ""});   // a hook-action named like the
+          g.actions.push_back({"about2", "", false, "", "About"});        // opener is still fine
+          check("s010 validate: two actions may open the same form", errors_of(g).empty(), ""); }
+
+        // Codegen: no hook; a kept window; forward declarations only in the header.
+        bool hook = false;
+        for (const auto& k : core::hooks_of(f)) hook = hook || k.name == "on_action_about" || k.name == "on_action_show_keys";
+        check("s010 codegen: an opener has no hook", !hook && core::hooks_of(f).size() == 2, "");
+        const auto o = core::generate_form(f, app);
+        check("s010 codegen: header forward-declares, keeps a unique_ptr",
+              has(o[0].content, "namespace opener {\nclass About;\n}") &&
+              has(o[0].content, "namespace opener::ui {\nclass ShortcutsWindow;\n}") &&
+              has(o[0].content, "std::unique_ptr<::opener::About> m_opens_about;") &&
+              has(o[0].content, "#include <memory>") && !has(o[0].content, "#include \"About.hpp\""), "");
+        check("s010 codegen: the source includes them whole",
+              has(o[1].content, "#include \"About.hpp\"") && has(o[1].content, "#include \"generated/Shortcuts.hpp\""), "");
+        check("s010 codegen: built on first ask, hides on close, presented over this window",
+              has(o[1].content, "if (!m_opens_about) {") &&
+              has(o[1].content, "m_opens_about = std::make_unique<::opener::About>();") &&
+              has(o[1].content, "m_opens_about->set_hide_on_close(true);") &&
+              has(o[1].content, "m_opens_about->set_transient_for(*this);") &&
+              !has(o[1].content, "on_action_about"), "");
+        check("s010 codegen: an opener's key is still wired",
+              has(o[1].content, "parse_string(\"<Control>question\")") &&
+              has(o[1].content, "NamedAction::create(\"win.show-keys\")"), "");
+        { auto g = f; g.actions = {{"a", "", false}};
+          const auto p = core::generate_form(g, app);
+          check("s010 codegen: no openers -> no <memory>, no forward block",
+                !has(p[0].content, "#include <memory>") && !has(p[0].content, "s010"), ""); }
+
+        // The shortcuts window: a row per key, in form order, words escaped.
+        core::Form d;
+        d.name = "Prefs";
+        d.root = {"Dialog", "prefs", {}, {}, {}, {}};
+        d.actions = {{"reset", "<Control>r", false, "Reset \"all\"", ""}, {"nokey", "", false}};
+        const auto sc = core::generate_shortcuts({f, d}, app);
+        const std::string scc = sc.size() == 2 ? sc[1].content : "";
+        check("s010 shortcuts: two files", sc.size() == 2 && sc[0].path == "generated/Shortcuts.hpp" &&
+              sc[1].path == "generated/Shortcuts.cpp" && has(sc[0].content, "class ShortcutsWindow : public Gtk::Window"), "");
+        const auto r1 = scc.find("{\"Opener\", \"<Control>s\", \"Save the Thing\"}");
+        const auto r2 = scc.find("{\"Opener\", \"<Control>question\", \"Show the keys\"}");
+        const auto r3 = scc.find("{\"Opener\", \"<Control><Shift>s\", \"Save as\"}");
+        const auto r4 = scc.find("{\"Prefs\", \"<Control>r\", \"Reset \\\"all\\\"\"}");
+        check("s010 shortcuts: each key a row, sectioned by window title / name, in order",
+              r1 != std::string::npos && r1 < r2 && r2 < r3 && r3 < r4 && r4 != std::string::npos, "");
+        check("s010 shortcuts: an action without a key has no row", !has(scc, "nokey") && !has(scc, "\"About\""), "");
+        check("s010 shortcuts: GTK writes the key, hides on close, Escape closes",
+              has(scc, "->to_label(get_display())") && has(scc, "set_hide_on_close(true)") &&
+              has(scc, "NamedAction::create(\"window.close\")"), "");
+        check("s010 shortcuts: none -> still compiles (a sentinel row) and says so",
+              has(core::generate_shortcuts({}, app)[1].content, "{nullptr, nullptr, nullptr}") &&
+              has(core::generate_shortcuts({}, app)[1].content, "No keys yet"), "");
+
+        // The project: a new one has About + both openers; add_about; bad targets refused.
+        const fs::path tmp = fs::temp_directory_path() / ("mortimer_s010_" + std::to_string(::getpid()));
+        fs::remove_all(tmp);
+        fs::create_directories(tmp);
+        std::string dir;
+        try { dir = core::create_workspace(app, tmp.string()); } catch (const std::exception& e) {
+            check("s010 project: created", false, e.what()); }
+        if (!dir.empty()) {
+            const fs::path ad(dir);
+            const auto pr = core::load_project(dir);
+            check("s010 project: a new app lists About", pr.forms.size() == 2 && pr.forms[1] == "About", "");
+            const auto about = core::load_form((ad / "forms" / "About.mort").string());
+            check("s010 project: About is a valid Dialog with the logo and window.close",
+                  about.root.type == "Dialog" && errors_of(about).empty() &&
+                  has(core::form_to_json(about), "opener-logo-symbolic") &&
+                  has(core::form_to_json(about), "window.close"), "");
+            check("s010 project: your About shows core::version()",
+                  has(slurp(ad / "src" / "About.cpp"), "m_version.set_label(\"Version \" + core::version());") &&
+                  has(slurp(ad / "src" / "About.cpp"), "#include \"core/Version.hpp\""), "");
+            check("s010 project: the starter's menu opens both",
+                  has(slurp(ad / "generated" / "MainWindowUi.cpp"), "std::make_unique<::opener::About>()") &&
+                  has(slurp(ad / "generated" / "MainWindowUi.cpp"), "std::make_unique<::opener::ui::ShortcutsWindow>()") &&
+                  has(slurp(ad / "generated" / "MainWindowUi.cpp"), "\"win.shortcuts\"") &&
+                  has(slurp(ad / "generated" / "MainWindowUi.cpp"), "\"win.about\""), "");
+            check("s010 project: generated/Shortcuts lists the starter's keys",
+                  has(slurp(ad / "generated" / "Shortcuts.cpp"), "{\"Opener\", \"<Control>h\", \"Say Hello\"}") &&
+                  has(slurp(ad / "generated" / "Shortcuts.cpp"), "\"Keyboard Shortcuts\"}"), "");
+            bool twice = false;
+            try { core::add_about(dir); } catch (const std::exception&) { twice = true; }
+            check("s010 project: a second About refused", twice, "");
+
+            // A target that isn't a form, or is the main window -> error, not generated.
+            auto mw = core::load_form((ad / "forms" / "MainWindow.mort").string());
+            const std::string good = slurp(ad / "generated" / "MainWindowUi.cpp");
+            mw.actions.push_back({"prefs", "", false, "", "Prefs"});
+            core::save_form(mw, (ad / "forms" / "MainWindow.mort").string());
+            auto g = core::generate_project(dir);
+            bool said = false;
+            for (const auto& [st, i] : g.issues) said = said || (i.error && has(i.what, "isn't a form of this project"));
+            check("s010 project: opens an unknown form -> error, last good files kept",
+                  !g.ok() && said && slurp(ad / "generated" / "MainWindowUi.cpp") == good, "");
+            auto ab = core::load_form((ad / "forms" / "About.mort").string());
+            ab.actions = {{"home", "", false, "", "MainWindow"}};
+            core::save_form(ab, (ad / "forms" / "About.mort").string());
+            g = core::generate_project(dir);
+            said = false;
+            for (const auto& [st, i] : g.issues) said = said || (st == "About" && i.error && has(i.what, "the main window"));
+            check("s010 project: opens the main window -> error", said, "");
+
+            // add_about on a project without one.
+            fs::remove(ad / "forms" / "About.mort");
+            fs::remove(ad / "include" / "About.hpp");
+            fs::remove(ad / "src" / "About.cpp");
+            auto pj = core::load_project(dir);
+            pj.forms = {"MainWindow"};
+            core::save_project(pj, dir);
+            bool added = false;
+            try { core::add_about(dir); added = true; } catch (const std::exception&) {}
+            check("s010 project: add_about writes the form, your half, the listing",
+                  added && fs::exists(ad / "forms" / "About.mort") && fs::exists(ad / "src" / "About.cpp") &&
+                  core::load_project(dir).forms.back() == "About", "");
+        }
+        fs::remove_all(tmp);
     }
 }

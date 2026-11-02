@@ -536,7 +536,8 @@ std::vector<Hook> hooks_of(const Form& f) {
     });
     // s003: each action is a hook too (widget = the action's name, type "Action").
     for (const auto& a : f.actions)
-        out.push_back({action_hook(a), "void", "", "", a.name, "Action", "activate", a.required});
+        if (a.opens.empty())   // s010: one that opens a window has no hook
+            out.push_back({action_hook(a), "void", "", "", a.name, "Action", "activate", a.required});
     // s005: each file dialog's answer is a hook; Cancel is one too when ticked.
     for (const auto& d : f.files) {
         out.push_back({file_chosen_hook(d), "void",
@@ -640,6 +641,71 @@ static std::string file_chooser_def(const Form& f, const FileDef& d, const std::
     return c.str();
 }
 
+// s010 -- an action that OPENS a window (another form, or the shortcuts window).
+// The window is built the first time it's asked for and kept: it hides on close
+// (the X), so every later ask re-presents the SAME window -- the dialog-lifetime
+// stone (docs/resources-and-dialog-lifetime.md). It goes when this window goes.
+static bool opens_any(const Form& f) {
+    for (const auto& a : f.actions) if (!a.opens.empty()) return true;
+    return false;
+}
+static std::string opens_class(const ActionDef& a, const AppInfo& app) {
+    return a.opens == kShortcutsTarget ? "::" + app.ns + "::ui::ShortcutsWindow" : "::" + app.ns + "::" + a.opens;
+}
+// The header only names the classes (forward declarations): a std::unique_ptr
+// to one is fine as long as the destructor -- in the .cpp -- sees it whole. So
+// two forms can open each other without their headers including each other.
+static std::string opens_forward(const Form& f, const AppInfo& app) {
+    std::set<std::string> forms;
+    bool shortcuts = false;
+    for (const auto& a : f.actions) {
+        if (a.opens.empty()) continue;
+        if (a.opens == kShortcutsTarget) shortcuts = true;
+        else forms.insert(a.opens);
+    }
+    if (forms.empty() && !shortcuts) return "";
+    std::string o = "// s010: the windows this one opens (built on first ask, then kept).\n";
+    if (!forms.empty()) {
+        o += "namespace " + app.ns + " {\n";
+        for (const auto& x : forms) o += "class " + x + ";\n";
+        o += "}\n";
+    }
+    if (shortcuts) o += "namespace " + app.ns + "::ui {\nclass ShortcutsWindow;\n}\n";
+    return o + "\n";
+}
+static std::string opens_members(const Form& f, const AppInfo& app) {
+    std::string o;
+    for (const auto& a : f.actions)
+        if (!a.opens.empty())
+            o += "    std::unique_ptr<" + opens_class(a, app) + "> " + opens_member(a) + ";   // win." +
+                 gio_action_name(a.name) + " opens it\n";
+    return o;
+}
+static std::string opens_includes(const Form& f) {
+    std::set<std::string> inc;
+    for (const auto& a : f.actions) {
+        if (a.opens.empty()) continue;
+        inc.insert(a.opens == kShortcutsTarget ? "generated/Shortcuts.hpp" : a.opens + ".hpp");
+    }
+    std::string o;
+    for (const auto& x : inc) o += "#include \"" + x + "\"\n";
+    return o;
+}
+static std::string opens_activate(const ActionDef& a, const AppInfo& app) {
+    const std::string m = opens_member(a);
+    return "        // It opens " + (a.opens == kShortcutsTarget ? std::string("the keyboard-shortcuts window") : a.opens) +
+           ": built the first time, then kept -- the X hides it, so\n"
+           "        // the next ask shows the same window. It goes when this window goes.\n"
+           "        m_hooks.push_back(a->signal_activate().connect([this](const Glib::VariantBase&) {\n"
+           "            if (!" + m + ") {\n"
+           "                " + m + " = std::make_unique<" + opens_class(a, app) + ">();\n"
+           "                " + m + "->set_hide_on_close(true);\n"
+           "            }\n"
+           "            " + m + "->set_transient_for(*this);\n"
+           "            " + m + "->present();\n"
+           "        }));\n";
+}
+
 std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
     const WidgetSpec* rootw = find_widget(f.root.type);
     const std::string ui = f.name + "Ui";
@@ -662,7 +728,9 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << (f.models.empty() ? "" : "#include <glibmm/object.h>\n#include <glibmm/refptr.h>\n#include <sigc++/signal.h>\n#include <cstdint>\n#include <set>\n#include <string>\n")
       << "#include <sigc++/connection.h>\n"
       << (f.files.empty() ? "" : "#include <map>\n#include <memory>\n#include <string>\n")
+      << (opens_any(f) ? "#include <memory>\n" : "")
       << "#include <vector>\n\n"
+      << opens_forward(f, app)
       << "namespace " << app.ns << "::ui {\n\n"
       << "class " << ui << " : public " << rootw->gtk_class << " {\n"
       << "public:\n"
@@ -768,6 +836,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << edited_members(f, members)
       << (f.actions.empty() ? "" : rootw->type == "ApplicationWindow" ? "" :
           "    Glib::RefPtr<Gio::SimpleActionGroup> m_actions;   // \"win.*\" (a plain Window has no action map)\n")
+      << opens_members(f, app)
       << (f.files.empty() ? "" :
           "    // s005: a file dialog that is up, by name (its Cancellable); and the token its\n"
           "    // answer checks first -- the destructor drops it, so an answer arriving after\n"
@@ -785,6 +854,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << "#include \"generated/Style.hpp\"\n"
       << (remembers(f) ? "#include \"generated/WindowState.hpp\"\n" : "")
       << "#include \"Registry.hpp\"\n"
+      << opens_includes(f)
       << (f.actions.empty() ? "" :
           "\n#include <giomm/simpleaction.h>\n#include <gtkmm/shortcut.h>\n#include <gtkmm/shortcutaction.h>\n"
           "#include <gtkmm/shortcutcontroller.h>\n#include <gtkmm/shortcuttrigger.h>\n")
@@ -914,9 +984,13 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
         for (const auto& a : f.actions) {
             const std::string gio = gio_action_name(a.name);
             c << "    {\n"
-              << "        auto a = Gio::SimpleAction::create(" << cpp_string(gio) << ");\n"
-              << "        m_hooks.push_back(a->signal_activate().connect(\n"
-              << "            [this](const Glib::VariantBase&) { " << action_hook(a) << "(); }));\n"
+              << "        auto a = Gio::SimpleAction::create(" << cpp_string(gio) << ");\n";
+            if (a.opens.empty())
+                c << "        m_hooks.push_back(a->signal_activate().connect(\n"
+                  << "            [this](const Glib::VariantBase&) { " << action_hook(a) << "(); }));\n";
+            else
+                c << opens_activate(a, app);
+            c
               << "        " << (appwin ? "add_action(a);" : "m_actions->add_action(a);") << "\n";
             if (!a.accel.empty())
                 c << "        keys->add_shortcut(Gtk::Shortcut::create(Gtk::ShortcutTrigger::parse_string("
@@ -1203,6 +1277,119 @@ void ensure() {
 
 }  // namespace @NS@::ui::style
 )ST";
+
+// s010 -- the keyboard-shortcuts window, written from EVERY form's keys. A key
+// and the row that tells the user about it are one fact (the action in the
+// form): change the key in the form and both the wiring and this window follow
+// on the next generate -- they can't drift. A custom Gtk::Window, not
+// GtkShortcutsWindow (deprecated in GTK 4.18, gone in GTK 5).
+std::vector<OutFile> generate_shortcuts(const std::vector<Form>& forms, const AppInfo& app) {
+    std::ostringstream h;
+    h << "// " << kGeneratedMarker << " from every form's actions -- DO NOT EDIT.\n"
+      << "// The keyboard-shortcuts window: each key a form gives an action, grouped by\n"
+      << "// window, in words (the action's title, else its menu row's label). Written\n"
+      << "// from the same entries the keys are wired from, so it can't lie about them.\n"
+      << "// An action with `\"opens\": \"" << kShortcutsTarget << "\"` shows it (built once, hides on close).\n"
+      << "#pragma once\n"
+      << "#include <gtkmm/window.h>\n\n"
+      << "namespace " << app.ns << "::ui {\n\n"
+      << "class ShortcutsWindow : public Gtk::Window {\n"
+      << "public:\n"
+      << "    ShortcutsWindow();\n"
+      << "    ~ShortcutsWindow() override;\n"
+      << "};\n\n"
+      << "}  // namespace " << app.ns << "::ui\n";
+
+    struct Row { std::string section, accel, what; };
+    std::vector<Row> rows;
+    for (const auto& f : forms) {
+        std::string section = readable(f.name);
+        const auto t = f.root.props.find("title");
+        if (t != f.root.props.end() && std::holds_alternative<std::string>(t->second) &&
+            !std::get<std::string>(t->second).empty())
+            section = std::get<std::string>(t->second);
+        for (const auto& a : f.actions)
+            if (!a.accel.empty()) rows.push_back({section, a.accel, action_title(f, a)});
+    }
+
+    std::ostringstream c;
+    c << "// " << kGeneratedMarker << " from every form's actions -- DO NOT EDIT.\n"
+      << "#include \"generated/Shortcuts.hpp\"\n"
+      << "#include \"Registry.hpp\"\n\n"
+      << "#include <gtkmm/box.h>\n#include <gtkmm/grid.h>\n#include <gtkmm/label.h>\n"
+      << "#include <gtkmm/scrolledwindow.h>\n#include <gtkmm/separator.h>\n#include <gtkmm/shortcut.h>\n"
+      << "#include <gtkmm/shortcutaction.h>\n#include <gtkmm/shortcutcontroller.h>\n"
+      << "#include <gtkmm/shortcuttrigger.h>\n\n"
+      << "namespace " << app.ns << "::ui {\n\n"
+      << "namespace {\n"
+      << "struct Row {\n"
+      << "    const char* section;   // the window it works in (its title)\n"
+      << "    const char* accel;     // GTK's spelling -- the same string the window wires\n"
+      << "    const char* what;      // what it does\n"
+      << "};\n"
+      << "// In the project's order, the main window first. Empty until an action has a key.\n"
+      << "const Row kRows[] = {\n";
+    for (const auto& r : rows)
+        c << "    {" << cpp_string(r.section) << ", " << cpp_string(r.accel) << ", " << cpp_string(r.what) << "},\n";
+    if (rows.empty()) c << "    {nullptr, nullptr, nullptr},   // (none yet -- C++ has no empty arrays)\n";
+    c << "};\n"
+      << "}  // namespace\n\n"
+      << "ShortcutsWindow::ShortcutsWindow() {\n"
+      << "    set_name(\"shortcuts_window\");\n"
+      << "    registry::add(\"shortcuts_window\", this);\n"
+      << "    set_title(\"Keyboard Shortcuts\");\n"
+      << "    set_default_size(460, 520);\n"
+      << "    set_hide_on_close(true);   // built once, shown again: the X hides it\n\n"
+      << "    auto* grid = Gtk::make_managed<Gtk::Grid>();\n"
+      << "    grid->set_margin(18);\n"
+      << "    grid->set_column_spacing(24);\n"
+      << "    grid->set_row_spacing(6);\n"
+      << "    int row = 0;\n"
+      << "    std::string section;\n"
+      << "    for (const auto& r : kRows) {\n"
+      << "        if (!r.accel) continue;\n"
+      << "        if (row == 0 || section != r.section) {   // a heading where the window changes\n"
+      << "            section = r.section;\n"
+      << "            auto* head = Gtk::make_managed<Gtk::Label>(section);\n"
+      << "            head->set_halign(Gtk::Align::START);\n"
+      << "            head->add_css_class(\"heading\");\n"
+      << "            if (row > 0) head->set_margin_top(12);\n"
+      << "            grid->attach(*head, 0, row++, 2, 1);\n"
+      << "            grid->attach(*Gtk::make_managed<Gtk::Separator>(), 0, row++, 2, 1);\n"
+      << "        }\n"
+      << "        // The key as GTK writes it for this desktop (\"Ctrl+S\"), from the same\n"
+      << "        // string the window's ShortcutController parsed.\n"
+      << "        auto trigger = Gtk::ShortcutTrigger::parse_string(r.accel);\n"
+      << "        auto* key = Gtk::make_managed<Gtk::Label>(trigger ? trigger->to_label(get_display()) : r.accel);\n"
+      << "        key->set_halign(Gtk::Align::START);\n"
+      << "        key->add_css_class(\"monospace\");\n"
+      << "        auto* what = Gtk::make_managed<Gtk::Label>(r.what);\n"
+      << "        what->set_halign(Gtk::Align::START);\n"
+      << "        what->set_hexpand(true);\n"
+      << "        what->set_wrap(true);\n"
+      << "        what->set_xalign(0.0f);\n"
+      << "        grid->attach(*key, 0, row);\n"
+      << "        grid->attach(*what, 1, row++);\n"
+      << "    }\n"
+      << "    if (row == 0) {\n"
+      << "        auto* none = Gtk::make_managed<Gtk::Label>(\"No keys yet -- give an action a key in its form.\");\n"
+      << "        none->add_css_class(\"dim-label\");\n"
+      << "        grid->attach(*none, 0, 0);\n"
+      << "    }\n\n"
+      << "    auto* scroll = Gtk::make_managed<Gtk::ScrolledWindow>();\n"
+      << "    scroll->set_policy(Gtk::PolicyType::NEVER, Gtk::PolicyType::AUTOMATIC);\n"
+      << "    scroll->set_child(*grid);\n"
+      << "    set_child(*scroll);\n\n"
+      << "    // Escape closes it (GTK's own window.close action -- it hides, as the X does).\n"
+      << "    auto keys = Gtk::ShortcutController::create();\n"
+      << "    keys->add_shortcut(Gtk::Shortcut::create(Gtk::ShortcutTrigger::parse_string(\"Escape\"),\n"
+      << "                                             Gtk::NamedAction::create(\"window.close\")));\n"
+      << "    add_controller(keys);\n"
+      << "}\n\n"
+      << "ShortcutsWindow::~ShortcutsWindow() { registry::remove(this); }\n\n"
+      << "}  // namespace " << app.ns << "::ui\n";
+    return {{"generated/Shortcuts.hpp", h.str()}, {"generated/Shortcuts.cpp", c.str()}};
+}
 
 std::vector<OutFile> generate_support(const AppInfo& app) {
     std::set<std::string> headers;

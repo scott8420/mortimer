@@ -98,7 +98,9 @@
   },
   "actions": [
     { "name": "refresh", "accel": "<Control>r" },
-    { "name": "save_as", "accel": "<Control><Shift>s" }
+    { "name": "save_as", "accel": "<Control><Shift>s" },
+    { "name": "keys", "accel": "F1", "title": "Every key", "opens": "@shortcuts" },
+    { "name": "about", "opens": "About" }
   ],
   "files": [
     { "name": "open_doc", "mode": "open", "title": "Open Document", "accept": "Open",

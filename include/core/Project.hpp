@@ -82,6 +82,14 @@ HookReport live_report(const std::string& app_dir, const Form& f);
 
 // The starter form a new project gets: a window, a header bar, a little body.
 Form starter_form(const AppInfo& app);
+// s010 -- the About dialog a new project gets (forms/About.mort): the logo, the
+// name, the version, a Close button on GTK's window.close. The starter's
+// "about" action opens it.
+Form about_form(const AppInfo& app);
+// s010 -- add forms/About.mort to an existing project, listed, with your half
+// written (its constructor shows core::version()). Throws if it has one. Give
+// an action `"opens": "About"` to show it. Returns the form's path.
+std::string add_about(const std::string& app_dir);
 
 // Template rendering (the embedded project template, @TOKEN@ substitution).
 std::string render_tokens(const std::string& text, const AppInfo& app);

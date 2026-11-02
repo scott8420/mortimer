@@ -142,7 +142,8 @@ Form form_from_json(const std::string& text) {
         if (!j["actions"].is_array()) throw std::runtime_error("actions must be a list");
         for (const auto& a : j["actions"]) {
             if (!a.is_object()) throw std::runtime_error("an action is {\"name\": ..., \"accel\": ...}");
-            f.actions.push_back({a.value("name", ""), a.value("accel", ""), a.value("required", false)});
+            f.actions.push_back({a.value("name", ""), a.value("accel", ""), a.value("required", false),
+                                 a.value("title", ""), a.value("opens", "")});
         }
     }
     if (j.contains("files")) {
@@ -197,6 +198,8 @@ std::string form_to_json(const Form& f) {
             o["name"] = x.name;
             if (!x.accel.empty()) o["accel"] = x.accel;
             if (x.required) o["required"] = true;
+            if (!x.title.empty()) o["title"] = x.title;
+            if (!x.opens.empty()) o["opens"] = x.opens;
             a.push_back(o);
         }
         j["actions"] = a;
@@ -304,6 +307,37 @@ std::string gio_action_name(const std::string& name) {
 }
 
 std::string action_hook(const ActionDef& a) { return "on_action_" + a.name; }
+std::string opens_member(const ActionDef& a) { return "m_opens_" + a.name; }
+
+std::string readable(const std::string& name) {
+    std::string out;
+    for (std::size_t i = 0; i < name.size(); ++i) {
+        const char c = name[i];
+        if (c == '_') { if (!out.empty() && out.back() != ' ') out += ' '; continue; }
+        const bool upper = c >= 'A' && c <= 'Z';
+        if (upper && i > 0 && !out.empty() && out.back() != ' ') out += ' ';
+        out += (upper && !out.empty()) ? static_cast<char>(c - 'A' + 'a') : c;
+    }
+    if (!out.empty() && out[0] >= 'a' && out[0] <= 'z') out[0] = static_cast<char>(out[0] - 'a' + 'A');
+    return out;
+}
+
+std::string action_title(const Form& f, const ActionDef& a) {
+    if (!a.title.empty()) return a.title;
+    // The menu row that runs it says what it does, in the user's words.
+    const std::string target = "win." + gio_action_name(a.name);
+    std::string found;
+    walk(f.root, [&](const Node& n, const Node*) {
+        if (!found.empty()) return;
+        const auto it = n.props.find("menu");
+        if (it == n.props.end() || !std::holds_alternative<StringList>(it->second)) return;
+        for (const auto& row : std::get<StringList>(it->second)) {
+            const MenuEntry e = parse_menu_entry(row);
+            if (!e.separator && e.action == target && !e.label.empty()) { found = e.label; return; }
+        }
+    });
+    return found.empty() ? readable(a.name) : found;
+}
 
 std::string file_chosen_hook(const FileDef& f) { return "on_" + f.name + "_chosen"; }
 std::string file_cancelled_hook(const FileDef& f) { return "on_" + f.name + "_cancelled"; }
@@ -424,7 +458,17 @@ std::vector<Issue> validate(const Form& f) {
             continue;
         }
         if (!actions.insert(a.name).second) err(where, "action \"" + a.name + "\" is declared twice");
-        if (!hooks.insert(action_hook(a)).second) err(where, "two things make the hook " + action_hook(a) + "()");
+        if (a.opens.empty()) {
+            if (!hooks.insert(action_hook(a)).second) err(where, "two things make the hook " + action_hook(a) + "()");
+        } else {
+            // s010: it opens a window -- no hook. The project checks the form exists.
+            if (a.opens != kShortcutsTarget && (!is_identifier(a.opens) || is_cpp_keyword(a.opens)))
+                err(where, "opens \"" + a.opens + "\" -- name a form of the project (About) or " +
+                               kShortcutsTarget);
+            else if (a.opens == f.name)
+                err(where, "opens its own form -- " + f.name + " is already open when this runs");
+            if (a.required) warn(where, "it opens " + a.opens + ", so there is no hook to require");
+        }
         if (!a.accel.empty()) {
             // GTK parses the key at run time; refuse here what it never could.
             const auto close = a.accel.rfind('>');
@@ -490,6 +534,10 @@ std::vector<Issue> validate(const Form& f) {
         static const std::set<std::string> taken{"hooks", "actions", "files", "alive"};
         if (taken.count(n.id))
             err(n.id, "id \"" + n.id + "\" is taken -- the generated class has its own m_" + n.id);
+        for (const auto& a : f.actions)   // s010: the window an action opens is kept in m_opens_<action>
+            if (!a.opens.empty() && "m_" + n.id == opens_member(a))
+                err(n.id, "id \"" + n.id + "\" is taken -- action " + a.name + " keeps its window in " +
+                              opens_member(a));
         if (!is_identifier(n.id) || is_cpp_keyword(n.id))
             err(n.id.empty() ? "?" : n.id,
                 "id \"" + n.id + "\" must be a C++ identifier (letters, digits, _)");

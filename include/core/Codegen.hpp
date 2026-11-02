@@ -58,6 +58,9 @@ std::vector<Hook> hooks_of(const Form& f);
 
 // generated/<Form>Ui.hpp + .cpp. Precondition: validate(f) has no errors.
 std::vector<OutFile> generate_form(const Form& f, const AppInfo& app);
+// s010 -- generated/Shortcuts.hpp/.cpp: the keyboard-shortcuts window, a row
+// per key any of `forms` gives an action (in that order; the main form first).
+std::vector<OutFile> generate_shortcuts(const std::vector<Form>& forms, const AppInfo& app);
 // generated/Widgets.hpp, Hooks.hpp/.cpp, README.md -- shared by every form.
 std::vector<OutFile> generate_support(const AppInfo& app);
 // include/<Form>.hpp + src/<Form>.cpp -- the one-time stubs, one override per

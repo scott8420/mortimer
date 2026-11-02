@@ -4,3 +4,6 @@ compile_commands.json
 *.o
 *.a
 .cache/
+# s010: the method stays private -- seed docs live in the workspace's docs/seed/
+/templates/project/docs/
+/docs/
