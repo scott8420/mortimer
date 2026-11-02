@@ -113,7 +113,8 @@ bool Inspector::show(const std::string& sel) {
     std::string sig;
     if (const auto f = m_d.get(core::Design::kForm))
     {
-        for (const auto& a : f->actions) sig += a.name + ",";
+        for (const auto& a : f->actions) sig += a.name + ">" + a.opens + ",";   // s010: and what it opens
+        for (const auto& t : m_targets) sig += "~" + t;                        // and what it could open
         sig += "|";   // s005: and the file dialogs' names
         for (const auto& x : f->files) sig += x.name + ",";
         sig += "|";   // s006: and the models' names (the model picker's choices)
@@ -187,8 +188,9 @@ void Inspector::rebuild() {
     if (is_root) {
         section("Form", "The class this form becomes: <Name>Ui (generated) and <Name> (yours).");
         name_row(true);
-        section("Actions", "win.<name>: a menu row or a button runs it, the key runs it, and the hook "
-                           "on_action_<name>() is what it does.");
+        section("Actions", "win.<name>: a menu row, a button or its key runs it. It runs its hook "
+                           "on_action_<name>(), or opens a window (built once, hides on close). The second "
+                           "line's words are its row in the keyboard-shortcuts window.");
         actions_rows();
         section("File dialogs", "Gtk::FileDialog: call choose_<name>() from a hook; it returns at once, and "
                                 "the answer arrives at on_<name>_chosen(path) -- Cancel at "
@@ -390,6 +392,7 @@ void Inspector::prop_row(const std::string& type, const std::string& prop, bool 
                     if (const auto f = m_d.get(core::Design::kForm))
                         for (const auto& a : f->actions) values.push_back("win." + core::gio_action_name(a.name));
                     values.push_back("app.quit");
+                    values.push_back("window.close");   // s010: GTK's own -- closes (hides) this window
                     // A value typed by hand elsewhere stays choosable.
                     if (const auto r = m_d.get(m_key))
                         if (const auto it = r->props.find(prop); it != r->props.end() &&
@@ -525,13 +528,18 @@ void Inspector::actions_rows() {
         const std::string name = a0.name;
         auto* e = Gtk::make_managed<Gtk::Entry>();
         e->set_hexpand(true);
-        e->set_tooltip_text("on_action_" + name + "()  ·  win." + core::gio_action_name(name));
+        e->set_tooltip_text(a0.opens.empty() ? "on_action_" + name + "()  ·  win." + core::gio_action_name(name)
+                                             : "win." + core::gio_action_name(name) + " opens " +
+                                                   (a0.opens == core::kShortcutsTarget ? std::string("the shortcuts window")
+                                                                                       : a0.opens));
         auto* key = Gtk::make_managed<Gtk::Entry>();
         key->set_placeholder_text("<Control>s");
         key->set_width_chars(10);
         key->set_tooltip_text("The key, in GTK's spelling: <Control>s, <Control><Shift>z, F5. Empty = none.");
         auto* req = Gtk::make_managed<Gtk::CheckButton>();
-        req->set_tooltip_text("Required: the hook is pure virtual");
+        req->set_tooltip_text(a0.opens.empty() ? "Required: the hook is pure virtual"
+                                               : "It opens a window -- there is no hook to require");
+        req->set_sensitive(a0.opens.empty());
         auto* del = Gtk::make_managed<Gtk::Button>();
         del->set_icon_name("user-trash-symbolic");
         del->set_has_frame(false);
@@ -543,11 +551,45 @@ void Inspector::actions_rows() {
         tail->append(*del);
         m_grid->attach(*tail, 2, m_line++);
 
+        // s010 -- the second line: the shortcuts window's words for it, and what
+        // it does -- run its hook, or open a window (built once, hides on close).
+        auto* title = Gtk::make_managed<Gtk::Entry>();
+        title->set_hexpand(true);
+        title->set_tooltip_text("Its row in the keyboard-shortcuts window. Empty = the menu row's label, "
+                                "else the name made readable.");
+        std::vector<std::string> opens{"", core::kShortcutsTarget};
+        for (const auto& t : m_targets) opens.push_back(t);
+        if (std::find(opens.begin(), opens.end(), a0.opens) == opens.end()) opens.push_back(a0.opens);   // stale: shown
+        std::vector<Glib::ustring> shown;
+        for (const auto& o : opens)
+            shown.push_back(o.empty() ? "runs its hook" : o == core::kShortcutsTarget ? "opens Shortcuts" : "opens " + o);
+        auto* op = Gtk::make_managed<Gtk::DropDown>(Gtk::StringList::create(shown));
+        op->set_tooltip_text("Run on_action_" + name + "(), or open a window of the project: built the first "
+                             "time, then shown again (the X hides it). No hook, no code.");
+        no_wheel_unless_focused(*op);
+        m_grid->attach(*title, 0, m_line);
+        m_grid->attach(*op, 1, m_line++, 2, 1);
+
         auto current = [this, name]() -> std::optional<core::ActionDef> {
             if (const auto f = m_d.get(core::Design::kForm))
                 for (const auto& a : f->actions) if (a.name == name) return a;
             return std::nullopt;
         };
+        title->signal_changed().connect([this, title, name, current] {
+            if (m_painting || m_rebuilding) return;
+            if (auto a = current()) { a->title = title->get_text(); core::design::set_action(m_j, m_d, name, *a); }
+        });
+        op->property_selected().signal_changed().connect([this, op, opens, name, current] {
+            if (m_painting || m_rebuilding) return;
+            const auto i = op->get_selected();
+            if (i >= opens.size()) return;
+            if (auto a = current(); a && a->opens != opens[i]) {
+                a->opens = opens[i];
+                if (!a->opens.empty()) a->required = false;   // nothing to require
+                std::string why;
+                if (!core::design::set_action(m_j, m_d, name, *a, &why) && !why.empty()) m_said.emit(why);
+            }
+        });
         auto rename = [this, e, name, current] {
             if (m_painting || m_rebuilding) return;
             auto a = current();
@@ -569,12 +611,20 @@ void Inspector::actions_rows() {
             if (auto a = current()) { a->required = req->get_active(); core::design::set_action(m_j, m_d, name, *a); }
         });
         del->signal_clicked().connect([this, name] { core::design::remove_action(m_j, m_d, name); });
-        m_rows.push_back({[e, key, req, current](const core::Rec&) {
+        m_rows.push_back({[this, e, key, req, title, op, opens, current](const core::Rec&) {
             const auto a = current();
             if (!a) return;
             if (!e->has_focus() && e->get_text().raw() != a->name) e->set_text(a->name);
             if (key->get_text().raw() != a->accel) key->set_text(a->accel);
             req->set_active(a->required);
+            req->set_sensitive(a->opens.empty());
+            if (title->get_text().raw() != a->title) title->set_text(a->title);
+            auto bare = *a;   // what it would say with no title of its own
+            bare.title.clear();
+            title->set_placeholder_text(core::action_title(m_d.to_form(), bare));
+            const auto at = std::find(opens.begin(), opens.end(), a->opens);
+            if (at != opens.end() && op->get_selected() != static_cast<guint>(at - opens.begin()))
+                op->set_selected(static_cast<guint>(at - opens.begin()));
         }});
     }
     auto* add = Gtk::make_managed<Gtk::Button>();

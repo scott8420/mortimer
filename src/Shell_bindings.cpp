@@ -21,6 +21,7 @@ void Shell::bind_actions() {  // bindings: win.* + recents group
     add_action("open-project",  sigc::mem_fun(*this, &Shell::on_open_project));
     m_act_add_form = add_action("add-window", [this] { on_add_form("Window"); });
     m_act_add_dialog = add_action("add-dialog", [this] { on_add_form("Dialog"); });
+    m_act_add_about = add_action("add-about", sigc::mem_fun(*this, &Shell::on_add_about));
     for (const char* k : {"icon", "image", "data", "stylesheet"})   // s009: the navigator's +
         m_act_add_res.push_back(add_action(std::string("add-") + k, [this, k] { on_add_resource(k); }));
     add_action_with_parameter("open-form", Glib::Variant<Glib::ustring>::variant_type(),

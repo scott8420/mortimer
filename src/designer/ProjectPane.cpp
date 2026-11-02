@@ -29,6 +29,7 @@ ProjectPane::ProjectPane()
     auto forms = Gio::Menu::create();
     forms->append("Window…", "win.add-window");
     forms->append("Dialog…", "win.add-dialog");
+    forms->append("About dialog", "win.add-about");   // s010: logo, name, version, Close
     menu->append_section("Forms", forms);
     auto res = Gio::Menu::create();
     res->append("Icon (.svg)…", "win.add-icon");

@@ -31,6 +31,9 @@ public:
     Inspector(core::Design& d, core::DesignJournal& j);
     // true when it REBUILT (its widgets were replaced, the keyboard with them).
     bool show(const std::string& sel);
+    // s010: the forms an action of this form may open (the project's, less this
+    // one and the main window). Shown in each action's "opens" dropdown.
+    void set_targets(std::vector<std::string> forms) { m_targets = std::move(forms); }
     // A refusal or a note for the status line ("\"class\" isn't a C++ name").
     sigc::signal<void(const std::string&)>& signal_said() { return m_said; }
 
@@ -59,6 +62,7 @@ private:
     int                  m_line = 0;
     std::vector<Row>     m_rows;
     std::string          m_key, m_type, m_parent_type;
+    std::vector<std::string> m_targets;  // s010: see set_targets
     std::string          m_actions_sig;   // the form's action + file dialog names, as last built
     bool                 m_painting = false;
     bool                 m_rebuilding = false;

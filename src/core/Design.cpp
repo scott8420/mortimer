@@ -403,6 +403,19 @@ bool set_action(DesignJournal& j, Design& d, const std::string& name, const Acti
         for (const auto& a : r->actions)
             if (a.name == now.name) { say(why, "the form already has an action " + now.name); return false; }
     }
+    if (!now.opens.empty() && now.opens != kShortcutsTarget &&
+        (!is_identifier(now.opens) || is_cpp_keyword(now.opens))) {
+        say(why, "\"" + now.opens + "\" isn't a form's name");
+        return false;
+    }
+    // s010: typing in the key or the title folds per field; a rename, an opens
+    // pick or a required tick is always its own step (as set_file does).
+    const ActionDef was = *it;
+    std::string merge;
+    if (now.name == was.name && now.opens == was.opens && now.required == was.required) {
+        if (now.accel != was.accel && now.title == was.title) merge = "action:" + name + ":accel";
+        else if (now.title != was.title && now.accel == was.accel) merge = "action:" + name + ":title";
+    }
     *it = now;
     // A rename carries the menu rows that name it ("Save=win.save" -> win.store).
     std::vector<Design::Id> ids{Design::kForm};
@@ -420,12 +433,15 @@ bool set_action(DesignJournal& j, Design& d, const std::string& name, const Acti
             }
             if (hit) { ids.push_back(k); menus[k] = o; }
         }
-    const std::string label = now.name != name ? "Rename action " + curly(name)
-                              : now.accel != name ? "Key of " + curly(name) : "Action " + curly(name);
+    const std::string label = now.name != name     ? "Rename action " + curly(name)
+                              : now.accel != was.accel ? "Key of " + curly(name)
+                              : now.title != was.title ? "Title of " + curly(name)
+                              : now.opens != was.opens ? "What " + curly(name) + " opens"
+                                                       : "Action " + curly(name);
     return j.run(label, ids, [&] {
         d.put(Design::kForm, *r);
         for (const auto& [k, o] : menus) d.put(k, o);
-    }, "action:" + name);
+    }, merge);
 }
 
 std::string add_file(DesignJournal& j, Design& d, const std::string& name, std::string* why) {
@@ -771,6 +787,8 @@ const std::vector<Verb>& verbs() {
         {"remove_action",[](DesignJournal& j, Design& d) { remove_action(j, d, "save"); }},
         {"rename_action",[](DesignJournal& j, Design& d) { set_action(j, d, "save", {"store", "<Control>s", false}); }},
         {"key_action",   [](DesignJournal& j, Design& d) { set_action(j, d, "save", {"save", "<Control><Shift>s", true}); }},
+        {"opens_action", [](DesignJournal& j, Design& d) { set_action(j, d, "save", {"save", "<Control>s", false, "", "@shortcuts"}); }},
+        {"title_action", [](DesignJournal& j, Design& d) { set_action(j, d, "save", {"save", "<Control>s", false, "Save it"}); }},
         {"add_file",     [](DesignJournal& j, Design& d) { add_file(j, d, "export_pdf"); }},
         {"add_model",    [](DesignJournal& j, Design& d) { add_model(j, d, "Patient"); }},
         {"remove_model", [](DesignJournal& j, Design& d) { remove_model(j, d, "Note"); }},

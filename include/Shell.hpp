@@ -77,7 +77,8 @@ private:
     void on_open_project();                      // category: handler: folder -> its main form
     void on_add_form(const std::string& root_type);   // category: handler: ask a name -> add_form (Window / Dialog) -> open it
     void on_open_form(const std::string& stem);  // category: handler: another form of this project
-    void on_add_resource(const std::string& kind);    // category: handler: s009 + ▸ icon / image / data / stylesheet
+    void on_add_resource(const std::string& kind);
+    void on_add_about();                              // category: handler: s010 + ▸ About dialog -> add_about    // category: handler: s009 + ▸ icon / image / data / stylesheet
     void on_remove_form(const std::string& stem);     // category: handler: s009 trash: ask -> remove_form -> generate
     void on_remove_resource(const std::string& file); // category: handler: s009 trash: ask -> remove_resource
     void on_undo();                              // category: handler
@@ -159,6 +160,7 @@ private:
     Glib::RefPtr<Gio::Menu>         m_edit_menu;
     Glib::RefPtr<Gio::Menu>         m_forms_menu;     // this project's forms, rebuilt on load
     Glib::RefPtr<Gio::SimpleAction> m_act_add_form, m_act_add_dialog;
+    Glib::RefPtr<Gio::SimpleAction> m_act_add_about;   // s010: greyed when the project has an About
     std::vector<Glib::RefPtr<Gio::SimpleAction>> m_act_add_res;   // s009: icon, image, data, stylesheet
     Glib::RefPtr<Gio::SimpleAction> m_act_undo, m_act_redo, m_act_delete, m_act_up, m_act_down;
 

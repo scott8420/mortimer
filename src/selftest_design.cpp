@@ -265,6 +265,35 @@ void selftest_design(const Check& check_) {
         check("validate: a broken key is refused", !first_error(bad).empty(), first_error(bad));
     }
 
+    // ── s010: actions -- key / title typing folds per field; opens never ────
+    {
+        Fix f;
+        auto cur = [&] { return f.d.to_form().actions.front(); };
+        for (const char* t : {"S", "Sa", "Save it"}) {
+            auto x = cur(); x.title = t;
+            core::design::set_action(f.j, f.d, "save", x);
+        }
+        check("action title typing: one step", f.j.size() == 1, std::to_string(f.j.size()));
+        { auto x = cur(); x.opens = core::kShortcutsTarget; core::design::set_action(f.j, f.d, "save", x); }
+        check("action opens: its own step", f.j.size() == 2, std::to_string(f.j.size()));
+        for (const char* k : {"<Control>", "<Control>k"}) {
+            auto x = cur(); x.accel = k;
+            core::design::set_action(f.j, f.d, "save", x);
+        }
+        check("action key typing: one step, not folded into opens", f.j.size() == 3, std::to_string(f.j.size()));
+        { auto x = cur(); x.title = "Save it!"; core::design::set_action(f.j, f.d, "save", x); }
+        check("action: title after the key is a new step", f.j.size() == 4, std::to_string(f.j.size()));
+        f.j.undo(); f.j.undo();
+        check("action undo x2: key back, opens kept", cur().accel == "<Control>s" &&
+              cur().opens == core::kShortcutsTarget && cur().title == "Save it");
+        f.j.undo();
+        check("action undo x3: runs its hook again", cur().opens.empty() && cur().title == "Save it");
+        std::string why;
+        { auto x = cur(); x.opens = "not a form";
+          check("action: opens a non-name refused", !core::design::set_action(f.j, f.d, "save", x, &why) &&
+                why.find("isn't a form") != std::string::npos, why); }
+    }
+
     // ── s005: file dialogs -- typing folds per field, a tick or mode never ──
     {
         Fix f;

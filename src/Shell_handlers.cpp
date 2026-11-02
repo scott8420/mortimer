@@ -147,6 +147,20 @@ void Shell::on_add_form(const std::string& root_type) {  // handler: ask a name 
         });
 }
 
+void Shell::on_add_about() {  // handler: s010 + ▸ About dialog -> add_about -> generate
+    if (m_app_dir.empty()) { say("An About dialog belongs to a project -- open one, or File ▸ New Project.", 1); return; }
+    try {
+        core::add_about(m_app_dir);
+        core::generate_project(m_app_dir);
+        rebuild_forms_menu();
+        repaint();
+        say("Added About (forms/About.mort; your src/About.cpp shows the version). To show it: select the "
+            "window, and under Actions set an action to \"opens About\" -- then a menu row or a key runs it.");
+    } catch (const std::exception& e) {
+        say(e.what(), 2);
+    }
+}
+
 void Shell::on_open_form(const std::string& stem) {  // handler: another form of this project
     if (m_app_dir.empty()) return;
     open_path((std::filesystem::path(m_app_dir) / "forms" / (stem + ".mort")).string());

@@ -14,6 +14,10 @@
 #include <giomm/menuitem.h>
 
 #include <filesystem>
+#include <set>
+
+#include <gdkmm/display.h>
+#include <gtkmm/icontheme.h>
 
 // Shell_helpers.cpp -- HELPERS. The repaint (every pane from the model), the
 // document's files and title, the status line, recents.
@@ -109,6 +113,32 @@ void Shell::rebuild_forms_menu() {  // helper: the project's forms
     if (m_act_add_form) m_act_add_form->set_enabled(!m_app_dir.empty());
     if (m_act_add_dialog) m_act_add_dialog->set_enabled(!m_app_dir.empty());
     for (auto& a : m_act_add_res) a->set_enabled(!m_app_dir.empty());
+    // s010: what this form's actions may open, and whether + ▸ About… can add one.
+    {
+        std::vector<std::string> targets;
+        bool has_about = true;
+        if (!m_app_dir.empty()) {
+            try {
+                const auto pr = core::load_project(m_app_dir);
+                const std::string me = m_path.empty() ? "" : std::filesystem::path(m_path).stem().string();
+                for (const auto& f : pr.forms)
+                    if (f != me && f != pr.main_form) targets.push_back(f);
+                has_about = std::find(pr.forms.begin(), pr.forms.end(), "About") != pr.forms.end();
+            } catch (const std::exception&) {}
+        }
+        m_inspector.set_targets(std::move(targets));
+        // ...and the canvas draws the project's own icons (resources/icons/scalable/apps/*.svg),
+        // as the built app does from its bundle. Added once per project; GTK finds an
+        // unthemed <name>.svg in a search-path folder.
+        if (!m_app_dir.empty()) {
+            static std::set<std::string> added;
+            const std::string icons = (std::filesystem::path(m_app_dir) / "resources" / "icons" / "scalable" / "apps").string();
+            if (std::filesystem::is_directory(icons) && added.insert(icons).second)
+                if (auto display = Gdk::Display::get_default())
+                    Gtk::IconTheme::get_for_display(display)->add_search_path(icons);
+        }
+        if (m_act_add_about) m_act_add_about->set_enabled(!m_app_dir.empty() && !has_about);
+    }
     // s009: the navigator lists the same project (and its resources).
     m_project.repaint(m_app_dir, m_path.empty() ? "" : std::filesystem::path(m_path).stem().string());
     if (m_app_dir.empty()) {
