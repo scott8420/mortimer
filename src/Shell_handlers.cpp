@@ -114,26 +114,31 @@ void Shell::on_open_project() {  // handler: folder -> its main form
     });
 }
 
-void Shell::on_add_form() {  // handler: ask a name -> add_form -> open it
-    if (m_app_dir.empty()) { say("Add Form needs a project -- open one, or File ▸ New Project.", 1); return; }
+void Shell::on_add_form(const std::string& root_type) {  // handler: ask a name -> add_form -> open it
+    if (m_app_dir.empty()) { say("Adding a window needs a project -- open one, or File ▸ New Project.", 1); return; }
+    const bool dialog = root_type == "Dialog";
     if (!m_name_dialog) m_name_dialog = std::make_unique<designer::NameDialog>(*this);
     const std::string dir = m_app_dir;
     m_name_dialog->ask(
-        "Add Form", "The class name of the new window -- it becomes <Name>Ui (generated) and <Name> (yours).",
-        "Preferences",
+        dialog ? "Add Dialog" : "Add Window",
+        std::string("The class name of the new ") + (dialog ? "dialog" : "window") +
+            " -- it becomes <Name>Ui (generated) and <Name> (yours).",
+        dialog ? "PreferencesDialog" : "Preferences",
         [dir](const std::string& n) -> std::string {
             if (!core::is_identifier(n) || core::is_cpp_keyword(n)) return "\"" + n + "\" isn't a C++ class name";
             if (std::filesystem::exists(std::filesystem::path(dir) / "forms" / (n + ".mort"))) return n + " exists";
             return {};
         },
-        [this, dir](const std::string& n) {
-            confirm_discard([this, dir, n] {
+        [this, dir, root_type](const std::string& n) {
+            confirm_discard([this, dir, n, root_type] {
                 try {
-                    const std::string path = core::add_form(dir, n);
+                    const std::string path = core::add_form(dir, n, root_type);
                     core::generate_project(dir);
                     open_path(path);
                     say("Added " + n + " -- generated/" + n + "Ui.* and your include/" + n + ".hpp, src/" + n +
-                        ".cpp. Show it from your code: an instance, set_transient_for, present().");
+                        ".cpp. " + (root_type == "Dialog"
+                            ? std::string("Show it from your code: keep one (a member), then dlg.present_for(*this).")
+                            : std::string("Show it from your code: an instance, then present().")));
                 } catch (const std::exception& e) {
                     say(e.what(), 2);
                 }

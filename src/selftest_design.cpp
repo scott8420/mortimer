@@ -12,6 +12,8 @@
 #include "core/Project.hpp"
 
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <functional>
 #include <iostream>
 #include <string>
@@ -324,7 +326,21 @@ void selftest_design(const Check& check_) {
             try { core::add_form(app, "Prefs"); } catch (const std::exception&) { dup = true; }
             try { core::add_form(app, "class"); } catch (const std::exception&) { bad = true; }
             check("add_form: refuses a duplicate and a keyword", dup && bad);
+            // s004: a Dialog form -- modal + hides on close, and present_for().
+            std::string dlg;
+            try { dlg = core::add_form(app, "AskDialog", "Dialog"); } catch (const std::exception& e) { check("add_form Dialog", false, e.what()); }
+            bool badroot = false;
+            try { core::add_form(app, "X", "Box"); } catch (const std::exception&) { badroot = true; }
+            check("add_form: a Box isn't a window", badroot);
             const auto gen = core::generate_project(app);
+            {
+                std::ifstream h((fs::path(app) / "generated" / "AskDialogUi.hpp").string()), c((fs::path(app) / "generated" / "AskDialogUi.cpp").string());
+                std::stringstream hs, cs; hs << h.rdbuf(); cs << c.rdbuf();
+                check("Dialog: present_for(parent) generated", hs.str().find("void present_for(Gtk::Window& parent)") != std::string::npos);
+                check("Dialog: modal + hide_on_close always set",
+                      cs.str().find("set_modal(true)") != std::string::npos &&
+                      cs.str().find("set_hide_on_close(true)") != std::string::npos);
+            }
             check("add_form: the new form generates", gen.ok() &&
                   fs::exists(fs::path(app) / "generated" / "PrefsUi.hpp") &&
                   fs::exists(fs::path(app) / "include" / "Prefs.hpp"));

@@ -19,7 +19,8 @@ void Shell::bind_actions() {  // bindings: win.* + recents group
     add_action("save-as",       sigc::mem_fun(*this, &Shell::on_save_as));
     add_action("new-project",   sigc::mem_fun(*this, &Shell::on_new_project));
     add_action("open-project",  sigc::mem_fun(*this, &Shell::on_open_project));
-    m_act_add_form = add_action("add-form", sigc::mem_fun(*this, &Shell::on_add_form));
+    m_act_add_form = add_action("add-window", [this] { on_add_form("Window"); });
+    m_act_add_dialog = add_action("add-dialog", [this] { on_add_form("Dialog"); });
     add_action_with_parameter("open-form", Glib::Variant<Glib::ustring>::variant_type(),
         [this](const Glib::VariantBase& param) {
             on_open_form(Glib::VariantBase::cast_dynamic<Glib::Variant<Glib::ustring>>(param).get());

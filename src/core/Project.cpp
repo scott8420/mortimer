@@ -251,7 +251,9 @@ std::string project_of(const std::string& form_path) {
     return {};
 }
 
-std::string add_form(const std::string& app_dir, const std::string& name) {
+std::string add_form(const std::string& app_dir, const std::string& name, const std::string& root_type) {
+    if (root_type != "Window" && root_type != "Dialog")
+        throw std::runtime_error("a form's window is a Window or a Dialog, not " + root_type);
     if (!is_identifier(name) || is_cpp_keyword(name))
         throw std::runtime_error("\"" + name + "\" isn't a C++ class name");
     Project pr = load_project(app_dir);
@@ -263,7 +265,7 @@ std::string add_form(const std::string& app_dir, const std::string& name) {
     f.name = name;
     Node body{"Box", "body", {{"orientation", Value(std::string("vertical"))}, {"spacing", Value(std::int64_t{12})},
                               {"margin", Value(std::int64_t{18})}}, {}, {}, {}};
-    f.root = {"Window", snake(name), {{"title", Value(name)}, {"default_width", Value(std::int64_t{480})},
+    f.root = {root_type, snake(name), {{"title", Value(name)}, {"default_width", Value(std::int64_t{480})},
                                       {"default_height", Value(std::int64_t{320})}},
               {}, {}, {body}};
     save_form(f, path.string());

@@ -129,8 +129,9 @@ void selftest_generator(const Check& check) {
             std::string missing;
             for (const auto& w : core::catalog()) {
                 // ApplicationWindow shares Window's setters (same table entries).
-                const std::string as = w.type == "ApplicationWindow" ? "Window" : w.type;
-                if (!props.count(w.type) && !sigs.count(w.type) && w.type != "ApplicationWindow")
+                const std::string as = (w.type == "ApplicationWindow" || w.type == "Dialog") ? "Window" : w.type;
+                if (!props.count(w.type) && !sigs.count(w.type) && w.type != "ApplicationWindow" &&
+                    w.type != "Dialog")
                     missing += " " + w.type;
                 for (const auto& p : w.props)
                     if (!props[w.type].count(p.name) && !props[as].count(p.name))

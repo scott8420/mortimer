@@ -74,7 +74,7 @@ private:
     void on_save_as();                           // category: handler: file dialog -> save_to
     void on_new_project();                       // category: handler: ask -> create_workspace -> open its form
     void on_open_project();                      // category: handler: folder -> its main form
-    void on_add_form();                          // category: handler: ask a name -> add_form -> open it
+    void on_add_form(const std::string& root_type);   // category: handler: ask a name -> add_form (Window / Dialog) -> open it
     void on_open_form(const std::string& stem);  // category: handler: another form of this project
     void on_undo();                              // category: handler
     void on_redo();                              // category: handler
@@ -152,7 +152,7 @@ private:
     Glib::RefPtr<Gio::SimpleAction> m_recents_clear;
     Glib::RefPtr<Gio::Menu>         m_edit_menu;
     Glib::RefPtr<Gio::Menu>         m_forms_menu;     // this project's forms, rebuilt on load
-    Glib::RefPtr<Gio::SimpleAction> m_act_add_form;
+    Glib::RefPtr<Gio::SimpleAction> m_act_add_form, m_act_add_dialog;
     Glib::RefPtr<Gio::SimpleAction> m_act_undo, m_act_redo, m_act_delete, m_act_up, m_act_down;
 
     std::unique_ptr<AboutWindow>     m_about;

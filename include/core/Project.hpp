@@ -72,7 +72,8 @@ std::string project_of(const std::string& form_path);
 // A new form in the project: forms/<name>.mort (a Window with an empty Box),
 // listed in mortimer.json. Throws with a readable message if the name isn't a
 // class name or the form exists. Returns the form's path. Doesn't generate.
-std::string add_form(const std::string& app_dir, const std::string& name);
+std::string add_form(const std::string& app_dir, const std::string& name,
+                     const std::string& root_type = "Window");   // or "Dialog" (s004)
 
 // The hooks report for a form as it is NOW (in memory, unsaved), against the
 // user's header and the last manifest on disk -- what the window's hooks panel

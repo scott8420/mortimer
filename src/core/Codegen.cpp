@@ -298,6 +298,14 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << "    ~" << ui << "() override;\n\n"
       << "    " << ui << "(const " << ui << "&) = delete;\n"
       << "    " << ui << "& operator=(const " << ui << "&) = delete;\n\n"
+      << (f.root.type == "Dialog"
+              ? "    // A dialog: make it transient for `parent` and show it. Built once, it hides\n"
+                "    // on close (the X), so calling this again re-presents the same window.\n"
+                "    void present_for(Gtk::Window& parent) {\n"
+                "        set_transient_for(parent);\n"
+                "        present();\n"
+                "    }\n\n"
+              : "")
       << "protected:\n";
     if (hooks.empty()) {
         h << "    // ── hooks: none ticked in the form yet ──\n\n";

@@ -70,7 +70,18 @@ std::vector<PropSpec> window_props() {
         i("default_width", "property_default_width().set_value({v})"),
         i("default_height", "property_default_height().set_value({v})"),
         b("resizable", "set_resizable({v})"),
+        // s004: what makes a window a dialog (always on for a Dialog root).
+        b("modal", "set_modal({v})", "Blocks its parent while it's up."),
+        b("hide_on_close", "set_hide_on_close({v})",
+          "The X hides it instead of destroying it -- build once, present() again."),
     };
+}
+
+std::vector<PropSpec> dialog_props() {
+    auto p = window_props();
+    for (auto& x : p)
+        if (x.name == "modal" || x.name == "hide_on_close") { x.def = "true"; x.always = true; }
+    return p;
 }
 std::vector<SignalSpec> window_signals() {
     return {{"close_request", "signal_close_request()", "bool", "", "false", true,
@@ -87,6 +98,12 @@ std::vector<WidgetSpec> build() {
     c.push_back({"Window", "Gtk::Window", "gtkmm/window.h", ChildKind::Window, true,
                  window_props(), window_signals(), {},
                  "A secondary window: a tool palette, an inspector, a preferences window."});
+    // s004: the dialog-lifetime stone, generated. A Gtk::Window that is modal
+    // and hides on close (built once, presented again -- never destroyed under
+    // a callback), with present_for(parent) to make it transient and show it.
+    c.push_back({"Dialog", "Gtk::Window", "gtkmm/window.h", ChildKind::Window, true,
+                 dialog_props(), window_signals(), {},
+                 "A dialog: modal, hides on close; your code calls present_for(*this) to show it over a window."});
 
     // ── containers ──────────────────────────────────────────────────────────
     c.push_back({"Box", "Gtk::Box", "gtkmm/box.h", ChildKind::Box, false,

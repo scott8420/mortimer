@@ -119,7 +119,8 @@ Glib::RefPtr<Gio::Menu> Shell::build_menu() {  // zone: hamburger model
     project->append("Open Project…", "win.open-project");
     m_forms_menu = Gio::Menu::create();
     project->append_submenu("Forms", m_forms_menu);
-    project->append("Add Form…", "win.add-form");
+    project->append("Add Window…", "win.add-window");
+    project->append("Add Dialog…", "win.add-dialog");
     menu->append_section(project);
 
     // Undo / Redo re-labelled live ("Undo Delete “ok”"), greyed when there's nothing.

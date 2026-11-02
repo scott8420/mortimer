@@ -107,6 +107,7 @@ void Shell::rebuild_forms_menu() {  // helper: the project's forms
     if (!m_forms_menu) return;
     m_forms_menu->remove_all();
     if (m_act_add_form) m_act_add_form->set_enabled(!m_app_dir.empty());
+    if (m_act_add_dialog) m_act_add_dialog->set_enabled(!m_app_dir.empty());
     if (m_app_dir.empty()) {
         m_forms_menu->append("(not in a project)", "win.none");
         return;
