@@ -558,16 +558,41 @@ bool set_model(DesignJournal& j, Design& d, const std::string& name, const Model
         }
         if (changed == 1) merge = "model:" + name + ":" + key;
     }
-    // A rename carries the ColumnViews that show it.
+    // A rename carries the ColumnViews that show it; a field renamed or removed
+    // carries their "editable" lists (s007) -- same step, so undo is exact.
+    std::map<std::string, std::string> renamed;   // old field -> new ("" = gone)
+    for (std::size_t i = 0; i < it->fields.size(); ++i) {
+        const auto& old = it->fields[i].name;
+        std::string to;
+        if (now.fields.size() == it->fields.size()) to = now.fields[i].name;
+        else for (const auto& x : now.fields) if (x.name == old) to = old;
+        renamed[old] = to;
+    }
     std::vector<Design::Id> ids{Design::kForm};
     std::map<Design::Id, Rec> views;
-    if (now.name != name)
-        for (const auto& k : views_of(d, name)) {
-            auto o = *d.get(k);
-            o.props["model"] = Value(now.name);
-            ids.push_back(k);
-            views[k] = o;
+    for (const auto& k : views_of(d, name)) {
+        auto o = *d.get(k);
+        bool changed = false;
+        if (now.name != name) { o.props["model"] = Value(now.name); changed = true; }
+        if (const auto e = o.props.find("editable"); e != o.props.end() && std::holds_alternative<StringList>(e->second)) {
+            StringList was = std::get<StringList>(e->second), is;
+            for (const auto& f : was) {
+                const auto r = renamed.find(f);
+                if (r == renamed.end()) is.push_back(f);           // not a field anyway: leave it to validate
+                // same count = positional: kept even while its name is typed empty
+                // (an Entry's select-all + type passes through ""), so it survives
+                else if (!r->second.empty() || now.fields.size() == it->fields.size()) is.push_back(r->second);
+            }
+            if (is != was) {
+                changed = true;
+                if (is.empty()) o.props.erase("editable");
+                else e->second = Value(is);
+            }
         }
+        if (!changed) continue;
+        ids.push_back(k);
+        views[k] = o;
+    }
     const std::string label = now.name != name ? "Rename model " + curly(name) : "Model " + curly(name);
     *it = now;
     return j.run(label, ids, [&] {
@@ -577,7 +602,7 @@ bool set_model(DesignJournal& j, Design& d, const std::string& name, const Model
 }
 
 bool set_prop(DesignJournal& j, Design& d, const Design::Id& id, const std::string& prop,
-              const std::optional<Value>& v) {
+              const std::optional<Value>& v, bool fold) {
     auto r = d.get(id);
     if (!r) return false;
     const WidgetSpec* w = find_widget(r->type);
@@ -585,7 +610,7 @@ bool set_prop(DesignJournal& j, Design& d, const Design::Id& id, const std::stri
     if (v) r->props[prop] = *v;
     else   r->props.erase(prop);
     return j.run(prop + " of " + curly(r->name), {id}, [&] { d.put(id, *r); },
-                 "prop:" + prop + ":" + id);
+                 fold ? "prop:" + prop + ":" + id : std::string());
 }
 
 bool set_pack(DesignJournal& j, Design& d, const Design::Id& id, const std::string& key,

@@ -195,35 +195,137 @@ std::vector<std::string> model_lines(const Form& f, const Node& n) {
     const ModelDef* m = model_of(f, n);
     if (!m) return out;
     const std::string item = model_item(*m), v = "m_" + n.id, store = v + "_store", sel = v + "_selection";
+    const std::string mode = view_selection(n);
     out.push_back("// the model: " + item + " rows -- fill " + store + "; a header click sorts");
     out.push_back(store + " = Gio::ListStore<" + item + ">::create();");
-    out.push_back(sel + " = Gtk::SingleSelection::create(Gtk::SortListModel::create(" + store + ", " + v + ".get_sorter()));");
-    out.push_back(sel + "->set_autoselect(false);");
-    out.push_back(sel + "->set_can_unselect(true);");
+    const std::string sorted = "Gtk::SortListModel::create(" + store + ", " + v + ".get_sorter())";
+    if (mode == "multiple") {
+        out.push_back(sel + " = Gtk::MultiSelection::create(" + sorted + ");   // Ctrl / Shift pick several");
+    } else if (mode == "none") {
+        out.push_back(sel + " = Gtk::NoSelection::create(" + sorted + ");   // rows can't be picked");
+    } else {
+        out.push_back(sel + " = Gtk::SingleSelection::create(" + sorted + ");");
+        out.push_back(sel + "->set_autoselect(false);");
+        out.push_back(sel + "->set_can_unselect(true);");
+    }
     out.push_back(v + ".set_model(" + sel + ");");
+    const std::string open_var = n.id + "_open";   // per view: two editable views share build_ui
+    bool text_edits = false;
+    for (const auto& x : m->fields) text_edits = text_edits || (x.type != "bool" && view_edits(n, x.name));
+    if (text_edits) {
+        // s007: a click on ANOTHER row doesn't take the keyboard from an open
+        // cell (GTK's list keeps it there) and the edit would be dropped -- so
+        // the view commits it itself: any press outside the open cell keeps
+        // what was typed, as Enter, Tab or a click elsewhere in the window do.
+        out.push_back("auto " + open_var + " = std::make_shared<Gtk::EditableLabel*>(nullptr);   // the open cell, if any");
+        out.push_back("{");
+        out.push_back("    auto commit = Gtk::GestureClick::create();");
+        out.push_back("    commit->set_propagation_phase(Gtk::PropagationPhase::CAPTURE);");
+        out.push_back("    commit->signal_pressed().connect([this, " + open_var + "](int, double x, double y) {");
+        out.push_back("        Gtk::EditableLabel* open = *" + open_var + ";");
+        out.push_back("        if (!open) return;");
+        out.push_back("        auto* hit = " + v + ".pick(x, y);");
+        out.push_back("        if (hit && (hit == open || hit->is_ancestor(*open))) return;   // inside the open cell");
+        out.push_back("        open->stop_editing(true);");
+        out.push_back("    });");
+        out.push_back("    " + v + ".add_controller(commit);");
+        out.push_back("}");
+    }
     for (const auto& x : m->fields) {
         const bool check = x.type == "bool";
-        const std::string widget = check ? "Gtk::CheckButton" : "Gtk::Label";
+        const bool edit = view_edits(n, x.name);
+        // s007: an editable text / number cell is a Gtk::EditableLabel -- it reads
+        // like a label, edits on a double-click or Enter, Escape puts it back.
+        const std::string widget = check ? "Gtk::CheckButton" : edit ? "Gtk::EditableLabel" : "Gtk::Label";
         std::string text = "item->" + x.name;
         if (x.type == "int") text = "std::to_string(item->" + x.name + ")";
         if (x.type == "double") text = "Glib::ustring::format(item->" + x.name + ")";
-        out.push_back("{   // column " + x.name + " (" + x.type + ")");
+        out.push_back("{   // column " + x.name + " (" + x.type + (edit ? ", editable" : "") + ")");
         out.push_back("    auto factory = Gtk::SignalListItemFactory::create();");
-        out.push_back("    factory->signal_setup().connect([](const Glib::RefPtr<Gtk::ListItem>& cell) {");
+        out.push_back(std::string("    factory->signal_setup().connect([") + (edit ? (check ? std::string("this") : "this, " + open_var) : "") +
+                      "](const Glib::RefPtr<Gtk::ListItem>& cell) {");
         if (check) {
             out.push_back("        auto* w = Gtk::make_managed<Gtk::CheckButton>();");
-            out.push_back("        w->set_can_target(false);   // shows the value; read-only");
-            out.push_back("        w->set_focusable(false);");
+            if (!edit) {
+                out.push_back("        w->set_can_target(false);   // shows the value; read-only");
+                out.push_back("        w->set_focusable(false);");
+            }
             out.push_back("        w->set_halign(Gtk::Align::CENTER);");
+        } else if (edit) {
+            // GTK's EditableLabel edits on a SINGLE click -- in a table that turns
+            // every row pick into an edit. So it can't be clicked; the box around
+            // it takes a double-click, claims it (the row's double-click, activated,
+            // doesn't also fire) and starts editing. A focused cell edits on Enter.
+            out.push_back("        auto* box = Gtk::make_managed<Gtk::Box>();");
+            out.push_back("        auto* w = Gtk::make_managed<Gtk::EditableLabel>();");
+            out.push_back(std::string("        w->set_alignment(") + (x.type == "string" ? "0" : "1") + ");");
+            out.push_back("        w->set_hexpand(true);");
+            out.push_back("        w->set_can_target(false);   // a click picks the row; a double-click edits");
+            out.push_back("        box->append(*w);");
+            out.push_back("        auto click = Gtk::GestureClick::create();");
+            out.push_back("        click->signal_pressed().connect([w, c = click.get()](int presses, double, double) {");
+            out.push_back("            if (presses != 2 || w->get_editing()) return;");
+            out.push_back("            c->set_state(Gtk::EventSequenceState::CLAIMED);");
+            out.push_back("            w->set_can_target(true);");
+            out.push_back("            w->start_editing();");
+            out.push_back("        });");
+            out.push_back("        box->add_controller(click);");
+            out.push_back("        w->signal_unmap().connect([w] { if (w->get_editing()) w->stop_editing(true); });   // scrolled away / closed: keep it");
         } else {
             out.push_back("        auto* w = Gtk::make_managed<Gtk::Label>();");
             out.push_back(std::string("        w->set_xalign(") + (x.type == "string" ? "0" : "1") + ");");
         }
-        out.push_back("        cell->set_child(*w);");
+        if (edit) {
+            // The write-back. The cell is recycled across rows, so it asks the
+            // ListItem for ITS row at the moment of the edit (a raw pointer: the
+            // ListItem owns this widget, so it outlives the lambda). Writing only
+            // when the value differs makes bind's own set_* harmless.
+            out.push_back("        auto* li = cell.get();");
+            if (check) {
+                out.push_back("        w->signal_toggled().connect([this, w, li] {");
+                out.push_back("            auto item = std::dynamic_pointer_cast<" + item + ">(li->get_item());");
+                out.push_back("            if (!item || item->" + x.name + " == w->get_active()) return;");
+                out.push_back("            item->" + x.name + " = w->get_active();");
+            } else {
+                out.push_back("        w->property_editing().signal_changed().connect([this, w, li, " + open_var + "] {");
+                out.push_back("            if (w->get_editing()) { *" + open_var + " = w; return; }");
+                out.push_back("            // ended: Enter / Tab / a click elsewhere (kept) or Escape (put back)");
+                out.push_back("            if (*" + open_var + " == w) *" + open_var + " = nullptr;");
+                out.push_back("            w->set_can_target(false);");
+                out.push_back("            auto item = std::dynamic_pointer_cast<" + item + ">(li->get_item());");
+                out.push_back("            if (!item) return;");
+                if (x.type == "string") {
+                    out.push_back("            const std::string now = w->get_text();");
+                    out.push_back("            if (now == item->" + x.name + ") return;");
+                    out.push_back("            item->" + x.name + " = now;");
+                } else {
+                    out.push_back("            " + field_cpp_type(x.type) + " now{};");
+                    out.push_back("            if (!parse_cell(w->get_text(), now)) {   // not a number: put it back");
+                    out.push_back("                if (auto lg = log::get(log::Area::Ui))");
+                    out.push_back("                    lg->warn(" + cpp_string(n.id + "." + x.name + ": \"{}\" isn't " +
+                                                              (x.type == "int" ? "a whole number" : "a number") +
+                                                              " -- kept {}") + ", std::string(w->get_text()), std::string(" + text + "));");
+                    out.push_back("                w->set_text(" + text + ");");
+                    out.push_back("                return;");
+                    out.push_back("            }");
+                    out.push_back(std::string("            w->set_text(") +
+                                  (x.type == "int" ? "std::to_string(now)" : "Glib::ustring::format(now)") +
+                                  ");   // as the column shows it (\" 07\" -> \"7\")");
+                    out.push_back("            if (now == item->" + x.name + ") return;");
+                    out.push_back("            item->" + x.name + " = now;");
+                }
+            }
+            out.push_back("            " + v + "_edited.emit(item, " + cpp_string(x.name) + ");");
+            out.push_back("        });");
+        }
+        const bool boxed = edit && !check;
+        out.push_back(std::string("        cell->set_child(") + (boxed ? "*box" : "*w") + ");");
         out.push_back("    });");
         out.push_back("    factory->signal_bind().connect([](const Glib::RefPtr<Gtk::ListItem>& cell) {");
         out.push_back("        auto item = std::dynamic_pointer_cast<" + item + ">(cell->get_item());");
-        out.push_back("        if (auto* w = dynamic_cast<" + widget + "*>(cell->get_child()); item && w)");
+        out.push_back("        if (auto* w = dynamic_cast<" + widget + "*>(" +
+                      (boxed ? "cell->get_child() ? cell->get_child()->get_first_child() : nullptr"
+                             : "cell->get_child()") + "); item && w)");
         out.push_back(check ? "            w->set_active(item->" + x.name + ");"
                             : "            w->set_text(" + text + ");");
         out.push_back("    });");
@@ -246,6 +348,47 @@ std::vector<std::string> model_lines(const Form& f, const Node& n) {
         out.push_back("}");
     }
     return out;
+}
+
+// s007 -- each ColumnView with editable cells has a signal its cells emit
+// after writing the row; bind_hooks connects it to on_<id>_edited (in m_hooks,
+// so the destructor cuts it before any widget goes).
+std::string edited_members(const Form& f, const std::vector<const Node*>& members) {
+    std::string out;
+    for (const Node* m : members) {
+        const ModelDef* md = model_of(f, *m);
+        if (!md || view_editable(*m).empty()) continue;
+        out += "    sigc::signal<void(const Glib::RefPtr<" + model_item(*md) + ">&, const std::string&)> m_" +
+               m->id + "_edited;   // " + m->id + "'s cells: (row, field)\n";
+    }
+    return out;
+}
+
+bool edits_numbers(const Form& f) {
+    bool any = false;
+    walk(f.root, [&](const Node& n, const Node*) {
+        const ModelDef* md = n.type == "ColumnView" ? model_of(f, n) : nullptr;
+        if (!md) return;
+        for (const auto& x : md->fields)
+            any = any || ((x.type == "int" || x.type == "double") && view_edits(n, x.name));
+    });
+    return any;
+}
+
+std::string parse_helpers(const Form& f) {
+    if (!edits_numbers(f)) return "";
+    return "namespace {\n"
+           "// s007: an edited number cell's text -> the value. Spaces around it are fine;\n"
+           "// anything else that isn't the whole number refuses (the cell puts it back).\n"
+           "template <class T> bool parse_cell(const Glib::ustring& text, T& out) {\n"
+           "    std::string s = text;\n"
+           "    while (!s.empty() && s.front() == ' ') s.erase(0, 1);\n"
+           "    while (!s.empty() && s.back() == ' ') s.pop_back();\n"
+           "    if (!s.empty() && s.front() == '+') s.erase(0, 1);\n"
+           "    const auto [end, ec] = std::from_chars(s.data(), s.data() + s.size(), out);\n"
+           "    return !s.empty() && ec == std::errc() && end == s.data() + s.size();\n"
+           "}\n"
+           "}  // namespace\n\n";
 }
 
 void build_node(const Form& f, const Node& n, bool is_root, std::vector<std::string>& lines) {
@@ -331,7 +474,14 @@ std::vector<Hook> hooks_of(const Form& f) {
                 const auto it = n.props.find("model");
                 const std::string item = it != n.props.end() && std::holds_alternative<std::string>(it->second)
                                              ? std::get<std::string>(it->second) + "Item" : "Glib::ObjectBase";
-                params = "const Glib::RefPtr<" + item + ">& item";
+                params = h.signal == "selected" && view_selection(n) == "multiple"
+                             ? "const std::vector<Glib::RefPtr<" + item + ">>& items"   // s007: every picked row
+                             : "const Glib::RefPtr<" + item + ">& item";
+            } else if (params == "{item_field}") {   // s007: an edited cell -- its row and its field
+                const auto it = n.props.find("model");
+                const std::string item = it != n.props.end() && std::holds_alternative<std::string>(it->second)
+                                             ? std::get<std::string>(it->second) + "Item" : "Glib::ObjectBase";
+                params = "const Glib::RefPtr<" + item + ">& item, const std::string& field";
             }
             out.push_back({hook_name(n, h), s->ret, params, s->ret_default, n.id, n.type,
                            h.signal, h.required});
@@ -462,7 +612,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << "#include <" << rootw->header << ">\n"
       << (f.actions.empty() ? "" : "#include <giomm/simpleactiongroup.h>\n")
       << (f.files.empty() ? "" : "#include <giomm/cancellable.h>\n")
-      << (f.models.empty() ? "" : "#include <glibmm/object.h>\n#include <glibmm/refptr.h>\n#include <cstdint>\n#include <set>\n#include <string>\n")
+      << (f.models.empty() ? "" : "#include <glibmm/object.h>\n#include <glibmm/refptr.h>\n#include <sigc++/signal.h>\n#include <cstdint>\n#include <set>\n#include <string>\n")
       << "#include <sigc++/connection.h>\n"
       << (f.files.empty() ? "" : "#include <map>\n#include <memory>\n#include <string>\n")
       << "#include <vector>\n\n"
@@ -554,12 +704,15 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
         if (!md) continue;
         h << "    // " << m->id << "'s rows: append " << model_item(*md) << "::create(...) here; the table follows\n"
           << "    Glib::RefPtr<Gio::ListStore<" << model_item(*md) << ">> m_" << m->id << "_store;\n"
-          << "    Glib::RefPtr<Gtk::SingleSelection> m_" << m->id << "_selection;   // over the sorted rows\n\n";
+          << "    Glib::RefPtr<Gtk::" << (view_selection(*m) == "multiple" ? "MultiSelection" :
+                                        view_selection(*m) == "none" ? "NoSelection" : "SingleSelection")
+          << "> m_" << m->id << "_selection;   // over the sorted rows\n\n";
     }
     h << "private:\n"
       << "    void build_ui();     // construct: properties, then packing, top-down\n"
       << "    void bind_hooks();   // every ticked signal -> its hook (last, so no setter fires one)\n"
       << "    std::vector<sigc::connection> m_hooks;   // cut first in the destructor\n"
+      << edited_members(f, members)
       << (f.actions.empty() ? "" : rootw->type == "ApplicationWindow" ? "" :
           "    Glib::RefPtr<Gio::SimpleActionGroup> m_actions;   // \"win.*\" (a plain Window has no action map)\n")
       << (f.files.empty() ? "" :
@@ -587,6 +740,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
           "#include <gtkmm/filefilter.h>\n")
       << "\n"
       << "namespace " << app.ns << "::ui {\n\n"
+      << parse_helpers(f)
       << ui << "::" << ui << "()";
     for (std::size_t i = 0; i < members.size(); ++i)
         c << (i == 0 ? "\n    : " : "\n    , ") << "m_" << members[i]->id << "("
@@ -649,7 +803,22 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
                 const ModelDef* md = model_of(f, n);
                 if (!md) continue;
                 const std::string item = model_item(*md), sel = "m_" + n.id + "_selection";
-                if (hk.signal == "activated")
+                if (hk.signal == "edited") {   // s007: the cells emit it after writing the row
+                    c << "    m_hooks.push_back(m_" << n.id << "_edited.connect(\n"
+                      << "        sigc::mem_fun(*this, &" << ui << "::" << hook_name(n, hk) << ")));\n";
+                    continue;
+                }
+                if (hk.signal == "selected" && view_selection(n) == "multiple")
+                    c << "    m_hooks.push_back(" << sel << "->signal_selection_changed().connect([this](guint, guint) {\n"
+                      << "        std::vector<Glib::RefPtr<" << item << ">> items;   // every picked row, in the order you see\n"
+                      << "        const auto picked = " << sel << "->get_selection();\n"
+                      << "        for (guint i = 0, n = static_cast<guint>(picked->get_size()); i < n; ++i)\n"
+                      << "            if (auto it = std::dynamic_pointer_cast<" << item << ">(" << sel
+                      << "->get_object(picked->get_nth(i))))\n"
+                      << "                items.push_back(it);\n"
+                      << "        " << hook_name(n, hk) << "(items);\n"
+                      << "    }));\n";
+                else if (hk.signal == "activated")
                     c << "    m_hooks.push_back(m_" << n.id << ".signal_activate().connect([this](guint position) {\n"
                       << "        " << hook_name(n, hk) << "(std::dynamic_pointer_cast<" << item << ">(" << sel
                       << "->get_object(position)));\n"

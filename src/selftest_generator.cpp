@@ -623,4 +623,88 @@ class X : public ui::XUi {
         check("codegen table: selected -> the selected row (null for none)",
               has(c, "m_notes_selection->get_selected_item()"), "");
     }
+
+    // ── s007: editable cells, multi-selection ───────────────────────────────
+    {
+        using core::Value;
+        auto table = [] {
+            auto f = small_form();
+            core::Node cv{"ColumnView", "notes", {}, {}, {{"selected", false, ""}, {"edited", false, ""}}, {}};
+            cv.props["model"] = Value(std::string("Note"));
+            cv.props["selection"] = Value(std::string("multiple"));
+            cv.props["editable"] = Value(core::StringList{"title", "count", "done"});
+            f.root.children[0].children.push_back(cv);
+            f.models = {{"Note", {{"title", "string", ""}, {"count", "int", ""}, {"weight", "double", ""},
+                                  {"done", "bool", ""}}}};
+            return f;
+        };
+        const auto f = table();
+        check("edit: the probe validates", errors_of(f).empty(), errors_of(f).empty() ? "" : errors_of(f)[0]);
+        check("edit: helpers read the node", core::view_selection(f.root.children[0].children.back()) == "multiple" &&
+                                             core::view_edits(f.root.children[0].children.back(), "count") &&
+                                             !core::view_edits(f.root.children[0].children.back(), "weight"), "");
+        { auto g = f; g.root.children[0].children.back().props["editable"] = Value(core::StringList{"nope"});
+          check("validate edit: a field the model lacks", any_error_has(g, "Note has no such field"), ""); }
+        { auto g = f; g.root.children[0].children.back().props["editable"] = Value(core::StringList{"title", "title"});
+          check("validate edit: a field twice", any_error_has(g, "names title twice"), ""); }
+        { auto g = f; g.root.children[0].children.back().props.erase("model");
+          g.root.children[0].children.back().signals.clear();
+          check("validate edit: editable without a model", any_error_has(g, "pick a model first"), ""); }
+        { auto g = f; g.root.children[0].children.back().props["selection"] = Value(std::string("none"));
+          check("validate edit: selected hooked, selection none", any_error_has(g, "nothing can be picked"), ""); }
+        { auto g = f; g.root.children[0].children.back().props["selection"] = Value(std::string("some"));
+          check("validate edit: an unknown selection", any_error_has(g, "single, multiple, none"), ""); }
+        { auto g = f; g.root.children[0].children.back().props.erase("editable");
+          bool warned = false;
+          for (const auto& i : core::validate(g)) warned = warned || (!i.error && i.what.find("no cell is editable") != std::string::npos);
+          check("validate edit: edited hooked, nothing editable -> a warning", warned && errors_of(g).empty(), ""); }
+        { auto g = f; g.root.children[0].children.push_back({"Label", "notes_edited", {}, {}, {}, {}});
+          check("validate edit: a widget named like its signal", any_error_has(g, "m_notes_edited"), ""); }
+
+        const core::AppInfo app = core::derive_app("Probe Tool");
+        const auto out = core::generate_form(f, app);
+        const std::string& h = out[0].content;
+        const std::string& c = out[1].content;
+        check("codegen edit: multiple -> a MultiSelection member",
+              has(h, "Glib::RefPtr<Gtk::MultiSelection> m_notes_selection;") &&
+              has(c, "m_notes_selection = Gtk::MultiSelection::create("), "");
+        check("codegen edit: selected hands you every picked row",
+              has(h, "virtual void on_notes_selected(const std::vector<Glib::RefPtr<NoteItem>>& items);") &&
+              has(c, "m_notes_selection->get_selection();") && has(c, "picked->get_nth(i)"), "");
+        check("codegen edit: edited hook takes (row, field)",
+              has(h, "virtual void on_notes_edited(const Glib::RefPtr<NoteItem>& item, const std::string& field);"), "");
+        check("codegen edit: the cells' signal is a member, connected in m_hooks",
+              has(h, "sigc::signal<void(const Glib::RefPtr<NoteItem>&, const std::string&)> m_notes_edited;") &&
+              has(c, "m_hooks.push_back(m_notes_edited.connect("), "");
+        check("codegen edit: text / number cells are EditableLabels, double-click to edit",
+              has(c, "Gtk::make_managed<Gtk::EditableLabel>()") && has(c, "presses != 2") &&
+              has(c, "w->start_editing();") && has(c, "EventSequenceState::CLAIMED"), "");
+        check("codegen edit: written only when it differs, then emitted",
+              has(c, "if (now == item->title) return;") && has(c, "item->title = now;") &&
+              has(c, "m_notes_edited.emit(item, \"title\");"), "");
+        check("codegen edit: a number is parsed; not a number is put back",
+              has(c, "template <class T> bool parse_cell(") && has(c, "if (!parse_cell(w->get_text(), now))") &&
+              has(c, "isn't a whole number"), "");
+        check("codegen edit: an editable bool is a live check",
+              has(c, "w->signal_toggled().connect(") && has(c, "item->done = w->get_active();"), "");
+        check("codegen edit: a click outside commits the open cell",
+              has(c, "auto notes_open = std::make_shared<Gtk::EditableLabel*>(nullptr);") &&
+              has(c, "set_propagation_phase(Gtk::PropagationPhase::CAPTURE)") && has(c, "open->stop_editing(true);"), "");
+        check("codegen edit: a non-editable column stays a Label",
+              has(c, "column weight (double)\n") || has(c, "column weight (double)"), "");
+        { auto g = f; g.root.children[0].children.back().props["editable"] = Value(core::StringList{"title"});
+          check("codegen edit: no number edits -> no parse helper",
+                !has(core::generate_form(g, app)[1].content, "parse_cell"), ""); }
+        { auto g = f; auto& v = g.root.children[0].children.back();
+          v.props["selection"] = Value(std::string("none")); v.signals = {{"activated", false, ""}};
+          const auto o = core::generate_form(g, app);
+          check("codegen edit: none -> a NoSelection, activate still finds the row",
+                has(o[0].content, "Glib::RefPtr<Gtk::NoSelection> m_notes_selection;") &&
+                has(o[1].content, "Gtk::NoSelection::create(") &&
+                has(o[1].content, "m_notes_selection->get_object(position)"), ""); }
+        { auto g = f; g.root.children[0].children.back().props.erase("editable");
+          const auto o = core::generate_form(g, app);
+          check("codegen edit: nothing editable -> no signal member, no EditableLabel",
+                !has(o[0].content, "m_notes_edited") && !has(o[1].content, "EditableLabel"), ""); }
+    }
 }

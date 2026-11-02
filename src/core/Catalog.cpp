@@ -215,15 +215,29 @@ std::vector<WidgetSpec> build() {
                       "One of the form's models: its rows are the table's, a column per field."),
                   b("show_row_separators", "set_show_row_separators({v})", "A line between rows."),
                   b("show_column_separators", "set_show_column_separators({v})", "A line between columns."),
-                  b("reorderable", "set_reorderable({v})", "Columns can be dragged into another order.")},
+                  b("reorderable", "set_reorderable({v})", "Columns can be dragged into another order."),
+                  // s007: how rows are picked, and which cells the user may change.
+                  [] {   // def: what the inspector shows while it's unset (s007 m2)
+                      auto p = e("selection", "{model}", {{"single", ""}, {"multiple", ""}, {"none", ""}},
+                                 "single: one row (or none); multiple: Ctrl / Shift pick several; none: rows can't be picked.");
+                      p.def = "single";
+                      return p;
+                  }(),
+                  list("editable", "{model}",
+                       "The fields the user may change in place: text and numbers edit on a double-click "
+                       "or Enter, a bool is a live check. The row's member is written, then edited fires.")},
                  {{"activated", "{model}", "void", "{item}", "", false,
                    "A row was double-clicked or Enter was pressed on it: item is that row."},
                   {"selected", "{model}", "void", "{item}", "", false,
-                   "The selection moved (item is null when nothing is selected)."}},
+                   "The selection moved (item is null when nothing is selected; "
+                   "with selection multiple you get every picked row)."},
+                  {"edited", "{model}", "void", "{item_field}", "", false,
+                   "The user changed an editable cell: item's member is already written; field names it."}},
                  {"giomm/liststore.h", "gtkmm/singleselection.h", "gtkmm/sortlistmodel.h",
                   "gtkmm/signallistitemfactory.h", "gtkmm/columnviewcolumn.h", "gtkmm/listitem.h",
                   "gtkmm/stringsorter.h", "gtkmm/numericsorter.h", "gtkmm/expression.h",
-                  "gtkmm/label.h", "gtkmm/checkbutton.h"},
+                  "gtkmm/label.h", "gtkmm/checkbutton.h", "gtkmm/multiselection.h",
+                  "gtkmm/noselection.h", "gtkmm/bitset.h", "gtkmm/editablelabel.h", "gtkmm/gestureclick.h", "gtkmm/box.h", "memory", "charconv"},
                  "A table of records: rows of one of the form's models, a column per field. "
                  "Click a header to sort. Put it in a ScrolledWindow."});
     c.push_back({"Image", "Gtk::Image", "gtkmm/image.h", ChildKind::None, false,

@@ -331,6 +331,24 @@ const ModelDef* find_model(const Form& f, const std::string& name) {
     return nullptr;
 }
 
+std::string view_selection(const Node& n) {
+    const auto it = n.props.find("selection");
+    if (it == n.props.end() || !std::holds_alternative<std::string>(it->second)) return "single";
+    const auto& v = std::get<std::string>(it->second);
+    return v == "multiple" || v == "none" ? v : "single";
+}
+
+StringList view_editable(const Node& n) {
+    const auto it = n.props.find("editable");
+    return it != n.props.end() && std::holds_alternative<StringList>(it->second)
+               ? std::get<StringList>(it->second) : StringList{};
+}
+
+bool view_edits(const Node& n, const std::string& field) {
+    const auto e = view_editable(n);
+    return std::find(e.begin(), e.end(), field) != e.end();
+}
+
 FileFilterRow parse_file_filter(const std::string& s) {
     FileFilterRow r;
     const auto eq = s.find('=');
@@ -539,7 +557,32 @@ std::vector<Issue> validate(const Form& f) {
                 if (!n.signals.empty()) err(where, "its hooks hand you a row of its model -- pick a model first");
                 else warn(where, "shows nothing until it has a model");
             }
-            for (const char* m : {"_store", "_selection"})
+            // s007: editable cells name fields of its model; picking must allow the hooks.
+            const ModelDef* md = n.props.count("model") && std::holds_alternative<std::string>(n.props.at("model"))
+                                     ? find_model(f, std::get<std::string>(n.props.at("model"))) : nullptr;
+            const StringList ed = view_editable(n);
+            std::set<std::string> eseen;
+            for (const auto& e : ed) {
+                if (!eseen.insert(e).second) { err(where, "\"editable\" names " + e + " twice"); continue; }
+                if (!md) {
+                    if (n.props.count("model")) continue;   // the unknown model is already an error
+                    err(where, "\"editable\" names fields of its model -- pick a model first");
+                    break;
+                }
+                bool found = false;
+                for (const auto& x : md->fields) found = found || x.name == e;
+                if (!found) err(where, "\"editable\" names " + e + " -- " + md->name + " has no such field");
+            }
+            bool hooked_edit = false, hooked_pick = false;
+            for (const auto& h : n.signals) {
+                hooked_edit = hooked_edit || h.signal == "edited";
+                hooked_pick = hooked_pick || h.signal == "selected";
+            }
+            if (hooked_edit && ed.empty())
+                warn(where, "edited is hooked but no cell is editable -- tick fields in \"editable\"");
+            if (hooked_pick && view_selection(n) == "none")
+                err(where, "selected is hooked but selection is none -- nothing can be picked (single or multiple, or untick it)");
+            for (const char* m : {"_store", "_selection", "_edited"})
                 if (ids.count(n.id + m))
                     err(where, "the generated class has m_" + n.id + m + " -- widget \"" + n.id + m + "\" collides");
         }

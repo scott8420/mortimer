@@ -153,8 +153,9 @@ bool set_model(DesignJournal& j, Design& d, const std::string& name, const Model
 
 // A property: a value, or nullopt to clear it back to GTK's default. Typing in
 // one field folds into one step (merge key "prop:<key>:<name>").
+// fold=false (s007: a tick in a checklist) is always its own step.
 bool set_prop(DesignJournal& j, Design& d, const Design::Id& id, const std::string& prop,
-              const std::optional<Value>& v);
+              const std::optional<Value>& v, bool fold = true);
 bool set_pack(DesignJournal& j, Design& d, const Design::Id& id, const std::string& key,
               const std::optional<Value>& v);
 // Signals: tick one (a hook), untick it, mark it required (pure virtual).

@@ -107,6 +107,12 @@ std::string model_item(const ModelDef& m);           // "Note" -> "NoteItem"
 std::string field_cpp_type(const std::string& t);    // string -> std::string, int -> std::int64_t ...
 std::string field_title(const FieldDef& f);          // the header shown
 const ModelDef* find_model(const Form& f, const std::string& name);
+// s007 -- a ColumnView's picking and editing. selection: "single" (the
+// default, also for an unknown value), "multiple" or "none". editable: the
+// field names the user may change in place (as written; validate checks them).
+std::string view_selection(const Node& n);
+StringList  view_editable(const Node& n);
+bool        view_edits(const Node& n, const std::string& field);
 
 // s005 -- file dialogs.
 inline const StringList& file_modes() {

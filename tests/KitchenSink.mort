@@ -72,8 +72,18 @@
                 "children": [
                   { "type": "ColumnView", "id": "notes",
                     "props": { "model": "Note", "show_row_separators": true, "show_column_separators": true,
-                               "reorderable": true },
-                    "signals": [ "activated", "selected" ] }
+                               "reorderable": true, "editable": ["title", "count", "weight", "done"] },
+                    "signals": [ "activated", "selected", "edited" ] }
+                ] },
+              { "type": "Box", "id": "picks_box", "pack": { "name": "picks", "title": "Picks" },
+                "props": { "orientation": "vertical" },
+                "children": [
+                  { "type": "ColumnView", "id": "picks",
+                    "props": { "model": "Note", "selection": "multiple", "editable": ["due_date"] },
+                    "signals": [ "selected", "edited" ] },
+                  { "type": "ColumnView", "id": "shown",
+                    "props": { "model": "Note", "selection": "none" },
+                    "signals": [ "activated" ] }
                 ] },
               { "type": "Box", "id": "buttons", "pack": { "name": "buttons", "title": "Buttons" },
                 "props": { "orientation": "vertical", "spacing": 8 },

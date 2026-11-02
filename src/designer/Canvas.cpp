@@ -393,12 +393,19 @@ bool Canvas::apply_one(Gtk::Widget& w, const core::Rec& r, const std::string& p,
         for (const auto& m : f->models)
             if (m.name == std::get<std::string>(v))
                 for (const auto& x : m.fields) {
-                    auto col = Gtk::ColumnViewColumn::create(core::field_title(x), Gtk::SignalListItemFactory::create());
+                    // s007: an editable column wears a pencil -- a designer affordance only.
+                    const auto ed = r.props.find("editable");
+                    const bool pencil = ed != r.props.end() && std::holds_alternative<core::StringList>(ed->second) &&
+                                        std::ranges::count(std::get<core::StringList>(ed->second), x.name) > 0;
+                    auto col = Gtk::ColumnViewColumn::create(core::field_title(x) + (pencil ? " \u270E" : ""),
+                                                             Gtk::SignalListItemFactory::create());
                     col->set_expand(x.type == "string");
                     cv->append_column(col);
                 }
         return true;
     }
+    if ((p == "editable" || p == "selection") && r.type == "ColumnView")
+        return true;   // s007: run-time behaviour; "model" above marks the editable headers
     if (p == "stack" && r.type == "StackSidebar" && std::holds_alternative<std::string>(v)) {
         m_refs.emplace_back(&w, std::get<std::string>(v));
         return true;

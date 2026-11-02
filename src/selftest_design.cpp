@@ -324,6 +324,51 @@ void selftest_design(const Check& check_) {
           check("model: an unknown field type is refused", !core::design::set_model(f.j, f.d, "Note", m, &why), why); }
     }
 
+    // ── s007: a field renamed / removed carries the views' "editable" ───────
+    {
+        auto fx = core::design::fixture();
+        fx.root.children[1].children.push_back({"ColumnView", "table",
+            {{"model", Value(std::string("Note"))}, {"editable", Value(core::StringList{"title"})}}, {}, {}, {}});
+        Fix f(fx);
+        const auto table = f.d.find("table");
+        auto editable = [&] { return core::view_editable(f.d.to_form().root.children[1].children.back()); };
+        auto m = f.d.to_form().models.front();
+        const std::string first = m.fields[0].name;
+        check("edit carry: fixture edits the first field", first == "title" && editable() == core::StringList{"title"});
+        m.fields[0].name = "name";
+        core::design::set_model(f.j, f.d, "Note", m);
+        check("edit carry: a field rename follows, one step", editable() == core::StringList{"name"} && f.j.size() == 1);
+        check("edit carry: still validates", first_error(f.d.to_form()).empty(), first_error(f.d.to_form()));
+        f.j.undo();
+        check("edit carry+undo: back", editable() == core::StringList{"title"});
+        for (const char* t : {"", "n", "na"}) {   // select-all + type passes through ""
+            auto k = f.d.to_form().models.front();
+            k.fields[0].name = t;
+            core::design::set_model(f.j, f.d, "Note", k);
+        }
+        check("edit carry: typing through an empty name keeps the tick", editable() == core::StringList{"na"},
+              editable().empty() ? "(none)" : editable()[0]);
+        f.j.undo();
+        { auto k = f.d.to_form().models.front();
+          k.fields.erase(k.fields.begin());
+          if (k.fields.empty()) k.fields.push_back({"other", "string", ""});
+          core::design::set_model(f.j, f.d, "Note", k);
+          check("edit carry: a removed field leaves editable", editable().empty() &&
+                                                                !f.d.get(table)->props.count("editable"));
+          check("edit carry: removal still validates", first_error(f.d.to_form()).empty(), first_error(f.d.to_form()));
+          f.j.undo();
+          check("edit carry: removal+undo: back", editable() == core::StringList{"title"}); }
+        // m2: the inspector's checks call set_prop unfolded -- two quick ticks, two steps.
+        core::design::set_prop(f.j, f.d, table, "editable", Value(core::StringList{"done"}), false);   // drops the redo tail
+        const auto n0 = f.j.size();
+        core::design::set_prop(f.j, f.d, table, "editable", Value(core::StringList{"title", "done"}), false);
+        core::design::set_prop(f.j, f.d, table, "editable", Value(core::StringList{"done"}), false);
+        check("edit ticks: unfolded, each its own step", f.j.size() == n0 + 2, std::to_string(f.j.size() - n0));
+        core::design::set_prop(f.j, f.d, table, "selection", Value(std::string("multiple")));
+        core::design::set_prop(f.j, f.d, table, "selection", Value(std::string("none")));
+        check("selection: a dropdown still folds (one step)", f.j.size() == n0 + 3, std::to_string(f.j.size() - n0));
+    }
+
     // ── s002 m4: where a drop lands ─────────────────────────────────────────
     {
         using core::design::Zone;

@@ -122,6 +122,11 @@ bool Inspector::show(const std::string& sel) {
             for (const auto& x : m.fields) sig += x.name + ",";
             sig += ";";
         }
+        // s007: a ColumnView's editable checks are its model's fields -- picking
+        // another model rebuilds them.
+        if (r && r->type == "ColumnView")
+            if (const auto it = r->props.find("model"); it != r->props.end() && std::holds_alternative<std::string>(it->second))
+                sig += "|view:" + std::get<std::string>(it->second);
     }
     if (sel != m_key || !r || r->type != m_type || ptype != m_parent_type || sig != m_actions_sig) {
         m_actions_sig = sig;
@@ -299,6 +304,7 @@ void Inspector::prop_row(const std::string& type, const std::string& prop, bool 
         if (!dflt && !spec.def.empty()) {
             if (spec.kind == PropKind::Double) dflt = Value(std::stod(spec.def));
             else if (spec.kind == PropKind::Int) dflt = Value(static_cast<std::int64_t>(std::stoll(spec.def)));
+            else if (spec.kind == PropKind::Enum) dflt = Value(spec.def);   // s007: selection -> single
         }
     }
 
@@ -315,6 +321,7 @@ void Inspector::prop_row(const std::string& type, const std::string& prop, bool 
 
     // s003: two properties get their own editors.
     if (!pack && prop == "menu") { menu_rows(label, reset); return; }
+    if (!pack && prop == "editable" && type == "ColumnView") { editable_rows(label, reset); return; }
     if (!pack && prop == "action_name") {   // pick one of the form's actions (or app.quit)
         spec.kind = PropKind::Ref;
         spec.ref_type = "@action";
@@ -440,6 +447,71 @@ void Inspector::prop_row(const std::string& type, const std::string& prop, bool 
         reset->set_opacity(set ? 1.0 : 0.0);
         reset->set_sensitive(set);
         show(set ? std::optional<Value>(it->second) : dflt);
+    }});
+}
+
+// ── s007: a ColumnView's editable fields ────────────────────────────────────
+// One check per field of its model (in the model's order); a tick is one step
+// of its own. A name the list holds that the model doesn't have is shown too
+// (struck through, so it can be unticked) -- validate says what's wrong.
+void Inspector::editable_rows(Gtk::Label* label, Gtk::Button* reset) {
+    const auto r = m_d.get(m_key);
+    const auto f = m_d.get(core::Design::kForm);
+    if (!r || !f) return;
+    const core::ModelDef* md = nullptr;
+    if (const auto it = r->props.find("model"); it != r->props.end() && std::holds_alternative<std::string>(it->second))
+        for (const auto& m : f->models)
+            if (m.name == std::get<std::string>(it->second)) md = &m;
+    auto* box = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 0);
+    box->set_name("designer.inspector.prop.editable");
+    box->set_hexpand(true);
+    label->set_valign(Gtk::Align::START);   // beside the first check, not the middle of the list
+    label->set_margin_top(4);
+    m_grid->attach(*label, 0, m_line);
+    m_grid->attach(*box, 1, m_line);
+    m_grid->attach(*reset, 2, m_line);
+    ++m_line;
+    if (!md) {
+        auto* none = Gtk::make_managed<Gtk::Label>("pick a model first");
+        none->add_css_class("dim-label");
+        none->set_xalign(0);
+        box->append(*none);
+    }
+    std::vector<std::string> names;
+    if (md) for (const auto& x : md->fields) names.push_back(x.name);
+    for (const auto& e : core::view_editable(core::Node{r->type, r->name, r->props, {}, {}, {}}))
+        if (std::find(names.begin(), names.end(), e) == names.end()) names.push_back(e);
+    const std::size_t known = md ? md->fields.size() : 0;
+    auto checks = std::make_shared<std::vector<std::pair<std::string, Gtk::CheckButton*>>>();
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        const std::string name = names[i];
+        auto* c = Gtk::make_managed<Gtk::CheckButton>(name);
+        c->set_name("designer.inspector.editable." + name);
+        if (i >= known) {
+            c->add_css_class("stale");
+            c->set_tooltip_text("\"" + name + "\" isn't a field of the model -- untick it");
+        } else {
+            c->set_tooltip_text("Edits in place; then on_" + r->name + "_edited(item, \"" + name + "\")");
+        }
+        box->append(*c);
+        checks->push_back({name, c});
+        c->signal_toggled().connect([this, checks] {
+            if (m_painting || m_rebuilding) return;
+            core::StringList now;   // in the model's order, stale names last
+            for (const auto& [n, w] : *checks) if (w->get_active()) now.push_back(n);
+            if (now.empty()) core::design::set_prop(m_j, m_d, m_key, "editable", std::nullopt, false);
+            else core::design::set_prop(m_j, m_d, m_key, "editable", Value(now), false);
+        });
+    }
+    m_rows.push_back({[label, reset, checks](const core::Rec& rec) {
+        const auto ed = core::view_editable(core::Node{rec.type, rec.name, rec.props, {}, {}, {}});
+        const bool set = !ed.empty();
+        if (set) label->add_css_class("set");
+        else     label->remove_css_class("set");
+        reset->set_opacity(set ? 1.0 : 0.0);
+        reset->set_sensitive(set);
+        for (const auto& [n, w] : *checks)
+            w->set_active(std::find(ed.begin(), ed.end(), n) != ed.end());
     }});
 }
 
