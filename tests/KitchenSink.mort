@@ -85,6 +85,28 @@
                     "props": { "model": "Note", "selection": "none" },
                     "signals": [ "activated" ] }
                 ] },
+              { "type": "ScrolledWindow", "id": "list_scroller", "pack": { "name": "rows_list", "title": "Rows" },
+                "children": [
+                  { "type": "ListView", "id": "tasks",
+                    "props": { "model": "Note", "selection": "single", "show_separators": true,
+                               "single_click_activate": false },
+                    "signals": [ "activated", "selected", "edited" ],
+                    "children": [
+                      { "type": "Box", "id": "task_row", "props": { "orientation": "horizontal", "spacing": 8, "margin": 6 },
+                        "children": [
+                          { "type": "CheckButton", "id": "task_done", "props": { "bind": "done" }, "signals": [ "toggled" ] },
+                          { "type": "Image", "id": "task_icon", "props": { "bind": "title", "pixel_size": 16 } },
+                          { "type": "Label", "id": "task_title", "props": { "bind": "title", "hexpand": true, "xalign": 0 } },
+                          { "type": "Label", "id": "task_count", "props": { "bind": "count", "css_classes": ["dim-label"] } },
+                          { "type": "SpinButton", "id": "task_weight", "props": { "bind": "weight", "lower": 0, "upper": 100 } },
+                          { "type": "Switch", "id": "task_on", "props": { "bind": "done" } },
+                          { "type": "Entry", "id": "task_name", "props": { "bind": "title" } },
+                          { "type": "Entry", "id": "task_due", "props": { "bind": "count" } },
+                          { "type": "Button", "id": "task_del", "props": { "icon_name": "user-trash-symbolic" },
+                            "signals": [ { "signal": "clicked", "required": true } ] }
+                        ] }
+                    ] }
+                ] },
               { "type": "Box", "id": "buttons", "pack": { "name": "buttons", "title": "Buttons" },
                 "props": { "orientation": "vertical", "spacing": 8 },
                 "children": [

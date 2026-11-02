@@ -252,6 +252,36 @@ std::vector<WidgetSpec> build() {
                   list("menu", "set_menu_model({menu})",
                        "Rows \"Label=win.action\" (an action of this form) or \"Label=app.quit\"; \"-\" starts a new section.")},
                  {}, {"giomm/menu.h"}, "A button that drops down a menu: its rows run the form's actions."});
+    // s011: a list of records with a DESIGNED row. Its one child is the row
+    // template -- a Box (or a single widget) holding Labels, Images, checks...
+    // whose "bind" names a field of the model. The generator writes a row class
+    // (<View>Row) that GTK builds once per VISIBLE row and refills as you scroll.
+    c.push_back({"ListView", "Gtk::ListView", "gtkmm/listview.h", ChildKind::Row, false,
+                 {ref("model", "{model}", "@model",
+                      "One of the form's models: a row per item, laid out as the view's child (the row template)."),
+                  [] {
+                      auto p = e("selection", "{model}", {{"single", ""}, {"multiple", ""}, {"none", ""}},
+                                 "single: one row (or none); multiple: Ctrl / Shift pick several; none: rows can't be picked.");
+                      p.def = "single";
+                      return p;
+                  }(),
+                  b("show_separators", "set_show_separators({v})", "A line between rows."),
+                  b("single_click_activate", "set_single_click_activate({v})",
+                    "A single click activates a row (hover selects) -- a launcher's feel.")},
+                 {{"activated", "{model}", "void", "{item}", "", false,
+                   "A row was double-clicked or Enter was pressed on it: item is that row."},
+                  {"selected", "{model}", "void", "{item}", "", false,
+                   "The selection moved (item is null when nothing is selected; "
+                   "with selection multiple you get every picked row)."},
+                  // s011 m2: a bound check / switch / number / text box in the row was changed.
+                  {"edited", "{model}", "void", "{item_field}", "", false,
+                   "The user changed a bound input in a row (a check, a switch, a number, a text box): "
+                   "item's member is already written; field names it."}},
+                 {"giomm/liststore.h", "gtkmm/singleselection.h", "gtkmm/multiselection.h",
+                  "gtkmm/noselection.h", "gtkmm/bitset.h", "gtkmm/signallistitemfactory.h",
+                  "gtkmm/listitem.h"},
+                 "A list of records, each row laid out by you: its child is the row (a Box of Labels, "
+                 "Images, checks), each widget showing a field (\"bind\"). Put it in a ScrolledWindow."});
     return c;
 }
 
@@ -279,6 +309,9 @@ const std::vector<PropSpec>& common_props() {
         b("visible", "set_visible({v})"),
         s("tooltip", "set_tooltip_text({v})"),
         list("css_classes", "add_css_class({item})", "Style classes: \"suggested-action\", ..."),
+        // s011: inside a ListView's row only -- the field of the row's item this
+        // widget shows (a Label's text, an Image's icon, a check's state, a number).
+        s("bind", "{bind}", "In a ListView's row: the field of the item this widget shows."),
     };
     return p;
 }
@@ -327,6 +360,7 @@ const char* child_kind_name(ChildKind k) {
         case ChildKind::Stack:     return "pages";
         case ChildKind::HeaderBar: return "start / end / title";
         case ChildKind::ListBox:   return "rows in order";
+        case ChildKind::Row:       return "one row template";
     }
     return "?";
 }

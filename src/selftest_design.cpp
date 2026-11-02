@@ -265,6 +265,55 @@ void selftest_design(const Check& check_) {
         check("validate: a broken key is refused", !first_error(bad).empty(), first_error(bad));
     }
 
+    // ── s011: a ListView's row in the design ────────────────────────────────
+    {
+        core::Form lf;
+        lf.name = "Lists";
+        lf.models = {{"Task", {{"title", "string", ""}, {"done", "bool", ""}}}};
+        core::Node t{"Label", "t_title", {{"bind", Value(std::string("title"))}}, {}, {}, {}};
+        core::Node c{"CheckButton", "t_done", {{"bind", Value(std::string("done"))}}, {}, {}, {}};
+        core::Node row{"Box", "t_row", {}, {}, {}, {t, c}};
+        core::Node view{"ListView", "tasks", {{"model", Value(std::string("Task"))}}, {}, {}, {row}};
+        core::Node empty_view{"ListView", "spare", {}, {}, {}, {}};
+        core::Node body{"Box", "body", {}, {}, {}, {view, empty_view}};
+        lf.root = {"Window", "lists", {}, {}, {}, {body}};
+        Fix f(lf);
+        check("s011 design: the fixture is valid", first_error(lf).empty(), first_error(lf));
+        const auto v = f.d.find("tasks"), r = f.d.find("t_row"), sp = f.d.find("spare");
+        check("s011 can_hold: a view holds ONE row", !core::design::can_hold(f.d, v, "Box").empty(), "");
+        check("s011 can_hold: an empty view takes its row", core::design::can_hold(f.d, sp, "Box").empty(), "");
+        check("s011 can_hold: a row takes a Label", core::design::can_hold(f.d, r, "Label").empty(), "");
+        check("s011 can_hold: a row refuses a ListBox / a ColumnView / a Stack",
+              !core::design::can_hold(f.d, r, "ListBox").empty() && !core::design::can_hold(f.d, r, "ColumnView").empty() &&
+              !core::design::can_hold(f.d, r, "Stack").empty(), "");
+        check("s011 can_hold: an empty view refuses a Paned as its row",
+              !core::design::can_hold(f.d, sp, "Paned").empty(), "");
+
+        // A field renamed carries the row's binds, same step; removed -> unbound.
+        auto m = f.d.to_form().models.front();
+        m.fields[0].name = "name";
+        check("s011 rename field: done", core::design::set_model(f.j, f.d, "Task", m), "");
+        check("s011 rename field: the bind follows, the form stays valid",
+              str(*f.d.get(f.d.find("t_title")), "bind") == "name" && first_error(f.d.to_form()).empty(),
+              first_error(f.d.to_form()));
+        f.j.undo();
+        check("s011 rename field: undo puts the bind back", str(*f.d.get(f.d.find("t_title")), "bind") == "title", "");
+        m = f.d.to_form().models.front();
+        m.fields.erase(m.fields.begin() + 1);   // drop "done"
+        core::design::set_model(f.j, f.d, "Task", m);
+        check("s011 remove field: its bind goes, still valid",
+              !f.d.get(f.d.find("t_done"))->props.count("bind") && first_error(f.d.to_form()).empty(),
+              first_error(f.d.to_form()));
+        std::string why;
+        check("s011 delete model: refused while a ListView shows it",
+              !core::design::remove_model(f.j, f.d, "Task", &why) && why.find("ListView tasks") != std::string::npos, why);
+        m = f.d.to_form().models.front();
+        m.name = "Job";
+        core::design::set_model(f.j, f.d, "Task", m);
+        check("s011 rename model: the ListView follows", str(*f.d.get(v), "model") == "Job" &&
+              first_error(f.d.to_form()).empty(), first_error(f.d.to_form()));
+    }
+
     // ── s010: actions -- key / title typing folds per field; opens never ────
     {
         Fix f;

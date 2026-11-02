@@ -433,7 +433,57 @@ void walk(const Node& n, const std::function<void(const Node&, const Node*)>& fn
     go(n, nullptr);
 }
 
+void walk_members(const Node& n, const std::function<void(const Node&, const Node*)>& fn) {
+    std::function<void(const Node&, const Node*)> go = [&](const Node& x, const Node* parent) {
+        fn(x, parent);
+        const WidgetSpec* w = find_widget(x.type);
+        if (w && w->children == ChildKind::Row) return;   // the row is the row class's
+        for (const auto& c : x.children) go(c, &x);
+    };
+    go(n, nullptr);
+}
+
+const Node* view_row(const Node& view) { return view.children.empty() ? nullptr : &view.children.front(); }
+
+std::string pascal(const std::string& name) {
+    std::string out;
+    bool up = true;
+    for (char c : name) {
+        if (c == '_') { up = true; continue; }
+        out += (up && c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c;
+        up = false;
+    }
+    return out;
+}
+
+std::string row_class(const Node& view) { return pascal(view.id) + "Row"; }
+
+std::string bound_field(const Node& n) {
+    const auto it = n.props.find("bind");
+    return it != n.props.end() && std::holds_alternative<std::string>(it->second) ? std::get<std::string>(it->second) : "";
+}
+
+std::string bind_refusal(const std::string& type, const std::string& ft) {
+    if (type == "Label" || type == "Button" || type == "Entry") return "";   // any field, as text
+    if (type == "Image") return ft == "string" ? "" : "an Image shows a string field (an icon name)";
+    if (type == "CheckButton" || type == "Switch") return ft == "bool" ? "" : "a " + type + " shows a bool field";
+    if (type == "Scale" || type == "SpinButton")
+        return ft == "int" || ft == "double" ? "" : "a " + type + " shows a number field (int or double)";
+    return "a " + type + " can't show a field";
+}
+
+bool bind_writes(const std::string& type, const std::string& ft) {
+    if (type == "CheckButton" || type == "Switch" || type == "Scale" || type == "SpinButton") return true;
+    return type == "Entry" && ft == "string";
+}
+
 // ── validate ───────────────────────────────────────────────────────────────
+
+static const ModelDef* model_of_node(const Form& f, const Node& n) {
+    const auto it = n.props.find("model");
+    return it != n.props.end() && std::holds_alternative<std::string>(it->second)
+               ? find_model(f, std::get<std::string>(it->second)) : nullptr;
+}
 
 std::vector<Issue> validate(const Form& f) {
     std::vector<Issue> out;
@@ -605,7 +655,8 @@ std::vector<Issue> validate(const Form& f) {
         }
 
         // s006: a ColumnView shows a model; its store and selection are members.
-        if (n.type == "ColumnView") {
+        // s011: so does a ListView (its row is checked below).
+        if (n.type == "ColumnView" || n.type == "ListView") {
             if (!n.props.count("model")) {
                 if (!n.signals.empty()) err(where, "its hooks hand you a row of its model -- pick a model first");
                 else warn(where, "shows nothing until it has a model");
@@ -631,7 +682,7 @@ std::vector<Issue> validate(const Form& f) {
                 hooked_edit = hooked_edit || h.signal == "edited";
                 hooked_pick = hooked_pick || h.signal == "selected";
             }
-            if (hooked_edit && ed.empty())
+            if (hooked_edit && ed.empty() && n.type == "ColumnView")
                 warn(where, "edited is hooked but no cell is editable -- tick fields in \"editable\"");
             if (hooked_pick && view_selection(n) == "none")
                 err(where, "selected is hooked but selection is none -- nothing can be picked (single or multiple, or untick it)");
@@ -713,6 +764,9 @@ std::vector<Issue> validate(const Form& f) {
                     else if (slot == "end") ++end;
                     else err(c.id, "a Paned child needs slot \"start\" or \"end\"");
                     break;
+                case ChildKind::Row:
+                    ++plain;
+                    break;
                 case ChildKind::HeaderBar:
                     if (slot == "title") ++title;
                     else if (slot != "start" && slot != "end")
@@ -733,6 +787,61 @@ std::vector<Issue> validate(const Form& f) {
         if (title > 1) err(where, "a HeaderBar has one title widget");
         if (w->root && plain == 0 && !parent)
             warn(where, "the window is empty");
+    });
+
+    // s011: a ListView's row -- built per row, so only what a row can be, no
+    // hooks yet, and every "bind" a field of the view's model that fits.
+    std::set<const Node*> in_row;
+    std::set<std::string> row_classes;
+    walk(f.root, [&](const Node& v, const Node*) {
+        if (v.type != "ListView") return;
+        const std::string where = v.id;
+        if (!row_classes.insert(row_class(v)).second)
+            err(where, "two ListViews make the row class " + row_class(v) + " -- rename one");
+        const Node* row = view_row(v);
+        if (!row) {
+            if (v.props.count("model")) err(where, "it needs a row: a child (a Box of Labels...) whose widgets bind to fields");
+            return;
+        }
+        const ModelDef* md = model_of_node(f, v);
+        walk(*row, [&](const Node& n, const Node*) {
+            in_row.insert(&n);
+            static const std::set<std::string> ok{"Box", "Grid", "Label", "Image", "Button", "CheckButton",
+                                                  "Switch", "Entry", "Scale", "SpinButton"};
+            if (!ok.count(n.type))
+                err(n.id, "a " + n.type + " can't be in a list row (Box, Grid, Label, Image, Button, CheckButton, "
+                          "Switch, Entry, Scale, SpinButton)");
+            if (const WidgetSpec* nw = find_widget(n.type))   // s011 m2: a row's hooks hand you its item
+                for (const auto& h : n.signals)
+                    if (const SignalSpec* ss = find_signal(*nw, h.signal); ss && ss->ret != "void")
+                        err(n.id, "\"" + h.signal + "\" returns a value -- a row's hooks can't");
+            const std::string b = bound_field(n);
+            if (b.empty()) return;
+            if (!md) {
+                if (!v.props.count("model")) err(n.id, "\"bind\" names a field of the view's model -- pick a model first");
+                return;
+            }
+            const FieldDef* fd = nullptr;
+            for (const auto& x : md->fields) if (x.name == b) fd = &x;
+            if (!fd) { err(n.id, "\"bind\" names " + b + " -- " + md->name + " has no such field"); return; }
+            if (const auto why = bind_refusal(n.type, fd->type); !why.empty())
+                err(n.id, "\"bind\" " + b + " is a " + fd->type + " -- " + why);
+        });
+        if (md) {
+            bool writes = false, hooked = false;
+            walk(*row, [&](const Node& n, const Node*) {
+                const std::string b = bound_field(n);
+                for (const auto& x : md->fields) writes = writes || (x.name == b && bind_writes(n.type, x.type));
+            });
+            for (const auto& h : v.signals) hooked = hooked || h.signal == "edited";
+            if (hooked && !writes)
+                warn(where, "edited is hooked but nothing in the row writes a field -- bind a check, a switch, "
+                            "a number or a text box");
+        }
+    });
+    walk(f.root, [&](const Node& n, const Node*) {
+        if (!bound_field(n).empty() && !in_row.count(&n))
+            err(n.id, "\"bind\" only means something inside a ListView's row");
     });
     return out;
 }

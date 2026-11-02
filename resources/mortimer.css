@@ -93,3 +93,14 @@
 .mortimer-project row .mortimer-project-trash { opacity: 0; }
 .mortimer-project row:hover .mortimer-project-trash,
 .mortimer-project row:focus-within .mortimer-project-trash { opacity: 1; }
+
+/* s011: a ListView on the canvas -- its row template, once, in a frame. */
+.mortimer-listview {
+    border: 1px solid alpha(currentColor, 0.18);
+    border-radius: 6px;
+}
+.mortimer-listview-caption {
+    font-size: smaller;
+    opacity: 0.6;
+    margin: 4px 8px;
+}

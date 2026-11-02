@@ -189,5 +189,23 @@ bool is_cpp_keyword(const std::string& s);
 
 // Depth-first, pre-order: the order members are declared and built in.
 void walk(const Node& n, const std::function<void(const Node&, const Node* parent)>& fn);
+// s011 -- the same, but NOT into a ListView's row: those widgets belong to the
+// row class (<View>Row), built once per visible row -- not the form's members.
+void walk_members(const Node& n, const std::function<void(const Node&, const Node* parent)>& fn);
+
+// s011 -- a ListView's row template (its one child), or null.
+const Node* view_row(const Node& view);
+// "tasks" -> "TasksRow": the class a ListView's row becomes (nested in <Form>Ui).
+std::string row_class(const Node& view);
+// "task_list" -> "TaskList".
+std::string pascal(const std::string& snake_name);
+// The field a row widget shows ("bind"), or "".
+std::string bound_field(const Node& n);
+// May widget `type` show a field of `field_type`? "" = yes, else why not (in words).
+std::string bind_refusal(const std::string& type, const std::string& field_type);
+// s011 m2 -- does a row widget bound to a field of this type WRITE it back when
+// the user changes it? (CheckButton, Switch, Scale, SpinButton; an Entry only
+// for a string -- a number in a text box would need parsing, so it shows only.)
+bool bind_writes(const std::string& type, const std::string& field_type);
 
 }  // namespace mortimer::core

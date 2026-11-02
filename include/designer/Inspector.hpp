@@ -53,6 +53,8 @@ private:
     void menu_rows(Gtk::Label* label, Gtk::Button* reset);    // s003: a MenuButton's menu
     void editable_rows(Gtk::Label* label, Gtk::Button* reset);// s007: a ColumnView's editable fields
     void no_wheel_unless_focused(Gtk::Widget& w);
+    struct RowModel { bool in_row = false; std::optional<core::ModelDef> model; };
+    RowModel row_model() const;                               // s011: the selection inside a ListView's row?
     void commit_prop(const std::string& prop, bool pack, const std::optional<core::Value>& v);
 
     core::Design&        m_d;

@@ -290,6 +290,28 @@ void Inspector::name_row(bool form) {
     }});
 }
 
+// s011 -- is the selection inside a ListView's row, and which model does the view show?
+Inspector::RowModel Inspector::row_model() const {
+    RowModel out;
+    const auto r = m_d.get(m_key);
+    if (!r) return out;
+    for (std::string up = r->parent; !up.empty() && up != core::Design::kForm;) {
+        const auto u = m_d.get(up);
+        if (!u) break;
+        if (u->type == "ListView") {
+            out.in_row = true;
+            const auto it = u->props.find("model");
+            const auto f = m_d.get(core::Design::kForm);
+            if (f && it != u->props.end() && std::holds_alternative<std::string>(it->second))
+                for (const auto& m : f->models)
+                    if (m.name == std::get<std::string>(it->second)) out.model = m;
+            break;
+        }
+        up = u->parent;
+    }
+    return out;
+}
+
 void Inspector::prop_row(const std::string& type, const std::string& prop, bool pack) {
     core::PropSpec spec;
     std::optional<Value> dflt;
@@ -303,6 +325,13 @@ void Inspector::prop_row(const std::string& type, const std::string& prop, bool 
         if (!ps) return;
         spec = *ps;
         dflt = gprops::default_of(type, prop);
+        // s011: "bind" means something only inside a ListView's row -- elsewhere
+        // it isn't offered; there it picks one of the view's model's fields.
+        if (prop == "bind") {
+            if (!row_model().in_row) return;
+            spec.kind = PropKind::Ref;
+            spec.ref_type = "@field";
+        }
         if (!dflt && !spec.def.empty()) {
             if (spec.kind == PropKind::Double) dflt = Value(std::stod(spec.def));
             else if (spec.kind == PropKind::Int) dflt = Value(static_cast<std::int64_t>(std::stoll(spec.def)));
@@ -395,6 +424,15 @@ void Inspector::prop_row(const std::string& type, const std::string& prop, bool 
                     values.push_back("window.close");   // s010: GTK's own -- closes (hides) this window
                     // A value typed by hand elsewhere stays choosable.
                     if (const auto r = m_d.get(m_key))
+                        if (const auto it = r->props.find(prop); it != r->props.end() &&
+                            std::holds_alternative<std::string>(it->second) &&
+                            std::find(values.begin(), values.end(), std::get<std::string>(it->second)) == values.end())
+                            values.push_back(std::get<std::string>(it->second));
+                } else if (spec.ref_type == "@field") {   // s011: a field this widget can show
+                    if (const auto rm = row_model(); rm.model)
+                        for (const auto& x : rm.model->fields)
+                            if (core::bind_refusal(type, x.type).empty()) values.push_back(x.name);
+                    if (const auto r = m_d.get(m_key))   // a field it no longer fits stays visible
                         if (const auto it = r->props.find(prop); it != r->props.end() &&
                             std::holds_alternative<std::string>(it->second) &&
                             std::find(values.begin(), values.end(), std::get<std::string>(it->second)) == values.end())

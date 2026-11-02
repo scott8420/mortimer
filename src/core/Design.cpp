@@ -176,6 +176,24 @@ std::string can_hold(const Design& d, const Design::Id& parent, const std::strin
     const WidgetSpec* pw = find_widget(pr->type);
     if (!pw) return "the parent's type \"" + pr->type + "\" is unknown";
     if (pw->children == ChildKind::None) return "a " + pr->type + " cannot hold children";
+    // s011: a ListView's row (and anything in it) is built once per row -- only
+    // what a row can be, and the view takes ONE child, the row.
+    for (Design::Id up = parent; !up.empty() && up != Design::kForm;) {
+        const auto u = d.get(up);
+        if (!u) break;
+        if (u->type == "ListView") {
+            static const std::set<std::string> ok{"Box", "Grid", "Label", "Image", "Button", "CheckButton",
+                                                  "Switch", "Entry", "Scale", "SpinButton"};
+            if (!ok.count(type)) return "a " + type + " can't be in a list row";
+            break;
+        }
+        up = u->parent;
+    }
+    if (pw->children == ChildKind::Row) {
+        std::vector<Design::Id> rows = d.children(parent);
+        std::erase(rows, moving);
+        if (!rows.empty()) return "a ListView has ONE row -- put things in its row (" + d.get(rows.front())->name + ")";
+    }
 
     std::vector<Design::Id> sib = d.children(parent);
     std::erase(sib, moving);
@@ -500,12 +518,12 @@ bool set_file(DesignJournal& j, Design& d, const std::string& name, const FileDe
 }
 
 namespace {
-// The ColumnViews whose "model" is `name`.
+// The ColumnViews and ListViews (s011) whose "model" is `name`.
 std::vector<Design::Id> views_of(const Design& d, const std::string& name) {
     std::vector<Design::Id> out;
     for (const auto& k : d.all()) {
         const auto o = d.get(k);
-        if (!o || o->type != "ColumnView") continue;
+        if (!o || (o->type != "ColumnView" && o->type != "ListView")) continue;
         const auto it = o->props.find("model");
         if (it != o->props.end() && std::holds_alternative<std::string>(it->second) &&
             std::get<std::string>(it->second) == name)
@@ -536,7 +554,8 @@ bool remove_model(DesignJournal& j, Design& d, const std::string& name, std::str
     auto r = d.get(Design::kForm);
     if (!r) return false;
     if (const auto v = views_of(d, name); !v.empty()) {
-        say(why, "ColumnView " + d.get(v.front())->name + " shows " + name + " -- give it another model first");
+        say(why, d.get(v.front())->type + " " + d.get(v.front())->name + " shows " + name +
+                     " -- give it another model first");
         return false;
     }
     const auto n = r->models.size();
@@ -605,9 +624,25 @@ bool set_model(DesignJournal& j, Design& d, const std::string& name, const Model
                 else e->second = Value(is);
             }
         }
-        if (!changed) continue;
-        ids.push_back(k);
-        views[k] = o;
+        if (changed) { ids.push_back(k); views[k] = o; }
+        // s011: a ListView's row widgets "bind" fields -- a renamed field carries
+        // them, a removed one unbinds them (same rule as editable above).
+        if (o.type != "ListView") continue;
+        std::vector<Design::Id> stack = d.children(k);
+        while (!stack.empty()) {
+            const Design::Id c = stack.back();
+            stack.pop_back();
+            for (const auto& g : d.children(c)) stack.push_back(g);
+            auto w = *d.get(c);
+            const auto b = w.props.find("bind");
+            if (b == w.props.end() || !std::holds_alternative<std::string>(b->second)) continue;
+            const auto r = renamed.find(std::get<std::string>(b->second));
+            if (r == renamed.end() || r->second == std::get<std::string>(b->second)) continue;
+            if (r->second.empty() && now.fields.size() != it->fields.size()) w.props.erase("bind");
+            else b->second = Value(r->second);
+            ids.push_back(c);
+            views[c] = w;
+        }
     }
     const std::string label = now.name != name ? "Rename model " + curly(name) : "Model " + curly(name);
     *it = now;

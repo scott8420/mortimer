@@ -62,7 +62,8 @@ std::string replace(std::string s, const std::string& from, const std::string& t
 // a `{menu}` setter builds a Gio::Menu from "Label=action" rows (s003).
 std::vector<std::string> setter_lines(const PropSpec& p, const Value& v, const std::string& obj) {
     std::vector<std::string> out;
-    if (p.setter == "{model}" || p.setter == "{state}") return out;   // s006 / s008: a block does it
+    if (p.setter == "{model}" || p.setter == "{state}" || p.setter == "{bind}")
+        return out;   // s006 / s008 / s011: a block does it
     if (p.kind == PropKind::StringList && p.setter.find("{menu}") != std::string::npos) {
         out.push_back("{");
         out.push_back("    auto menu = Gio::Menu::create();");
@@ -191,12 +192,72 @@ const ModelDef* model_of(const Form& f, const Node& n) {
                ? find_model(f, std::get<std::string>(it->second)) : nullptr;
 }
 
+// s011 -- a ListView: the store, the selection, and a factory that makes the
+// row class once per VISIBLE row (setup) and fills it from the row's item
+// (bind) -- as you scroll, GTK hands a built row a different item.
+std::vector<std::string> list_view_lines(const Form&, const Node& n, const ModelDef& m) {
+    std::vector<std::string> out;
+    const std::string item = model_item(m), v = "m_" + n.id, store = v + "_store", sel = v + "_selection";
+    const std::string mode = view_selection(n), row = row_class(n);
+    out.push_back("// the model: " + item + " rows -- fill " + store + ", each laid out as a " + row);
+    out.push_back(store + " = Gio::ListStore<" + item + ">::create();");
+    if (mode == "multiple") {
+        out.push_back(sel + " = Gtk::MultiSelection::create(" + store + ");   // Ctrl / Shift pick several");
+    } else if (mode == "none") {
+        out.push_back(sel + " = Gtk::NoSelection::create(" + store + ");   // rows can't be picked");
+    } else {
+        out.push_back(sel + " = Gtk::SingleSelection::create(" + store + ");");
+        out.push_back(sel + "->set_autoselect(false);");
+        out.push_back(sel + "->set_can_unselect(true);");
+    }
+    out.push_back(v + ".set_model(" + sel + ");");
+    out.push_back("{   // the rows: built once per VISIBLE row (setup), filled from its item (bind)");
+    out.push_back("    auto factory = Gtk::SignalListItemFactory::create();");
+    out.push_back("    factory->signal_setup().connect([this](const Glib::RefPtr<Gtk::ListItem>& cell) {");
+    out.push_back("        cell->set_child(*Gtk::make_managed<" + row + ">(*this));   // it calls this form's hooks");
+    out.push_back("    });");
+    out.push_back("    // Scrolling hands a built row another item: bind refills it. (Changed an item's");
+    out.push_back("    // member yourself? " + store + "->items_changed(position, 1, 1) re-binds that row.)");
+    out.push_back("    factory->signal_bind().connect([](const Glib::RefPtr<Gtk::ListItem>& cell) {");
+    out.push_back("        auto* row = dynamic_cast<" + row + "*>(cell->get_child());");
+    out.push_back("        auto item = std::dynamic_pointer_cast<" + item + ">(cell->get_item());");
+    out.push_back("        if (row && item) row->bind(item);");
+    out.push_back("    });");
+    out.push_back("    factory->signal_unbind().connect([](const Glib::RefPtr<Gtk::ListItem>& cell) {");
+    out.push_back("        if (auto* row = dynamic_cast<" + row + "*>(cell->get_child())) row->unbind();   // lets the item go");
+    out.push_back("    });");
+    out.push_back("    " + v + ".set_factory(factory);");
+    out.push_back("}");
+    return out;
+}
+
+// s011 -- the text a field shows in a Label / Button / Entry.
+std::string field_text(const FieldDef& x) {
+    const std::string m = "item->" + x.name;
+    if (x.type == "int") return "std::to_string(" + m + ")";
+    if (x.type == "double") return "Glib::ustring::format(" + m + ")";
+    if (x.type == "bool") return "Glib::ustring(" + m + " ? \"true\" : \"false\")";
+    return m;
+}
+
+// s011 -- one bound widget's line in <View>Row::bind().
+std::string bind_line(const Node& b, bool is_root, const FieldDef& x) {
+    const std::string obj = is_root ? "" : "m_" + b.id + ".";
+    const std::string m = "item->" + x.name;
+    if (b.type == "Image") return obj + "set_from_icon_name(" + m + ");";
+    if (b.type == "CheckButton" || b.type == "Switch") return obj + "set_active(" + m + ");";
+    if (b.type == "Scale" || b.type == "SpinButton") return obj + "set_value(static_cast<double>(" + m + "));";
+    if (b.type == "Entry") return obj + "set_text(" + field_text(x) + ");";
+    return obj + "set_label(" + field_text(x) + ");";   // Label, Button
+}
+
 std::vector<std::string> model_lines(const Form& f, const Node& n) {
     std::vector<std::string> out;
     const ModelDef* m = model_of(f, n);
     if (!m) return out;
     const std::string item = model_item(*m), v = "m_" + n.id, store = v + "_store", sel = v + "_selection";
     const std::string mode = view_selection(n);
+    if (n.type == "ListView") return list_view_lines(f, n, *m);   // s011: a designed row, no columns
     out.push_back("// the model: " + item + " rows -- fill " + store + "; a header click sorts");
     out.push_back(store + " = Gio::ListStore<" + item + ">::create();");
     const std::string sorted = "Gtk::SortListModel::create(" + store + ", " + v + ".get_sorter())";
@@ -354,11 +415,21 @@ std::vector<std::string> model_lines(const Form& f, const Node& n) {
 // s007 -- each ColumnView with editable cells has a signal its cells emit
 // after writing the row; bind_hooks connects it to on_<id>_edited (in m_hooks,
 // so the destructor cuts it before any widget goes).
+// s011 m2 -- does a ListView's row write any field back?
+bool row_writes(const Node& v, const ModelDef& md) {
+    if (v.type != "ListView" || !view_row(v)) return false;
+    bool any = false;
+    walk(*view_row(v), [&](const Node& n, const Node*) {
+        for (const auto& x : md.fields) any = any || (x.name == bound_field(n) && bind_writes(n.type, x.type));
+    });
+    return any;
+}
+
 std::string edited_members(const Form& f, const std::vector<const Node*>& members) {
     std::string out;
     for (const Node* m : members) {
         const ModelDef* md = model_of(f, *m);
-        if (!md || view_editable(*m).empty()) continue;
+        if (!md || (view_editable(*m).empty() && !row_writes(*m, *md))) continue;
         out += "    sigc::signal<void(const Glib::RefPtr<" + model_item(*md) + ">&, const std::string&)> m_" +
                m->id + "_edited;   // " + m->id + "'s cells: (row, field)\n";
     }
@@ -397,7 +468,7 @@ std::string parse_helpers(const Form& f) {
 std::string state_functions(const Form& f, const std::string& ui) {
     if (!remembers(f)) return "";
     std::vector<const Node*> paneds, stacks;
-    walk(f.root, [&](const Node& n, const Node* parent) {
+    walk_members(f.root, [&](const Node& n, const Node* parent) {
         if (!parent) return;
         if (n.type == "Paned") paneds.push_back(&n);
         if (n.type == "Stack") stacks.push_back(&n);
@@ -448,6 +519,7 @@ void build_node(const Form& f, const Node& n, bool is_root, std::vector<std::str
         std::string one;
         while (std::getline(ss, one)) lines.push_back(one);
     }
+    if (w->children == ChildKind::Row) return;   // s011: the row is built by its row class
     for (const auto& c : n.children) {
         lines.push_back("");
         lines.push_back("// " + c.id + " (" + c.type + ")");
@@ -510,7 +582,7 @@ std::string Hook::decl() const { return ret + " " + name + "(" + params + ")"; }
 
 std::vector<Hook> hooks_of(const Form& f) {
     std::vector<Hook> out;
-    walk(f.root, [&](const Node& n, const Node*) {
+    walk_members(f.root, [&](const Node& n, const Node*) {
         const WidgetSpec* w = find_widget(n.type);
         if (!w) return;
         for (const auto& h : n.signals) {
@@ -533,6 +605,21 @@ std::vector<Hook> hooks_of(const Form& f) {
             out.push_back({hook_name(n, h), s->ret, params, s->ret_default, n.id, n.type,
                            h.signal, h.required});
         }
+    });
+    // s011 m2: a ListView row's widgets -- each hook hands you that row's item.
+    walk_members(f.root, [&](const Node& v, const Node*) {
+        if (v.type != "ListView" || !view_row(v)) return;
+        const auto it = v.props.find("model");
+        const std::string item = it != v.props.end() && std::holds_alternative<std::string>(it->second)
+                                     ? std::get<std::string>(it->second) + "Item" : "Glib::ObjectBase";
+        walk(*view_row(v), [&](const Node& n, const Node*) {
+            const WidgetSpec* w = find_widget(n.type);
+            if (!w) return;
+            for (const auto& h : n.signals)
+                if (const SignalSpec* s = find_signal(*w, h.signal))
+                    out.push_back({hook_name(n, h), s->ret, "const Glib::RefPtr<" + item + ">& item", s->ret_default,
+                                   n.id, n.type, h.signal, h.required});
+        });
     });
     // s003: each action is a hook too (widget = the action's name, type "Action").
     for (const auto& a : f.actions)
@@ -706,6 +793,140 @@ static std::string opens_activate(const ActionDef& a, const AppInfo& app) {
            "        }));\n";
 }
 
+// s011 -- each ListView's row class, nested in <Form>Ui: its widgets are plain
+// Gtk:: members (many rows exist at once, so no registry names), built in its
+// constructor exactly as build_ui() builds the form; bind() shows an item.
+static std::string ui_of(const Form& f) { return f.name + "Ui"; }
+
+static std::vector<std::pair<const Node*, const ModelDef*>> list_views(const Form& f) {
+    std::vector<std::pair<const Node*, const ModelDef*>> out;
+    walk_members(f.root, [&](const Node& n, const Node*) {
+        if (n.type != "ListView") return;
+        const ModelDef* md = model_of(f, n);
+        if (md && view_row(n)) out.push_back({&n, md});
+    });
+    return out;
+}
+
+// s011 m2 -- what a row's widgets do. A bound input writes its field back
+// (only when it differs), then the view's edited(item, field) fires; the
+// widget's own ticked hooks get the row's item. Nothing runs while bind() is
+// filling the row, between items, or once the form is going.
+static std::string row_wiring(const Form& f, const Node& v, const ModelDef& md) {
+    std::ostringstream c;
+    const bool edited = row_writes(v, md);
+    walk(*view_row(v), [&](const Node& n, const Node* parent) {
+        const WidgetSpec* w = find_widget(n.type);
+        const std::string obj = parent ? "m_" + n.id + "." : "";
+        const FieldDef* fd = nullptr;
+        for (const auto& x : md.fields) if (x.name == bound_field(n)) fd = &x;
+        const bool writes = fd && bind_writes(n.type, fd->type);
+        // The signal a write-back rides on, and how to read the widget's value.
+        std::string wsig, read;
+        if (writes) {
+            if (n.type == "CheckButton") { wsig = "toggled"; read = obj + "get_active()"; }
+            else if (n.type == "Switch") { wsig = "active_changed"; read = obj + "get_active()"; }
+            else if (n.type == "Entry")  { wsig = "changed"; read = "std::string(" + obj + "get_text())"; }
+            else { wsig = "value_changed";
+                   read = fd->type == "int" ? "static_cast<std::int64_t>(std::llround(" + obj + "get_value()))"
+                                            : obj + "get_value()"; }
+        }
+        if (fd && !writes && n.type == "Entry")
+            c << "    " << obj << "set_editable(false);   // shows " << fd->name << " (" << (fd->type == "int" ? "an " : "a ") << fd->type << "); not written back\n";
+        std::vector<std::string> sigs;
+        if (writes) sigs.push_back(wsig);
+        for (const auto& h : n.signals) if (h.signal != wsig) sigs.push_back(h.signal);
+        for (const auto& sname : sigs) {
+            const SignalSpec* s = find_signal(*w, sname);
+            if (!s) continue;
+            const SignalHook* hk = nullptr;
+            for (const auto& h : n.signals) if (h.signal == sname) hk = &h;
+            c << "    // " << n.id << " " << sname
+              << (writes && sname == wsig ? ": writes " + fd->name + " back" + (hk ? ", then its hook" : "") : ": its hook")
+              << "\n"
+              << "    " << obj << s->connect << ".connect([this] {\n"
+              << "        if (m_binding || !m_item || !*m_alive) return;\n";
+            if (writes && sname == wsig) {
+                c << "        if (m_item->" << fd->name << " != " << read << ") {\n"
+                  << "            m_item->" << fd->name << " = " << read << ";\n";
+                if (edited) c << "            m_ui->m_" << v.id << "_edited.emit(m_item, " << cpp_string(fd->name) << ");\n";
+                c << "        }\n";
+            }
+            if (hk) c << "        m_ui->" << hook_name(n, *hk) << "(m_item);\n";
+            c << "    });\n";
+        }
+    });
+    return c.str();
+}
+
+static std::string row_classes_header(const Form& f) {
+    std::ostringstream h;
+    for (const auto& [v, md] : list_views(f)) {
+        const Node& row = *view_row(*v);
+        const WidgetSpec* rw = find_widget(row.type);
+        const std::string rc = row_class(*v);
+        h << "    // ── " << v->id << "'s row ── GTK builds one per VISIBLE row and refills it as\n"
+          << "    // you scroll (bind). Its widgets are its members, not the form's.\n"
+          << "    class " << rc << " : public " << rw->gtk_class << " {\n"
+          << "    public:\n"
+          << "        explicit " << rc << "(" << ui_of(f) << "& ui);   // ui: the form whose hooks the row calls\n"
+          << "        void bind(const Glib::RefPtr<" << model_item(*md) << ">& item);   // show this row's item\n"
+          << "        void unbind();                                     // the row is free again\n";
+        std::vector<const Node*> ms;
+        walk(row, [&](const Node& n, const Node* parent) { if (parent) ms.push_back(&n); });
+        if (!ms.empty()) {
+            std::size_t width = 0;
+            for (auto* m : ms) width = std::max(width, find_widget(m->type)->gtk_class.size());
+            h << "\n";
+            std::size_t idw = 0;
+            for (auto* m : ms) idw = std::max(idw, m->id.size());
+            for (auto* m : ms) {
+                const std::string decl = "        " + pad(find_widget(m->type)->gtk_class, width) + " m_" + m->id + ";";
+                h << (bound_field(*m).empty() ? decl : pad(decl, 8 + width + 4 + idw) + "   // shows " + bound_field(*m))
+                  << "\n";
+            }
+        }
+        h << "\n    private:\n"
+          << "        " << ui_of(f) << "* m_ui;\n"
+          << "        std::shared_ptr<bool> m_alive;   // false once the form is going: no hook runs then\n"
+          << "        Glib::RefPtr<" << model_item(*md) << "> m_item;   // the item shown now (null between items)\n"
+          << "        bool m_binding = false;          // bind() is filling the widgets: not the user\n"
+          << "    };\n\n";
+    }
+    return h.str();
+}
+
+static std::string row_classes_source(const Form& f, const std::string& ui) {
+    std::ostringstream c;
+    for (const auto& [v, md] : list_views(f)) {
+        const Node& row = *view_row(*v);
+        const std::string rc = row_class(*v), q = ui + "::" + rc;
+        std::vector<std::string> lines;
+        build_node(f, row, true, lines);
+        c << "// " << v->id << "'s row: built once per visible row -- properties, then packing,\n"
+          << "// then what its widgets do (each hands the form THIS row's item).\n"
+          << q << "::" << rc << "(" << ui_of(f) << "& ui) : m_ui(&ui), m_alive(ui.m_rows_alive) {\n";
+        for (const auto& l : lines) c << (l.empty() ? "" : "    " + l) << "\n";
+        c << row_wiring(f, *v, *md);
+        c << "}\n\n"
+          << "void " << q << "::unbind() { m_item.reset(); }\n\n"
+          << "void " << q << "::bind(const Glib::RefPtr<" << model_item(*md) << ">& item) {\n"
+          << "    m_item = item;\n"
+          << "    m_binding = true;   // the setters below fire the widgets' signals -- that's not the user\n";
+        bool any = false;
+        walk(row, [&](const Node& n, const Node* parent) {
+            const std::string b = bound_field(n);
+            if (b.empty()) return;
+            for (const auto& x : md->fields)
+                if (x.name == b) { c << "    " << bind_line(n, !parent, x) << "\n"; any = true; }
+        });
+        if (!any) c << "    // nothing in the row binds a field yet\n";
+        c << "    m_binding = false;\n"
+          << "}\n\n";
+    }
+    return c.str();
+}
+
 std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
     const WidgetSpec* rootw = find_widget(f.root.type);
     const std::string ui = f.name + "Ui";
@@ -714,7 +935,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
 
     // Members: every node but the root, pre-order (= init-list order).
     std::vector<const Node*> members;
-    walk(f.root, [&](const Node& n, const Node* parent) {
+    walk_members(f.root, [&](const Node& n, const Node* parent) {
         if (parent) members.push_back(&n);
     });
 
@@ -728,7 +949,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << (f.models.empty() ? "" : "#include <glibmm/object.h>\n#include <glibmm/refptr.h>\n#include <sigc++/signal.h>\n#include <cstdint>\n#include <set>\n#include <string>\n")
       << "#include <sigc++/connection.h>\n"
       << (f.files.empty() ? "" : "#include <map>\n#include <memory>\n#include <string>\n")
-      << (opens_any(f) ? "#include <memory>\n" : "")
+      << (opens_any(f) || !list_views(f).empty() ? "#include <memory>\n" : "")
       << "#include <vector>\n\n"
       << opens_forward(f, app)
       << "namespace " << app.ns << "::ui {\n\n"
@@ -794,6 +1015,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
               << "    };\n\n";
         }
     }
+    h << row_classes_header(f);
     h << "protected:\n";
     if (hooks.empty()) {
         h << "    // ── hooks: none ticked in the form yet ──\n\n";
@@ -834,6 +1056,10 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << (remembers(f) ? "    void restore_window_state();   // s008: after build_ui, before the hooks\n" : "")
       << "    std::vector<sigc::connection> m_hooks;   // cut first in the destructor\n"
       << edited_members(f, members)
+      << (list_views(f).empty() ? "" :
+          "    // s011: the rows' token -- the destructor sets it false, so a row being torn\n"
+          "    // down with the form never calls a hook.\n"
+          "    std::shared_ptr<bool> m_rows_alive = std::make_shared<bool>(true);\n")
       << (f.actions.empty() ? "" : rootw->type == "ApplicationWindow" ? "" :
           "    Glib::RefPtr<Gio::SimpleActionGroup> m_actions;   // \"win.*\" (a plain Window has no action map)\n")
       << opens_members(f, app)
@@ -855,6 +1081,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << (remembers(f) ? "#include \"generated/WindowState.hpp\"\n" : "")
       << "#include \"Registry.hpp\"\n"
       << opens_includes(f)
+      << (list_views(f).empty() ? "" : "\n#include <cmath>\n#include <cstdint>\n")
       << (f.actions.empty() ? "" :
           "\n#include <giomm/simpleaction.h>\n#include <gtkmm/shortcut.h>\n#include <gtkmm/shortcutaction.h>\n"
           "#include <gtkmm/shortcutcontroller.h>\n#include <gtkmm/shortcuttrigger.h>\n")
@@ -884,6 +1111,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << "    // teardown fires (a Stack changing page, a ListBox dropping its selection)\n"
       << "    // must not reach a hook -- a REQUIRED one is pure virtual here.\n"
       << "    for (auto& c : m_hooks) c.disconnect();\n"
+      << (list_views(f).empty() ? "" : "    *m_rows_alive = false;   // and the list rows' (they go with their views)\n")
       << (f.files.empty() ? "" :
           "    // A file dialog still up: drop the token (its answer is now ignored) and\n"
           "    // cancel it (the dialog closes with the window).\n"
@@ -916,6 +1144,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
         c << "    return item;\n"
           << "}\n\n";
     }
+    c << row_classes_source(f, ui);
     c << "void " << ui << "::build_ui() {\n";
     std::vector<std::string> lines;
     build_node(f, f.root, true, lines);
@@ -927,7 +1156,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
                          "    // but hiding and destroying both unmap it.\n"
                          "    m_hooks.push_back(signal_unmap().connect(sigc::mem_fun(*this, &" + ui + "::save_window_state)));\n"
                        : "");
-    walk(f.root, [&](const Node& n, const Node* parent) {
+    walk_members(f.root, [&](const Node& n, const Node* parent) {
         const WidgetSpec* w = find_widget(n.type);
         for (const auto& hk : n.signals) {
             const SignalSpec* s = find_signal(*w, hk.signal);

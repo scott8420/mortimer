@@ -45,6 +45,7 @@ enum class ChildKind {
     Stack,      // add(child, name, title); icon_name on the page
     HeaderBar,  // slot "start" | "end" | "title"
     ListBox,    // append, in order
+    Row,        // s011: ONE child -- the row template, built once per visible row (not a member)
 };
 
 struct SignalSpec {

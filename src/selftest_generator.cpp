@@ -90,7 +90,7 @@ void selftest_generator(const Check& check) {
                 signals = signals && (s.ret == "void" || !s.ret_default.empty());
         }
         for (const auto& p : core::common_props())
-            setters = setters && (has(p.setter, "{v}") || has(p.setter, "{item}"));
+            setters = setters && (has(p.setter, "{v}") || has(p.setter, "{item}") || has(p.setter, "{bind}"));
         check("catalog: type names unique", unique, std::to_string(types.size()) + " types");
         check("catalog: every setter has a value slot", setters, "");
         check("catalog: every non-void signal has an unhooked default", signals, "");
@@ -924,5 +924,118 @@ class X : public ui::XUi {
                   core::load_project(dir).forms.back() == "About", "");
         }
         fs::remove_all(tmp);
+    }
+
+    // ── s011: ListView with a designed row ─────────────────────────────────
+    {
+        using core::Value;
+        auto S = [](const char* x) { return Value(std::string(x)); };
+        const auto app = core::derive_app("Lister");
+        core::Form f;
+        f.name = "MainWindow";
+        f.models = {{"Task", {{"title", "string", ""}, {"icon", "string", ""}, {"done", "bool", ""}, {"n", "int", ""}}}};
+        core::Node title{"Label", "t_title", {{"bind", S("title")}}, {}, {}, {}};
+        core::Node icon{"Image", "t_icon", {{"bind", S("icon")}}, {}, {}, {}};
+        core::Node done{"CheckButton", "t_done", {{"bind", S("done")}}, {}, {}, {}};
+        core::Node n{"Label", "t_n", {{"bind", S("n")}}, {}, {}, {}};
+        core::Node row{"Box", "t_row", {{"spacing", Value(std::int64_t{6})}}, {}, {}, {icon, title, n, done}};
+        core::Node view{"ListView", "task_list", {{"model", S("Task")}}, {}, {{"activated", false, ""}, {"selected", false, ""}}, {row}};
+        core::Node sc{"ScrolledWindow", "sc", {}, {}, {}, {view}};
+        f.root = {"Window", "main_window", {}, {}, {}, {sc}};
+        check("s011 validate: a list with a designed row is valid", errors_of(f).empty(),
+              errors_of(f).empty() ? "" : errors_of(f)[0]);
+        auto at = [](core::Form& g) -> core::Node& { return g.root.children[0].children[0]; };   // the view
+        { auto g = f; at(g).children.clear();
+          check("s011 validate: a model and no row -> error", !errors_of(g).empty(), ""); }
+        { auto g = f; at(g).children.push_back(core::Node{"Label", "extra", {}, {}, {}, {}});
+          check("s011 validate: two rows -> error", !errors_of(g).empty(), ""); }
+        { auto g = f; at(g).children[0].children[1].props["bind"] = S("nope");
+          check("s011 validate: bind names an unknown field -> error", !errors_of(g).empty(), ""); }
+        { auto g = f; at(g).children[0].children[3].props["bind"] = S("title");
+          check("s011 validate: a check bound to a string -> error", !errors_of(g).empty(), ""); }
+        { auto g = f; at(g).children[0].children[0].props["bind"] = S("n");
+          check("s011 validate: an Image bound to an int -> error", !errors_of(g).empty(), ""); }
+        { auto g = f; at(g).children[0].children.push_back(core::Node{"ListBox", "lb", {}, {}, {}, {}});
+          check("s011 validate: a ListBox can't be in a row", !errors_of(g).empty(), ""); }
+        { auto g = f; at(g).children[0].children[3].signals = {{"toggled", false, ""}};
+          check("s011 m2 validate: a row widget's hook is fine", errors_of(g).empty(), ""); }
+        { auto g = f; g.root.children[0].children.push_back(core::Node{"Label", "loose", {{"bind", S("title")}}, {}, {}, {}});
+          check("s011 validate: bind outside a row -> error", !errors_of(g).empty(), ""); }
+        { auto g = f; g.root.children.clear();
+          g.root.children.push_back({"Box", "b", {}, {}, {}, {f.root.children[0].children[0], f.root.children[0].children[0]}});
+          g.root.children[0].children[1].id = "Task_list";   // ids differ, the row class doesn't
+          g.root.children[0].children[1].children[0].id = "r2";
+          for (auto& c : g.root.children[0].children[1].children[0].children) c.id += "2";
+          check("s011 validate: two views making one row class -> error", !errors_of(g).empty(), ""); }
+
+        check("s011 names: TaskListRow", core::row_class(at(f)) == "TaskListRow" && core::pascal("a_b_c") == "ABC", "");
+        bool member = false;
+        core::walk_members(f.root, [&](const core::Node& x, const core::Node*) { member = member || x.id == "t_title"; });
+        check("s011 walk_members: a row's widgets aren't the form's", !member, "");
+
+        const auto o = core::generate_form(f, app);
+        const std::string& h = o[0].content;
+        const std::string& c = o[1].content;
+        check("s011 codegen: the row class, nested, plain Gtk:: members",
+              has(h, "class TaskListRow : public Gtk::Box {") &&
+              has(h, "void bind(const Glib::RefPtr<TaskItem>& item);") &&
+              has(h, "Gtk::Label       m_t_title;") && !has(h, "widgets::Label m_t_title"), "");
+        check("s011 codegen: the form doesn't own the row's widgets",
+              !has(c, "m_t_title(\"main_window.t_title\")") && !has(h, "    widgets::Box            m_t_row;"), "");
+        check("s011 codegen: the row is built in its constructor",
+              has(c, "MainWindowUi::TaskListRow::TaskListRow(MainWindowUi& ui) : m_ui(&ui), m_alive(ui.m_rows_alive) {") &&
+              has(c, "    set_spacing(6);") &&
+              has(c, "    append(m_t_title);"), "");
+        check("s011 codegen: bind shows each field the right way",
+              has(c, "m_t_icon.set_from_icon_name(item->icon);") && has(c, "m_t_title.set_label(item->title);") &&
+              has(c, "m_t_n.set_label(std::to_string(item->n));") && has(c, "m_t_done.set_active(item->done);"), "");
+        check("s011 m2 codegen: a bound check writes back (only when it differs), then edited",
+              has(c, "m_t_done.signal_toggled().connect([this] {") &&
+              has(c, "if (m_item->done != m_t_done.get_active()) {") && has(c, "m_item->done = m_t_done.get_active();") &&
+              !has(c, "set_can_target(false)"), "");
+        check("s011 codegen: store, selection (no sorter), factory setup + bind",
+              has(c, "m_task_list_store = Gio::ListStore<TaskItem>::create();") &&
+              has(c, "Gtk::SingleSelection::create(m_task_list_store);") &&
+              has(c, "cell->set_child(*Gtk::make_managed<TaskListRow>(*this));") && has(c, "row->unbind();") &&
+              has(c, "if (row && item) row->bind(item);") && has(c, "m_task_list.set_factory(factory);"), "");
+        check("s011 codegen: hooks hand you the row",
+              has(c, "on_task_list_activated(std::dynamic_pointer_cast<TaskItem>(m_task_list_selection->get_object(position)))"), "");
+        check("s011 codegen: build_ui doesn't build the row", !has(c, "m_task_list.append("), "");
+
+        // m2: a row's hooks hand you its item; inputs write back; edited fires.
+        auto g = f;
+        at(g).signals.push_back({"edited", false, ""});
+        core::Node del{"Button", "t_del", {}, {}, {{"clicked", true, ""}}, {}};
+        core::Node sp{"SpinButton", "t_spin", {{"bind", S("n")}}, {}, {}, {}};
+        core::Node en{"Entry", "t_en", {{"bind", S("n")}}, {}, {}, {}};
+        at(g).children[0].children.push_back(del);
+        at(g).children[0].children.push_back(sp);
+        at(g).children[0].children.push_back(en);
+        check("s011 m2 validate: hooked row widgets + edited are valid", errors_of(g).empty(),
+              errors_of(g).empty() ? "" : errors_of(g)[0]);
+        bool row_hook = false;
+        for (const auto& k : core::hooks_of(g))
+            row_hook = row_hook || (k.name == "on_t_del_clicked" && k.params == "const Glib::RefPtr<TaskItem>& item" && k.required);
+        check("s011 m2 hooks: a row button's hook takes the item (and can be required)", row_hook, "");
+        const auto o2 = core::generate_form(g, app);
+        const std::string& h2 = o2[0].content;
+        const std::string& c2 = o2[1].content;
+        check("s011 m2 codegen: the hook is the form's (pure virtual when required)",
+              has(h2, "virtual void on_t_del_clicked(const Glib::RefPtr<TaskItem>& item) = 0;"), "");
+        check("s011 m2 codegen: the row calls it with its item, guarded",
+              has(c2, "m_t_del.signal_clicked().connect([this] {") &&
+              has(c2, "if (m_binding || !m_item || !*m_alive) return;") && has(c2, "m_ui->on_t_del_clicked(m_item);"), "");
+        check("s011 m2 codegen: edited is a member signal, emitted by the row, hooked by bind_hooks",
+              has(h2, "m_task_list_edited;") && has(c2, "m_ui->m_task_list_edited.emit(m_item, \"done\");") &&
+              has(c2, "m_task_list_edited.connect("), "");
+        check("s011 m2 codegen: an int from a spin is rounded; an Entry over an int only shows",
+              has(c2, "static_cast<std::int64_t>(std::llround(m_t_spin.get_value()))") &&
+              has(c2, "m_t_en.set_editable(false);   // shows n (an int); not written back"), "");
+        check("s011 m2 codegen: bind() isn't the user; unbind lets go; the token dies first",
+              has(c2, "    m_binding = true;") && has(c2, "    m_binding = false;") &&
+              has(c2, "::unbind() { m_item.reset(); }") && has(c2, "*m_rows_alive = false;") &&
+              has(h2, "std::shared_ptr<bool> m_rows_alive = std::make_shared<bool>(true);"), "");
+        { auto u = core::user_stubs(g, app);
+          check("s011 m2 stubs: your half overrides the row hook", has(u[0].content, "void on_t_del_clicked(const Glib::RefPtr<TaskItem>& item) override;"), ""); }
     }
 }

@@ -300,6 +300,21 @@ Gtk::Widget* Canvas::make(const core::Rec& r) {
     if (t == "SpinButton")     return Gtk::make_managed<Gtk::SpinButton>();
     if (t == "DropDown")       return Gtk::make_managed<Gtk::DropDown>();
     if (t == "ColumnView")     return Gtk::make_managed<Gtk::ColumnView>();   // s006
+    if (t == "ListView") {
+        // s011: the row template, shown ONCE in a frame -- the generated view
+        // builds one per item at run time. A caption says so.
+        auto* b = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL);
+        b->add_css_class("mortimer-listview");
+        const auto m = r.props.find("model");
+        const std::string model = m != r.props.end() && std::holds_alternative<std::string>(m->second)
+                                      ? std::get<std::string>(m->second) : "";
+        auto* cap = Gtk::make_managed<Gtk::Label>(model.empty() ? "ListView -- pick a model; its child is the row"
+                                                                : "ListView -- this row, once per " + model + " item");
+        cap->set_xalign(0);
+        cap->add_css_class("mortimer-listview-caption");
+        b->append(*cap);
+        return b;
+    }
     if (t == "Image") {
         auto* i = Gtk::make_managed<Gtk::Image>();
         if (!r.props.count("icon_name")) i->set_from_icon_name("image-x-generic-symbolic");
@@ -406,6 +421,22 @@ bool Canvas::apply_one(Gtk::Widget& w, const core::Rec& r, const std::string& p,
     }
     if ((p == "editable" || p == "selection") && r.type == "ColumnView")
         return true;   // s007: run-time behaviour; "model" above marks the editable headers
+    if (r.type == "ListView" && (p == "model" || p == "selection" || p == "show_separators" ||
+                                 p == "single_click_activate"))
+        return true;   // s011: run-time behaviour (make() captioned the model)
+    if (p == "bind" && std::holds_alternative<std::string>(v)) {
+        // s011: a row widget shows the field it binds, in angle quotes -- a
+        // designer affordance; the generated row fills in the item's value.
+        const std::string shown = "\u2039" + std::get<std::string>(v) + "\u203A";
+        if (auto* l = dynamic_cast<Gtk::Label*>(&w); l && !r.props.count("label")) { l->set_text(shown); return true; }
+        if (auto* b = dynamic_cast<Gtk::Button*>(&w); b && !r.props.count("label") && !r.props.count("icon_name")) {
+            b->set_label(shown);
+            return true;
+        }
+        if (auto* e = dynamic_cast<Gtk::Entry*>(&w)) { e->set_placeholder_text(shown); return true; }
+        if (auto* c = dynamic_cast<Gtk::CheckButton*>(&w); c && !r.props.count("label")) { c->set_label(shown); return true; }
+        return true;   // an Image / Switch / number: its own look says enough
+    }
     if (p == "remember") return true;   // s008: run-time behaviour (generated/WindowState)
     if (p == "stack" && r.type == "StackSidebar" && std::holds_alternative<std::string>(v)) {
         m_refs.emplace_back(&w, std::get<std::string>(v));
