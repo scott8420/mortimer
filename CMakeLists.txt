@@ -52,6 +52,9 @@ add_library(mortimer_core STATIC
     src/core/Codegen.cpp
     src/core/HookScan.cpp
     src/core/Project.cpp
+    # ── s002: the design the window edits -- a Form flattened by stable key so
+    # the journal holds it; every designer verb + the verb table the gate walks.
+    src/core/Design.cpp
     ${MORTIMER_TEMPLATES_CPP}
 )
 target_include_directories(mortimer_core PUBLIC include)
@@ -64,7 +67,7 @@ add_executable(mortimer-gen src/gen_main.cpp)
 target_link_libraries(mortimer-gen PRIVATE mortimer_core)
 
 # ── Headless selftest -- exercises the core with no display ────────────────────
-add_executable(mortimer_selftest src/selftest.cpp src/selftest_generator.cpp)
+add_executable(mortimer_selftest src/selftest.cpp src/selftest_generator.cpp src/selftest_design.cpp)
 # The gate reads tests/KitchenSink.mort from the source tree.
 target_compile_definitions(mortimer_selftest PRIVATE MORTIMER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(mortimer_selftest PRIVATE mortimer_core)

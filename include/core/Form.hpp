@@ -33,6 +33,7 @@ struct SignalHook {
     std::string signal;          // catalog signal name: "clicked"
     bool        required = false;// pure virtual: the class won't compile until it's written
     std::string handler;         // override of the hook name; "" = on_<id>_<signal>
+    bool operator==(const SignalHook&) const = default;   // s002: the journal compares records
 };
 
 struct Node {

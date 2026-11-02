@@ -78,6 +78,8 @@ void roundtrip(const std::vector<core::FlatLine>& flat,
 
 // s001 -- the generator's checks live in their own TU (selftest_generator.cpp).
 void selftest_generator(const std::function<void(const std::string&, bool, const std::string&)>& check);
+// s002 -- the design model the window edits (selftest_design.cpp).
+void selftest_design(const std::function<void(const std::string&, bool, const std::string&)>& check);
 
 int main() {
     std::cout << "mortimer_selftest -- recents pump + textmap mapping\n";
@@ -406,6 +408,10 @@ int main() {
     std::cout << "-----------------------------------------------\n";
     std::cout << "generator (s001)\n";
     selftest_generator([](const std::string& n, bool ok, const std::string& d) { check(n, ok, d); });
+
+    std::cout << "-----------------------------------------------\n";
+    std::cout << "design model (s002)\n";
+    selftest_design([](const std::string& n, bool ok, const std::string& d) { check(n, ok, d); });
 
     std::cout << "-----------------------------------------------\n";
     std::cout << g_pass << " pass / " << g_fail << " fail\n";
