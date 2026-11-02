@@ -1,4 +1,5 @@
 #include "core/Codegen.hpp"
+#include "core/Resources.hpp"
 #include "core/Catalog.hpp"
 
 #include <algorithm>
@@ -781,6 +782,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
     c << header_banner(f, "Construction, wiring, and the unhooked defaults of " + f.name + ".")
       << "#include \"generated/" << ui << ".hpp\"\n"
       << "#include \"generated/Hooks.hpp\"\n"
+      << "#include \"generated/Style.hpp\"\n"
       << (remembers(f) ? "#include \"generated/WindowState.hpp\"\n" : "")
       << "#include \"Registry.hpp\"\n"
       << (f.actions.empty() ? "" :
@@ -799,6 +801,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
         c << (i == 0 ? "\n    : " : "\n    , ") << "m_" << members[i]->id << "("
           << cpp_string(reg + "." + members[i]->id) << ")";
     c << " {\n"
+      << "    style::ensure();   // the app's stylesheet, once (generated/Style.cpp)\n"
       << "    set_name(" << cpp_string(reg) << ");\n"
       << "    registry::add(" << cpp_string(reg) << ", this);\n"
       << "    build_ui();\n"
@@ -1153,6 +1156,54 @@ void save() {
 }  // namespace @NS@::ui::state
 )WS";
 
+// s009 -- the app's stylesheet, resources/<bin>.css, if the bundle has one:
+// loaded once, by whichever window is built first, above the theme. (Every
+// form calls ensure(), so an app made before s009 gets it on regenerate -- its
+// App.cpp is the user's and isn't written again.)
+const char* const kStyleHpp = R"ST(// @MARK@ -- DO NOT EDIT.
+// resources/@BIN@.css, bundled: every window's constructor calls ensure(); the
+// first one loads it (if the bundle has it -- the navigator's + ▸ Stylesheet).
+#pragma once
+
+namespace @NS@::ui::style {
+
+void ensure();
+
+}  // namespace @NS@::ui::style
+)ST";
+
+const char* const kStyleCpp = R"ST(// @MARK@ -- DO NOT EDIT.
+#include "generated/Style.hpp"
+#include "Log.hpp"
+
+#include <gdkmm/display.h>
+#include <gio/gio.h>
+#include <gtkmm/cssprovider.h>
+#include <gtkmm/stylecontext.h>
+
+namespace @NS@::ui::style {
+
+void ensure() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    const char* path = "@ID_PATH@/@BIN@.css";
+    if (!g_resources_get_info(path, G_RESOURCE_LOOKUP_FLAGS_NONE, nullptr, nullptr, nullptr)) return;   // none: fine
+    auto display = Gdk::Display::get_default();
+    if (!display) return;
+    auto css = Gtk::CssProvider::create();
+    css->signal_parsing_error().connect([](const Glib::RefPtr<const Gtk::CssSection>& at, const Glib::Error& e) {
+        if (auto lg = log::get(log::Area::Ui))
+            lg->warn("@BIN@.css line {}: {}", at ? at->get_start_location().get_lines() + 1 : 0, e.what());
+    });
+    css->load_from_resource(path);
+    Gtk::StyleContext::add_provider_for_display(display, css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    if (auto lg = log::get(log::Area::Ui)) lg->debug("style: loaded {}", path);
+}
+
+}  // namespace @NS@::ui::style
+)ST";
+
 std::vector<OutFile> generate_support(const AppInfo& app) {
     std::set<std::string> headers;
     std::ostringstream w;
@@ -1210,13 +1261,14 @@ std::vector<OutFile> generate_support(const AppInfo& app) {
        << "| `<Form>.hooks.json` | the same, for tools (and the stale-hook memory) |\n"
        << "| `Widgets.hpp` | the `Named<W>` aliases |\n"
        << "| `Hooks.hpp/.cpp` | the once-per-hook \"unhooked\" warning |\n"
-       << "| `WindowState.hpp/.cpp` | where windows were left (a form's `remember`) |\n\n"
+       << "| `WindowState.hpp/.cpp` | where windows were left (a form's `remember`) |\n"
+       << "| `Style.hpp/.cpp` | loads resources/<bin>.css, if the bundle has it |\n\n"
        << "Your half is `include/<Form>.hpp` + `src/<Form>.cpp`. Mortimer writes those\n"
        << "once, the first time a form is generated, and never again.\n";
 
     auto fill = [&](std::string t) {
         for (const auto& [from, to] : {std::pair<std::string, std::string>{"@NS@", app.ns}, {"@BIN@", app.bin},
-                                       {"@MARK@", kGeneratedMarker}}) {
+                                       {"@MARK@", kGeneratedMarker}, {"@ID_PATH@", id_path(app.app_id)}}) {
             for (std::size_t at = 0; (at = t.find(from, at)) != std::string::npos; at += to.size())
                 t.replace(at, from.size(), to);
         }
@@ -1227,6 +1279,8 @@ std::vector<OutFile> generate_support(const AppInfo& app) {
             {"generated/Hooks.cpp", hc.str()},
             {"generated/WindowState.hpp", fill(kWindowStateHpp)},
             {"generated/WindowState.cpp", fill(kWindowStateCpp)},
+            {"generated/Style.hpp", fill(kStyleHpp)},
+            {"generated/Style.cpp", fill(kStyleCpp)},
             {"generated/README.md", rd.str()}};
 }
 

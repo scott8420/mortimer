@@ -61,7 +61,11 @@ void Shell::build_header() {  // zone: titlebar
 void Shell::build_body() {  // zone: the panes + status line
     // palette over tree, on the left
     m_left.set_start_child(m_palette);
-    m_left.set_end_child(m_tree);
+    // s009: the navigator -- the project (forms, resources, +) over the widget tree.
+    m_tree.set_vexpand(true);
+    m_nav.append(m_project);
+    m_nav.append(m_tree);
+    m_left.set_end_child(m_nav);
     m_left.set_resize_start_child(false);
     m_left.set_shrink_start_child(false);
     m_left.set_shrink_end_child(false);

@@ -1,4 +1,5 @@
 #include "Shell.hpp"
+#include "core/Resources.hpp"
 #include "AboutWindow.hpp"
 #include "ShortcutsDialog.hpp"
 #include "Log.hpp"
@@ -149,6 +150,102 @@ void Shell::on_add_form(const std::string& root_type) {  // handler: ask a name 
 void Shell::on_open_form(const std::string& stem) {  // handler: another form of this project
     if (m_app_dir.empty()) return;
     open_path((std::filesystem::path(m_app_dir) / "forms" / (stem + ".mort")).string());
+}
+
+// ── s009: the navigator's + and trash ─────────────────────────────────────
+
+void Shell::on_add_resource(const std::string& kind) {  // handler: + ▸ icon / image / data / stylesheet
+    if (m_app_dir.empty()) { say("Resources belong to a project -- open one, or File ▸ New Project.", 1); return; }
+    const std::string dir = m_app_dir;
+    auto done = [this](const core::Resource& r) {
+        rebuild_forms_menu();
+        if (r.kind == "icon")
+            say("Added icon " + r.use + " -- an Image's or Button's icon_name; rebuild the app to bundle it.");
+        else if (r.kind == "css")
+            say("Added resources/" + r.file + " -- every window loads it (generated/Style.cpp). Edit it, rebuild.");
+        else
+            say("Added resources/" + r.file + " -- load it from " + r.path + "; rebuild the app to bundle it.");
+    };
+    if (kind == "stylesheet") {
+        try { done(core::add_stylesheet(dir)); } catch (const std::exception& e) { say(e.what(), 2); }
+        return;
+    }
+    auto dialog = Gtk::FileDialog::create();
+    dialog->set_title(kind == "icon" ? "Add an icon (.svg)" : kind == "image" ? "Add an image" : "Add a data file");
+    auto filters = Gio::ListStore<Gtk::FileFilter>::create();
+    auto ff = Gtk::FileFilter::create();
+    if (kind == "icon") { ff->set_name("SVG icons"); ff->add_pattern("*.svg"); }
+    else if (kind == "image") { ff->set_name("Images"); ff->add_mime_type("image/*"); }
+    else { ff->set_name("Any file"); ff->add_pattern("*"); }
+    filters->append(ff);
+    dialog->set_filters(filters);
+    dialog->open(*this, [this, dialog, dir, kind, done](const Glib::RefPtr<Gio::AsyncResult>& result) {
+        try {
+            auto file = dialog->open_finish(result);
+            if (!file) return;
+            done(core::add_resource(dir, kind, file->get_path()));
+        } catch (const Glib::Error& e) {
+            if (auto lg = log::get(log::Area::Io)) lg->info("add {}: dismissed ({})", kind, e.what());
+        } catch (const std::exception& e) {
+            say(e.what(), 2);
+        }
+    });
+}
+
+void Shell::on_remove_form(const std::string& stem) {  // handler: trash on a form: ask -> remove_form -> generate
+    if (m_app_dir.empty()) return;
+    const std::string dir = m_app_dir;
+    const bool open = !m_path.empty() && std::filesystem::path(m_path).stem() == stem;
+    auto alert = Gtk::AlertDialog::create("Remove " + stem + " from the project?");
+    alert->set_detail("forms/" + stem + ".mort, your include/" + stem + ".hpp and src/" + stem +
+                      ".cpp move to removed/" + stem + "/ -- nothing is deleted. Its generated files go.\n\n"
+                      "If other code uses " + stem + " (an #include, a member), that code won't build "
+                      "until you take it out." + (open && dirty() ? "\n\nIt's open, with unsaved changes: they're lost." : ""));
+    alert->set_buttons({"Cancel", "Remove"});
+    alert->set_cancel_button(0);
+    alert->set_default_button(0);
+    alert->choose(*this, [this, alert, dir, stem, open](const Glib::RefPtr<Gio::AsyncResult>& result) {
+        int which = 0;
+        try { which = alert->choose_finish(result); } catch (const Glib::Error&) { return; }
+        if (which != 1) return;
+        try {
+            const std::string went = core::remove_form(dir, stem);
+            core::generate_project(dir);
+            if (open) {   // the open form went: show the main one (its changes were warned about)
+                m_saved = core::form_to_json(m_design.to_form());
+                const auto pr = core::load_project(dir);
+                on_open_form(pr.main_form);
+            }
+            rebuild_forms_menu();
+            say("Removed " + stem + " -- its files are in " + went + "/; generated/" + stem + "Ui.* pruned.");
+        } catch (const std::exception& e) {
+            say(e.what(), 2);
+        }
+    });
+}
+
+void Shell::on_remove_resource(const std::string& file) {  // handler: trash on a resource: ask -> remove_resource
+    if (m_app_dir.empty()) return;
+    const std::string dir = m_app_dir;
+    const std::string name = std::filesystem::path(file).filename().string();
+    auto alert = Gtk::AlertDialog::create("Remove " + name + " from the bundle?");
+    alert->set_detail("resources/" + file + " moves to removed/resources/ -- nothing is deleted. "
+                      "Code (or a form's icon_name) that still names it will find nothing.");
+    alert->set_buttons({"Cancel", "Remove"});
+    alert->set_cancel_button(0);
+    alert->set_default_button(0);
+    alert->choose(*this, [this, alert, dir, file, name](const Glib::RefPtr<Gio::AsyncResult>& result) {
+        int which = 0;
+        try { which = alert->choose_finish(result); } catch (const Glib::Error&) { return; }
+        if (which != 1) return;
+        try {
+            const std::string went = core::remove_resource(dir, file);
+            rebuild_forms_menu();
+            say("Removed " + name + " from the bundle -- the file is in " + went + ".");
+        } catch (const std::exception& e) {
+            say(e.what(), 2);
+        }
+    });
 }
 
 void Shell::on_save() {  // handler: to its file, or Save As

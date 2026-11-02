@@ -21,6 +21,8 @@ void Shell::bind_actions() {  // bindings: win.* + recents group
     add_action("open-project",  sigc::mem_fun(*this, &Shell::on_open_project));
     m_act_add_form = add_action("add-window", [this] { on_add_form("Window"); });
     m_act_add_dialog = add_action("add-dialog", [this] { on_add_form("Dialog"); });
+    for (const char* k : {"icon", "image", "data", "stylesheet"})   // s009: the navigator's +
+        m_act_add_res.push_back(add_action(std::string("add-") + k, [this, k] { on_add_resource(k); }));
     add_action_with_parameter("open-form", Glib::Variant<Glib::ustring>::variant_type(),
         [this](const Glib::VariantBase& param) {
             on_open_form(Glib::VariantBase::cast_dynamic<Glib::Variant<Glib::ustring>>(param).get());
@@ -69,6 +71,14 @@ void Shell::bind_model() {  // bindings: design <-> journal <-> panes
     // (the inspector writes only through core::design:: verbs).
     m_palette.signal_add().connect(sigc::mem_fun(*this, &Shell::on_add));
     m_tree.signal_select().connect(sigc::mem_fun(*this, &Shell::on_select));
+    // s009: the navigator's project list.
+    m_project.signal_open_form().connect(sigc::mem_fun(*this, &Shell::on_open_form));
+    m_project.signal_remove_form().connect(sigc::mem_fun(*this, &Shell::on_remove_form));
+    m_project.signal_remove_resource().connect(sigc::mem_fun(*this, &Shell::on_remove_resource));
+    m_project.signal_copy().connect([this](const std::string& text, const std::string& what) {
+        get_clipboard()->set_text(text);
+        say(what.empty() ? text : "Copied the " + what + ": " + text);
+    });
     m_canvas.signal_pick().connect(sigc::mem_fun(*this, &Shell::on_select));
     m_tree.signal_drop().connect(sigc::mem_fun(*this, &Shell::on_drop));
     m_canvas.signal_drop().connect(sigc::mem_fun(*this, &Shell::on_drop));

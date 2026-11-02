@@ -52,6 +52,7 @@ add_library(mortimer_core STATIC
     src/core/Codegen.cpp
     src/core/HookScan.cpp
     src/core/Project.cpp
+    src/core/Resources.cpp   # s009: the bundle + forms, as the navigator lists them
     # ── s002: the design the window edits -- a Form flattened by stable key so
     # the journal holds it; every designer verb + the verb table the gate walks.
     src/core/Design.cpp
@@ -126,6 +127,7 @@ add_executable(mortimer
     src/designer/GProps.cpp
     src/designer/HooksPane.cpp
     src/designer/Dialogs.cpp
+    src/designer/ProjectPane.cpp   # s009: the navigator's forms + resources, + and trash
     src/Registry.cpp
     src/Log.cpp
 )

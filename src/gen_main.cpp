@@ -9,6 +9,7 @@
 //   mortimer-gen catalog [Type]                        what can be placed, and how
 #include "core/Catalog.hpp"
 #include "core/Project.hpp"
+#include "core/Resources.hpp"
 
 #include <filesystem>
 #include <iostream>
@@ -27,7 +28,12 @@ int usage() {
         "  mortimer-gen generate [APP_DIR]                    regenerate every form\n"
         "  mortimer-gen hooks [APP_DIR]                       hooked / unhooked / missing / stale\n"
         "  mortimer-gen check <form.mort>                     validate one form\n"
-        "  mortimer-gen catalog [Type]                        widgets, properties, signals\n";
+        "  mortimer-gen catalog [Type]                        widgets, properties, signals\n"
+        "  mortimer-gen resources [APP_DIR]                   the bundle: kind, file, what code names\n"
+        "  mortimer-gen add icon|image|data FILE [APP_DIR]    copy into resources/ and bundle it\n"
+        "  mortimer-gen add stylesheet [APP_DIR]              resources/<bin>.css, loaded for every window\n"
+        "  mortimer-gen remove resource FILE [APP_DIR]        unbundle; the file moves to removed/\n"
+        "  mortimer-gen remove form STEM [APP_DIR]            the form + your halves move to removed/\n";
     return 2;
 }
 
@@ -150,6 +156,28 @@ int main(int argc, char** argv) {
             return core::has_errors(issues) ? 1 : 0;
         }
         if (cmd == "catalog") return cmd_catalog(a.size() > 1 ? a[1] : "");
+        // s009: the bundle and the forms, as the navigator's + and delete do them.
+        if (cmd == "resources") {
+            for (const auto& r : core::list_resources(a.size() > 1 ? a[1] : "."))
+                std::cout << "  " << r.kind << "  " << r.file << "  -> " << r.use << "\n";
+            return 0;
+        }
+        if (cmd == "add" && a.size() >= 2 && a[1] == "stylesheet") {
+            const auto r = core::add_stylesheet(a.size() > 2 ? a[2] : ".");
+            std::cout << "added resources/" << r.file << " (" << r.use << ")\n";
+            return 0;
+        }
+        if (cmd == "add" && a.size() >= 3) {
+            const auto r = core::add_resource(a.size() > 3 ? a[3] : ".", a[1], a[2]);
+            std::cout << "added resources/" << r.file << "  -> " << r.use << "\n";
+            return 0;
+        }
+        if (cmd == "remove" && a.size() >= 3 && (a[1] == "resource" || a[1] == "form")) {
+            const std::string dir = a.size() > 3 ? a[3] : ".";
+            const std::string went = a[1] == "form" ? core::remove_form(dir, a[2]) : core::remove_resource(dir, a[2]);
+            std::cout << "moved to " << went << (a[1] == "form" ? " -- run generate to prune its generated files" : "") << "\n";
+            return 0;
+        }
     } catch (const std::exception& e) {
         std::cerr << "mortimer-gen: " << e.what() << "\n";
         return 1;

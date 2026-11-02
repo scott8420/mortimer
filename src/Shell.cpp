@@ -21,6 +21,7 @@ Shell::Shell()
       m_root("shell.root", Gtk::Orientation::VERTICAL),
       m_outer("shell.outer", Gtk::Orientation::HORIZONTAL),
       m_left("shell.left", Gtk::Orientation::VERTICAL),
+      m_nav("shell.nav", Gtk::Orientation::VERTICAL),
       m_right("shell.right", Gtk::Orientation::HORIZONTAL),
       m_center("shell.center", Gtk::Orientation::VERTICAL),
       m_status("shell.status") {

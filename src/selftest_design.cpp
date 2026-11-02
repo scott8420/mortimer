@@ -10,7 +10,10 @@
 #include "core/Design.hpp"
 #include "core/Catalog.hpp"
 #include "core/Project.hpp"
+#include "core/Resources.hpp"
 
+#include <cstdlib>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -461,6 +464,78 @@ void selftest_design(const Check& check_) {
             check("live_report: required + unwritten -> missing",
                   core::live_report(app, f.d.to_form()).missing.size() == 1);
             check("live_report: no project -> no header", !core::live_report("", f.d.to_form()).header_found);
+
+            // s009: the bundle and the forms, as the navigator's + and delete do them.
+            {
+                const fs::path srcs = tmp / "srcs";
+                fs::create_directories(srcs);
+                auto put = [&](const char* name, const char* text) {
+                    std::ofstream(srcs / name) << text; return (srcs / name).string(); };
+                const auto svg = put("star-symbolic.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\"/>");
+                const auto png = put("cover.png", "not really a png");
+                const auto json = put("words.json", "[]");
+                const auto bad = put("my file.png", "x");
+                auto list = [&] { return core::list_resources(app); };
+                check("resources: a new app has its logo", list().size() == 1 && list()[0].kind == "icon" &&
+                                                            list()[0].use == "probe-logo-symbolic", list().empty() ? "" : list()[0].use);
+                std::string err;
+                core::Resource r;
+                try { r = core::add_resource(app, "icon", svg); } catch (const std::exception& e) { err = e.what(); }
+                check("add icon: copied + bundled, named by its stem",
+                      fs::exists(fs::path(app) / "resources/icons/scalable/apps/star-symbolic.svg") &&
+                      r.use == "star-symbolic" && r.path == "/io/github/scott8420/Probe/icons/scalable/apps/star-symbolic.svg", err);
+                try { r = core::add_resource(app, "image", png); } catch (const std::exception& e) { err = e.what(); }
+                check("add image: under images/, its resource path is what code names",
+                      r.kind == "image" && r.use == "/io/github/scott8420/Probe/images/cover.png", err + r.use);
+                try { r = core::add_resource(app, "data", json); } catch (const std::exception& e) { err = e.what(); }
+                check("add data: under data/", r.kind == "data" && r.file == "data/words.json", err);
+                try { r = core::add_stylesheet(app); } catch (const std::exception& e) { err = e.what(); }
+                check("add stylesheet: <bin>.css made + bundled at the id path",
+                      r.kind == "css" && r.path == "/io/github/scott8420/Probe/probe.css" &&
+                      fs::exists(fs::path(app) / "resources/probe.css"), err);
+                auto refused = [&](auto fn) { try { fn(); } catch (const std::exception&) { return true; } return false; };
+                check("add: refuses a duplicate", refused([&] { core::add_resource(app, "image", png); }));
+                check("add: refuses a name with a space", refused([&] { core::add_resource(app, "image", bad); }));
+                check("add: an icon must be an .svg", refused([&] { core::add_resource(app, "icon", png); }));
+                check("add: refuses an unknown kind / a missing file",
+                      refused([&] { core::add_resource(app, "font", json); }) &&
+                      refused([&] { core::add_resource(app, "image", (srcs / "nope.png").string()); }));
+                check("add: a second stylesheet refused", refused([&] { core::add_stylesheet(app); }));
+                check("resources: all five listed", list().size() == 5, std::to_string(list().size()));
+                std::string went;
+                try { went = core::remove_resource(app, "images/cover.png"); } catch (const std::exception& e) { err = e.what(); }
+                check("remove resource: unbundled, the file moved to removed/",
+                      went == "removed/resources/images/cover.png" && fs::exists(fs::path(app) / went) &&
+                      !fs::exists(fs::path(app) / "resources/images/cover.png") && list().size() == 4, err + went);
+                check("remove resource: the logo stays",
+                      refused([&] { core::remove_resource(app, "icons/scalable/apps/probe-logo-symbolic.svg"); }));
+                try { r = core::add_resource(app, "image", png); } catch (const std::exception& e) { err = e.what(); }
+                try { went = core::remove_resource(app, "images/cover.png"); } catch (const std::exception& e) { err = e.what(); }
+                check("remove resource: a second removal doesn't overwrite the first",
+                      went == "removed/resources/images/cover.png.2", went);
+                // The xml still compiles (the real tool), if it's here.
+                if (std::system("command -v glib-compile-resources >/dev/null 2>&1") == 0) {
+                    const std::string cmd = "cd '" + (fs::path(app) / "resources").string() +
+                                            "' && glib-compile-resources --generate-source --target=/dev/null probe.gresource.xml >/dev/null 2>&1";
+                    check("resources: the edited xml compiles (glib-compile-resources)", std::system(cmd.c_str()) == 0);
+                }
+                check("form_kind: reads the root type", core::form_kind(app, "AskDialog") == "Dialog" &&
+                                                         core::form_kind(app, "Nope").empty());
+                check("remove form: the main form stays", refused([&] { core::remove_form(app, "MainWindow"); }));
+                try { went = core::remove_form(app, "Prefs"); } catch (const std::exception& e) { err = e.what(); }
+                const auto pr = core::load_project(app);
+                check("remove form: unlisted; .mort + your halves moved to removed/Prefs",
+                      went == "removed/Prefs" && std::find(pr.forms.begin(), pr.forms.end(), "Prefs") == pr.forms.end() &&
+                      fs::exists(fs::path(app) / "removed/Prefs/Prefs.mort") &&
+                      fs::exists(fs::path(app) / "removed/Prefs/Prefs.hpp") &&
+                      fs::exists(fs::path(app) / "removed/Prefs/Prefs.cpp") &&
+                      !fs::exists(fs::path(app) / "src/Prefs.cpp"), err + went);
+                const auto g2 = core::generate_project(app);
+                check("remove form: generate prunes its generated files",
+                      g2.ok() && !fs::exists(fs::path(app) / "generated/PrefsUi.hpp"));
+                check("support: Style.cpp loads the bundled <bin>.css",
+                      fs::exists(fs::path(app) / "generated/Style.cpp"));
+            }
         }
         fs::remove_all(tmp);
     }

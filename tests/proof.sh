@@ -52,6 +52,14 @@ echo "== a new app + the kitchen sink"
 cp "$HERE/tests/KitchenSink.mort" forms/
 json mortimer.json 'j["forms"].append("KitchenSink")'
 check "generate"                "$GEN" generate .
+# s009: the bundle grows -- an icon, an image, a data file and the stylesheet,
+# so the build below compiles the edited xml and generated/Style.cpp for real.
+cp resources/icons/scalable/apps/proofapp-logo-symbolic.svg "$WORK/star-symbolic.svg"
+cp data/*.svg "$WORK/cover.svg"
+check "add an icon"             "$GEN" add icon "$WORK/star-symbolic.svg" .
+check "add an image"            "$GEN" add image "$WORK/cover.svg" .
+check "add a data file"         "$GEN" add data "$HERE/README.md" .
+check "add the stylesheet"      "$GEN" add stylesheet .
 check "configure"               cmake -B build
 check "builds (every widget, property, signal)" build
 check "selftest"                ./build/proofapp_selftest

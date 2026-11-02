@@ -170,9 +170,12 @@ void TreePane::repaint(const core::Design& d, const std::string& sel) {
     m_painting = true;
     m_d = &d;
     m_marked = nullptr;   // the rows are about to go
+    // A selection that MOVES into a collapsed branch opens the branch. Only when
+    // it moves: a repaint for a collapse would otherwise reopen at once any
+    // branch holding the selection -- the root never closed (Scott, s008).
+    const bool moved = sel != m_sel;
     m_sel = sel;
-    // A selection inside a collapsed branch opens the branch.
-    if (auto r = d.get(sel))
+    if (auto r = d.get(sel); r && moved)
         for (std::string k = r->parent; !k.empty(); k = d.get(k) ? d.get(k)->parent : "")
             m_collapsed.erase(k);
     while (auto* row = m_list.get_row_at_index(0)) m_list.remove(*row);
@@ -198,10 +201,21 @@ void TreePane::add_rows(const core::Design& d, const std::string& key, int depth
         ex->set_focusable(false);
         ex->set_tooltip_text(open ? "Collapse" : "Expand");
         ex->signal_clicked().connect([this, key, &d] {
+            bool select_it = false;
             if (m_collapsed.count(key)) m_collapsed.erase(key);
-            else m_collapsed.insert(key);
-            // A deferred repaint: this button is inside the row being rebuilt.
-            Glib::signal_idle().connect_once([this, &d] { repaint(d, m_sel); });
+            else {
+                m_collapsed.insert(key);
+                // Collapsing over the selection hands it to the collapsed row (as
+                // GTK's own trees do), so it isn't left on a row nobody can see.
+                if (auto r = d.get(m_sel))
+                    for (std::string k = r->parent; !k.empty(); k = d.get(k) ? d.get(k)->parent : "")
+                        if (k == key) { select_it = true; break; }
+            }
+            // Deferred: this button is inside the row being rebuilt.
+            Glib::signal_idle().connect_once([this, &d, key, select_it] {
+                if (select_it) m_select.emit(key);   // the shell repaints us with it
+                else repaint(d, m_sel);
+            });
         });
         line->append(*ex);
     } else {

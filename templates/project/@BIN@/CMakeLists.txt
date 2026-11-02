@@ -41,14 +41,16 @@ add_executable(@BIN@_selftest src/selftest.cpp)
 target_link_libraries(@BIN@_selftest PRIVATE @BIN@_core)
 
 # ── resources, compiled in (docs/resources-and-dialog-lifetime.md) ──────────
-# Add an icon: drop the .svg in resources/icons/scalable/apps/, list it in the
-# .xml, rebuild.
+# Add a resource from Mortimer's navigator (+ ▸ Icon / Image / Data file /
+# Stylesheet) or `mortimer-gen add`: it copies the file and lists it in the .xml.
 find_program(GLIB_COMPILE_RESOURCES glib-compile-resources REQUIRED)
 set(RES_XML "${CMAKE_CURRENT_SOURCE_DIR}/resources/@BIN@.gresource.xml")
 set(RES_C   "${CMAKE_CURRENT_BINARY_DIR}/@BIN@-resources.c")
 file(GLOB RES_FILES CONFIGURE_DEPENDS
      "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/scalable/apps/*.svg"
-     "${CMAKE_CURRENT_SOURCE_DIR}/resources/*.css")
+     "${CMAKE_CURRENT_SOURCE_DIR}/resources/*.css"
+     "${CMAKE_CURRENT_SOURCE_DIR}/resources/images/*"
+     "${CMAKE_CURRENT_SOURCE_DIR}/resources/data/*")
 add_custom_command(
     OUTPUT  "${RES_C}"
     COMMAND "${GLIB_COMPILE_RESOURCES}" --target "${RES_C}" --generate-source

@@ -1,6 +1,7 @@
 #pragma once
 #include "widgets/Widgets.hpp"
 #include "core/Design.hpp"
+#include "designer/ProjectPane.hpp"
 #include "designer/Canvas.hpp"
 #include "designer/Dialogs.hpp"
 #include "designer/HooksPane.hpp"
@@ -76,6 +77,9 @@ private:
     void on_open_project();                      // category: handler: folder -> its main form
     void on_add_form(const std::string& root_type);   // category: handler: ask a name -> add_form (Window / Dialog) -> open it
     void on_open_form(const std::string& stem);  // category: handler: another form of this project
+    void on_add_resource(const std::string& kind);    // category: handler: s009 + ▸ icon / image / data / stylesheet
+    void on_remove_form(const std::string& stem);     // category: handler: s009 trash: ask -> remove_form -> generate
+    void on_remove_resource(const std::string& file); // category: handler: s009 trash: ask -> remove_resource
     void on_undo();                              // category: handler
     void on_redo();                              // category: handler
     void on_add(const std::string& type);        // category: handler: palette -> design::add
@@ -139,6 +143,8 @@ private:
     widgets::Paned      m_right;               // (canvas / hooks) | inspector
     widgets::Paned      m_center;              // canvas over the hooks panel
     designer::Palette   m_palette;
+    widgets::Box        m_nav;                 // s009: the project over the widget tree
+    designer::ProjectPane m_project;
     designer::TreePane  m_tree;
     designer::Canvas    m_canvas;
     designer::HooksPane m_hooks;
@@ -153,6 +159,7 @@ private:
     Glib::RefPtr<Gio::Menu>         m_edit_menu;
     Glib::RefPtr<Gio::Menu>         m_forms_menu;     // this project's forms, rebuilt on load
     Glib::RefPtr<Gio::SimpleAction> m_act_add_form, m_act_add_dialog;
+    std::vector<Glib::RefPtr<Gio::SimpleAction>> m_act_add_res;   // s009: icon, image, data, stylesheet
     Glib::RefPtr<Gio::SimpleAction> m_act_undo, m_act_redo, m_act_delete, m_act_up, m_act_down;
 
     std::unique_ptr<AboutWindow>     m_about;
