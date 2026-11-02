@@ -56,7 +56,15 @@ Form Design::to_form() const {
         f.files = it->second.files;
         f.models = it->second.models;
     }
+    f.shared = m_shared;   // s013
     return f;
+}
+
+std::vector<ModelDef> Design::all_models() const {
+    std::vector<ModelDef> out;
+    if (const auto it = m_recs.find(kForm); it != m_recs.end()) out = it->second.models;
+    out.insert(out.end(), m_shared.begin(), m_shared.end());
+    return out;
 }
 
 // ── reading ────────────────────────────────────────────────────────────────

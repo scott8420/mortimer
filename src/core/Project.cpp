@@ -7,6 +7,7 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -77,6 +78,10 @@ Project load_project(const std::string& app_dir) {
     pr.main_form = j.value("main_form", "MainWindow");
     for (const auto& f : j.value("forms", json::array()))
         if (f.is_string()) pr.forms.push_back(f.get<std::string>());
+    if (j.contains("models")) {   // s013
+        try { pr.models = models_from_json(j["models"].dump()); }
+        catch (const std::exception& e) { throw std::runtime_error(p.string() + ": " + e.what()); }
+    }
     if (pr.app.name.empty() || pr.app.bin.empty() || pr.app.app_id.empty())
         throw std::runtime_error(p.string() + ": needs name, binary and app_id");
     return pr;
@@ -91,6 +96,7 @@ void save_project(const Project& pr, const std::string& app_dir) {
     j["namespace"] = pr.app.ns;
     j["main_form"] = pr.main_form;
     j["forms"] = pr.forms;
+    if (!pr.models.empty()) j["models"] = json::parse(models_to_json(pr.models));   // s013
     write_if_changed(fs::path(app_dir) / "mortimer.json", j.dump(2) + "\n");
 }
 
@@ -142,6 +148,9 @@ GenerateResult generate_project(const std::string& app_dir) {
     };
 
     for (const auto& f : generate_support(pr.app)) emit(f);
+    // s013: the shared models -- checked once, generated once (none -> pruned).
+    for (const auto& i : validate_models(pr.models)) r.issues.push_back({"mortimer.json", i});
+    for (const auto& f : generate_models(pr.models, pr.app)) emit(f);
 
     bool main_seen = false;
     for (const auto& stem : pr.forms) {
@@ -156,6 +165,7 @@ GenerateResult generate_project(const std::string& app_dir) {
                 produced.insert("generated/" + stem + s);   // keep the old ones; don't prune
             continue;
         }
+        form.shared = pr.models;   // s013: the project's models, for its views
         if (form.name != stem)
             r.issues.push_back({stem, {true, "form", "the file is " + stem + ".mort but its name is \"" +
                                                          form.name + "\" -- they must match"}});
@@ -408,6 +418,94 @@ std::string add_about(const std::string& app_dir) {
     pr.forms.push_back("About");
     save_project(pr, app_dir);
     return form.string();
+}
+
+Form load_project_form(const std::string& app_dir, const std::string& stem) {
+    Form f = load_form((fs::path(app_dir) / "forms" / (stem + ".mort")).string());
+    f.shared = load_project(app_dir).models;
+    return f;
+}
+
+std::vector<std::string> share_model(const std::string& app_dir, const std::string& stem, const std::string& name) {
+    Project pr = load_project(app_dir);
+    for (const auto& m : pr.models)
+        if (m.name == name) throw std::runtime_error("the project already shares a model " + name);
+    const fs::path root(app_dir);
+    std::map<std::string, Form> forms;
+    for (const auto& s : pr.forms) forms[s] = load_form((root / "forms" / (s + ".mort")).string());
+    if (!forms.count(stem)) throw std::runtime_error(stem + " isn't a form of this project");
+    const ModelDef* mine = nullptr;
+    for (const auto& m : forms[stem].models) if (m.name == name) mine = &m;
+    if (!mine) throw std::runtime_error(stem + " has no model " + name);
+    const ModelDef shared = *mine;
+    // Another form's copy must be the same model -- else sharing would change it under that form.
+    for (const auto& [s, f] : forms) {
+        if (s == stem) continue;
+        for (const auto& m : f.models)
+            if (m.name == name && !(m == shared))
+                throw std::runtime_error(s + " has its own " + name + " with other fields -- make them the same "
+                                         "(or rename one) before sharing");
+    }
+    std::vector<std::string> changed;
+    for (auto& [s, f] : forms) {
+        const auto n = f.models.size();
+        std::erase_if(f.models, [&](const ModelDef& m) { return m.name == name; });
+        if (f.models.size() != n) {
+            save_form(f, (root / "forms" / (s + ".mort")).string());
+            changed.push_back(s);
+        }
+    }
+    pr.models.push_back(shared);
+    save_project(pr, app_dir);
+    return changed;
+}
+
+std::vector<std::string> set_shared_model(const std::string& app_dir, const std::string& name, const ModelDef& now) {
+    Project pr = load_project(app_dir);
+    auto it = std::find_if(pr.models.begin(), pr.models.end(), [&](const ModelDef& m) { return m.name == name; });
+    if (it == pr.models.end()) throw std::runtime_error("the project has no shared model " + name);
+    const ModelDef was = *it;
+    *it = now;
+    for (const auto& i : validate_models(pr.models))
+        if (i.error) throw std::runtime_error(i.where + ": " + i.what);
+    const fs::path root(app_dir);
+    std::vector<std::string> changed;
+    for (const auto& s : pr.forms) {
+        const auto p = root / "forms" / (s + ".mort");
+        Form f = load_form(p.string());
+        if (now.name != name)
+            for (const auto& m : f.models)
+                if (m.name == now.name) throw std::runtime_error(s + " has its own " + now.name + " -- pick another name");
+        if (carry_model(f.root, was, now)) { save_form(f, p.string()); changed.push_back(s); }
+    }
+    save_project(pr, app_dir);
+    return changed;
+}
+
+std::vector<std::string> unshare_model(const std::string& app_dir, const std::string& name) {
+    Project pr = load_project(app_dir);
+    auto it = std::find_if(pr.models.begin(), pr.models.end(), [&](const ModelDef& m) { return m.name == name; });
+    if (it == pr.models.end()) throw std::runtime_error("the project has no shared model " + name);
+    const ModelDef m = *it;
+    const fs::path root(app_dir);
+    std::vector<std::string> users;
+    for (const auto& s : pr.forms) {
+        const auto p = root / "forms" / (s + ".mort");
+        Form f = load_form(p.string());
+        bool shows = false;
+        walk(f.root, [&](const Node& n, const Node*) {
+            const auto x = n.props.find("model");
+            shows = shows || (x != n.props.end() && std::holds_alternative<std::string>(x->second) &&
+                              std::get<std::string>(x->second) == name);
+        });
+        if (!shows) continue;
+        f.models.push_back(m);
+        save_form(f, p.string());
+        users.push_back(s);
+    }
+    pr.models.erase(it);
+    save_project(pr, app_dir);
+    return users;
 }
 
 std::string create_workspace(const AppInfo& app, const std::string& parent) {

@@ -12,11 +12,13 @@
 // wrong fails THERE. (CANON: a claim isn't a fact until a consumer exercises it.)
 #include "core/Catalog.hpp"
 #include "core/Codegen.hpp"
+#include "core/CssScope.hpp"
 #include "core/Form.hpp"
 #include "core/HookScan.hpp"
 #include "core/Project.hpp"
 #include "core/Templates.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -1037,5 +1039,163 @@ class X : public ui::XUi {
               has(h2, "std::shared_ptr<bool> m_rows_alive = std::make_shared<bool>(true);"), "");
         { auto u = core::user_stubs(g, app);
           check("s011 m2 stubs: your half overrides the row hook", has(u[0].content, "void on_t_del_clicked(const Glib::RefPtr<TaskItem>& item) override;"), ""); }
+    }
+
+    // ── s012: the app's stylesheet, scoped to the canvas card ──────────────
+    {
+        const std::string S = ".mortimer-window";
+        auto sc = [&](const std::string& in) { return core::scope_css(in, S); };
+        check("s012 css: a type selector gets the scope as ancestor",
+              sc("label { color: red; }") == ".mortimer-window label { color: red; }", sc("label { color: red; }"));
+        check("s012 css: a list -- each one scoped, the spacing kept",
+              sc("label, .title,\nbutton:hover { a: b; }") ==
+                  ".mortimer-window label, .mortimer-window .title,\n.mortimer-window button:hover { a: b; }",
+              sc("label, .title,\nbutton:hover { a: b; }"));
+        check("s012 css: `window` is the card itself",
+              sc("window { x: y; } window.big > box { x: y; } windowish { x: y; }") ==
+                  ".mortimer-window { x: y; } .mortimer-window.big > box { x: y; } .mortimer-window windowish { x: y; }",
+              sc("window { x: y; } window.big > box { x: y; } windowish { x: y; }"));
+        check("s012 css: a comma inside :not() isn't a split",
+              sc("button:not(.a, .b) { x: y; }") == ".mortimer-window button:not(.a, .b) { x: y; }",
+              sc("button:not(.a, .b) { x: y; }"));
+        const std::string at = "@define-color accent #c00;\n@import url(\"x.css\");\n@keyframes spin { from { a: b; } to { a: c; } }\n";
+        check("s012 css: @-statements and @keyframes are copied as they are", sc(at) == at, sc(at));
+        const std::string cm = "/* label { } */\nlabel /* the labels */ { color: /* } */ red; }\n";
+        check("s012 css: comments (even with braces) stay; the selector is still scoped",
+              sc(cm) == "/* label { } */\n.mortimer-window label /* the labels */ { color: /* } */ red; }\n", sc(cm));
+        check("s012 css: strings with braces in a declaration don't end the block",
+              sc("label { content: \"}\"; } box { a: b; }") ==
+                  ".mortimer-window label { content: \"}\"; } .mortimer-window box { a: b; }",
+              sc("label { content: \"}\"; } box { a: b; }"));
+        const std::string many = "a { }\n\n/* x\ny */\nb,\nc { d: e;\n f: g; }\n";
+        auto lines = [](const std::string& t) { return std::count(t.begin(), t.end(), '\n'); };
+        check("s012 css: line numbers survive (GTK's error line = your line)", lines(sc(many)) == lines(many), sc(many));
+        check("s012 css: unterminated input is copied, not lost", has(sc("label { color: red;"), "color: red;"), "");
+        check("s012 css: empty in, empty out", sc("").empty() && sc("  \n").size() == 3, "");
+        const auto names = core::css_class_names(
+            "/* .ignored */ .card, button.big:hover > .x-1 { margin: 0.5em; background: url(\"a.png\"); }\n"
+            "@keyframes k { from { a: b; } }\n@define-color c #fff;\nlabel:not(.dim) { }\n.card { }\n");
+        check("s012 m3 css: class names from selectors only, sorted, once",
+              names == std::vector<std::string>{"big", "card", "dim", "x-1"},
+              [&] { std::string o; for (const auto& n : names) o += n + " "; return o; }());
+    }
+
+    // ── s013: models shared across forms ───────────────────────────────────
+    {
+        using core::Value;
+        const auto app = core::derive_app("Sharer");
+        const core::ModelDef task{"Task", {{"title", "string", ""}, {"done", "bool", ""}}};
+        core::Form f;
+        f.name = "MainWindow";
+        core::Node cv{"ColumnView", "tasks", {{"model", Value(std::string("Task"))}}, {}, {{"activated", false, ""}}, {}};
+        f.root = {"Window", "main_window", {}, {}, {}, {cv}};
+        check("s013 validate: an unknown model without the project's -> error", !errors_of(f).empty(), "");
+        f.shared = {task};
+        check("s013 validate: a shared model is a model", errors_of(f).empty(), errors_of(f).empty() ? "" : errors_of(f)[0]);
+        { auto g = f; g.models = {task};
+          check("s013 validate: the form's own Task can't hide the shared one", !errors_of(g).empty(), ""); }
+        check("s013 json: shared models aren't written with the form", !has(core::form_to_json(f), "\"models\""), "");
+        const auto o = core::generate_form(f, app);
+        check("s013 codegen: a using, not a nested class; Models.hpp included",
+              has(o[0].content, "using TaskItem = ::sharer::model::TaskItem;") &&
+              !has(o[0].content, "class TaskItem") && has(o[0].content, "#include \"generated/Models.hpp\"") &&
+              !has(o[1].content, "TaskItem::create("), "");
+        check("s013 codegen: the hook still says TaskItem",
+              has(o[0].content, "virtual void on_tasks_activated(const Glib::RefPtr<TaskItem>& item);"), "");
+        const auto mo = core::generate_models({task}, app);
+        check("s013 Models: one class at namespace level, with its create()",
+              mo.size() == 2 && has(mo[0].content, "namespace sharer::model {") &&
+              has(mo[0].content, "class TaskItem : public Glib::Object {") &&
+              has(mo[1].content, "Glib::RefPtr<TaskItem> TaskItem::create(const std::string& title, bool done, std::uint64_t id) {"), "");
+        check("s013 Models: none -> no files", core::generate_models({}, app).empty(), "");
+        bool bad = false;
+        for (const auto& i : core::validate_models({{"task", {}}})) bad = bad || i.error;
+        check("s013 validate_models: a model with no fields -> error", bad, "");
+        check("s013 json: models round-trip as text",
+              core::models_from_json(core::models_to_json({task})) == std::vector<core::ModelDef>{task}, "");
+
+        // The project: share a form's model; another form's identical copy goes too.
+        const fs::path tmp = fs::temp_directory_path() / ("mortimer_s013_" + std::to_string(::getpid()));
+        fs::remove_all(tmp);
+        fs::create_directories(tmp);
+        std::string dir;
+        try { dir = core::create_workspace(app, tmp.string()); } catch (const std::exception& e) { check("s013 project", false, e.what()); }
+        if (!dir.empty()) {
+            const fs::path ad(dir);
+            auto mw = core::load_form((ad / "forms" / "MainWindow.mort").string());
+            mw.models = {task};
+            core::Node mcv{"ColumnView", "tasks", {{"model", Value(std::string("Task"))}}, {}, {}, {}};
+            mw.root.children.back().children.push_back(mcv);
+            core::save_form(mw, (ad / "forms" / "MainWindow.mort").string());
+            core::add_form(dir, "Pick", "Dialog");
+            auto pk = core::load_form((ad / "forms" / "Pick.mort").string());
+            pk.models = {task};
+            pk.root.children.front().children.push_back(mcv);
+            core::save_form(pk, (ad / "forms" / "Pick.mort").string());
+            bool refused = false;
+            try { core::share_model(dir, "MainWindow", "Nope"); } catch (const std::exception&) { refused = true; }
+            check("s013 share: an unknown model refused", refused, "");
+            { auto pk2 = pk; pk2.models[0].fields.push_back({"extra", "int", ""});
+              core::save_form(pk2, (ad / "forms" / "Pick.mort").string());
+              std::string why;
+              try { core::share_model(dir, "MainWindow", "Task"); } catch (const std::exception& e) { why = e.what(); }
+              check("s013 share: another form's DIFFERENT copy refuses, naming it", has(why, "Pick has its own Task"), why);
+              core::save_form(pk, (ad / "forms" / "Pick.mort").string()); }
+            std::vector<std::string> changed;
+            try { changed = core::share_model(dir, "MainWindow", "Task"); } catch (const std::exception& e) { check("s013 share", false, e.what()); }
+            check("s013 share: both forms lose their copy, the project has it",
+                  changed.size() == 2 && core::load_project(dir).models.size() == 1 &&
+                  core::load_form((ad / "forms" / "Pick.mort").string()).models.empty() &&
+                  core::load_project_form(dir, "Pick").shared.size() == 1, "");
+            const auto g = core::generate_project(dir);
+            check("s013 generate: valid, Models.* written", g.ok() && fs::exists(ad / "generated" / "Models.hpp"),
+                  g.issues.empty() ? "" : g.issues.front().second.what);
+            bool again = false;
+            try { core::share_model(dir, "MainWindow", "Task"); } catch (const std::exception&) { again = true; }
+            check("s013 share: twice refused", again, "");
+            // m3: edit the shared model -- every form follows; then unshare.
+            {
+                auto lv = core::load_form((ad / "forms" / "Pick.mort").string());
+                core::Node lbl{"Label", "r_title", {{"bind", Value(std::string("title"))}}, {}, {}, {}};
+                core::Node rowb{"Box", "r_row", {}, {}, {}, {lbl}};
+                lv.root.children.front().children.push_back(
+                    core::Node{"ListView", "rows", {{"model", Value(std::string("Task"))}}, {}, {}, {rowb}});
+                auto& cvn = lv.root.children.front().children[lv.root.children.front().children.size() - 2];
+                cvn.props["editable"] = Value(core::StringList{"title"});
+                core::save_form(lv, (ad / "forms" / "Pick.mort").string());
+                core::ModelDef now{"Job", {{"name", "string", ""}, {"done", "bool", ""}}};
+                std::vector<std::string> ch;
+                try { ch = core::set_shared_model(dir, "Task", now); } catch (const std::exception& e) { check("s013 m3 edit", false, e.what()); }
+                const auto pk2 = core::load_form((ad / "forms" / "Pick.mort").string());
+                const std::string js = core::form_to_json(pk2);
+                check("s013 m3 edit shared: renamed + a field renamed -> every form follows (model, editable, bind)",
+                      ch.size() == 2 && core::load_project(dir).models.front().name == "Job" &&
+                      has(js, "\"model\": \"Job\"") && !has(js, "\"model\": \"Task\"") &&
+                      has(js, "\"bind\": \"name\""), "");
+                core::StringList ed;
+                core::walk(pk2.root, [&](const core::Node& n, const core::Node*) {
+                    if (n.type == "ColumnView") ed = core::view_editable(n);
+                });
+                check("s013 m3 edit shared: editable followed the field rename",
+                      ed == core::StringList{"name"}, ed.empty() ? "(empty)" : ed.front());
+                check("s013 m3 edit shared: the project still generates", core::generate_project(dir).ok(), "");
+                bool bad = false;
+                try { core::set_shared_model(dir, "Job", {"Job", {}}); } catch (const std::exception&) { bad = true; }
+                check("s013 m3 edit shared: an empty model refused", bad, "");
+                const auto users = core::unshare_model(dir, "Job");
+                check("s013 m3 unshare: each form that shows it gets its own copy back; the project's goes",
+                      users.size() == 2 && core::load_project(dir).models.empty() &&
+                      core::load_form((ad / "forms" / "Pick.mort").string()).models.size() == 1 &&
+                      core::generate_project(dir).ok(), "");
+                core::share_model(dir, "MainWindow", "Job");   // back to shared for the prune check below
+            }
+            auto pj = core::load_project(dir);
+            pj.models.clear();
+            core::save_project(pj, dir);
+            const auto g2 = core::generate_project(dir);
+            check("s013 generate: no shared models -> Models.* pruned, the views' forms refused",
+                  !fs::exists(ad / "generated" / "Models.hpp") && !g2.ok(), "");
+        }
+        fs::remove_all(tmp);
     }
 }

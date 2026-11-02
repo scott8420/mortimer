@@ -1,9 +1,15 @@
 #include "designer/Canvas.hpp"
 #include "core/Catalog.hpp"
 #include "designer/GProps.hpp"
+#include "core/CssScope.hpp"
 #include "Log.hpp"
 
 #include <gtkmm/adjustment.h>
+#include <gtkmm/stylecontext.h>
+#include <gdkmm/display.h>
+#include <giomm/file.h>
+#include <glibmm/fileutils.h>
+#include <filesystem>
 #include <gtkmm/centerbox.h>
 #include <gtkmm/checkbutton.h>
 #include <gtkmm/dropdown.h>
@@ -405,7 +411,7 @@ bool Canvas::apply_one(Gtk::Widget& w, const core::Rec& r, const std::string& p,
         const auto f = m_design ? m_design->get(core::Design::kForm) : std::nullopt;
         if (!cv || !f) return false;
         cv->set_model(Gtk::NoSelection::create(Gio::ListStore<Glib::Object>::create()));
-        for (const auto& m : f->models)
+        for (const auto& m : m_design->all_models())   // s013: the form's own or the project's
             if (m.name == std::get<std::string>(v))
                 for (const auto& x : m.fields) {
                     // s007: an editable column wears a pencil -- a designer affordance only.
@@ -496,6 +502,64 @@ void Canvas::place(Gtk::Widget& parent, const core::Rec& prec, Gtk::Widget& chil
     } else if (auto lg = log::get(log::Area::Canvas)) {
         lg->warn("canvas can't place a child in a {}", prec.type);
     }
+}
+
+// ── s012: the project's stylesheet, scoped to the card ─────────────────────
+
+void Canvas::set_stylesheet(const std::string& path) {
+    if (path == m_css_path) return;
+    m_css_path = path;
+    m_css_later.disconnect();
+    m_css_watch.reset();
+    if (!path.empty()) {
+        // Watch the file itself (it may not exist yet: + ▸ Stylesheet makes it).
+        // Editors save by writing or by renaming over it -- any event reloads,
+        // once, a beat after the last one.
+        m_css_watch = Gio::File::create_for_path(path)->monitor_file();
+        m_css_watch->signal_changed().connect([this](const Glib::RefPtr<Gio::File>&, const Glib::RefPtr<Gio::File>&,
+                                                     Gio::FileMonitor::Event) {
+            m_css_later.disconnect();
+            m_css_later = Glib::signal_timeout().connect([this] { load_stylesheet(true); return false; }, 150);
+        });
+    }
+    load_stylesheet(false);
+}
+
+void Canvas::preview_stylesheet(std::optional<std::string> text) {
+    m_css_preview = std::move(text);
+    load_stylesheet(false);
+}
+
+void Canvas::load_stylesheet(bool said) {
+    auto display = Gdk::Display::get_default();
+    if (!display) return;
+    std::string text;
+    const bool there = !m_css_path.empty() && std::filesystem::is_regular_file(m_css_path);
+    if (there) {
+        try { text = Glib::file_get_contents(m_css_path); } catch (const Glib::Error&) { text.clear(); }
+    }
+    const bool previewing = m_css_preview.has_value();
+    if (previewing) text = *m_css_preview;
+    if (!m_css) {
+        m_css = Gtk::CssProvider::create();
+        // Lines map 1:1 -- scope_css only touches selectors -- so GTK's line is the file's line.
+        m_css->signal_parsing_error().connect([this](const Glib::RefPtr<const Gtk::CssSection>& at, const Glib::Error& e) {
+            if (!m_css_error.empty()) return;   // the first one says enough
+            const auto name = std::filesystem::path(m_css_path).filename().string();
+            m_css_error_line = at ? static_cast<int>(at->get_start_location().get_lines()) + 1 : 0;
+            m_css_error = name + " line " + std::to_string(m_css_error_line) + ": " + e.what();
+        });
+        Gtk::StyleContext::add_provider_for_display(display, m_css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    }
+    m_css_error.clear();
+    m_css_error_line = 0;
+    m_css->load_from_data(there || previewing ? core::scope_css(text, ".mortimer-window") : std::string());
+    if (previewing) return;   // the editor reports what its text did
+    if (auto lg = log::get(log::Area::Canvas))
+        lg->debug("stylesheet {} ({} bytes)", there ? m_css_path : std::string("(none)"), text.size());
+    const auto name = std::filesystem::path(m_css_path).filename().string();
+    if (!m_css_error.empty()) m_style_said.emit(m_css_error, 1);
+    else if (said) m_style_said.emit(there ? name + " reloaded -- the canvas wears it" : name + " is gone", 0);
 }
 
 }  // namespace mortimer::designer

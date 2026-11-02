@@ -61,6 +61,11 @@ public:
     // ── loading / saving (a load is not a user choice) ──────────────────────
     void load(const Form& f);    // replaces everything; keys n1.. in pre-order
     Form to_form() const;        // throws std::logic_error if there is no root
+    // s013: the PROJECT's models (mortimer.json) -- the form's views may show
+    // them. Not the form's, not a user choice here: not in the journal.
+    void set_shared(std::vector<ModelDef> m) { m_shared = std::move(m); }
+    const std::vector<ModelDef>& shared() const { return m_shared; }
+    std::vector<ModelDef> all_models() const;           // the form's own, then the shared
 
     // ── reading ─────────────────────────────────────────────────────────────
     Id              root() const;                       // "" when empty
@@ -89,6 +94,7 @@ public:
 
 private:
     std::map<Id, Rec>      m_recs;
+    std::vector<ModelDef>  m_shared;   // s013
     int                    m_next = 1;
     int                    m_strays = 0;
     int                    m_loading = 0;

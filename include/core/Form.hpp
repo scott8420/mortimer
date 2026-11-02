@@ -108,6 +108,9 @@ struct Form {
     std::vector<ActionDef> actions;   // s003: on disk only when there are any
     std::vector<FileDef>   files;     // s005: on disk only when there are any
     std::vector<ModelDef>  models;    // s006: on disk only when there are any
+    // s013: the PROJECT's models (mortimer.json), filled by whoever loads the form
+    // in a project -- never saved with it. A view may show one of these too.
+    std::vector<ModelDef>  shared;
 };
 
 // s006 -- models.
@@ -177,6 +180,18 @@ struct Issue {
     std::string what;
 };
 std::vector<Issue> validate(const Form& f);
+// s013 -- a list of models on its own: names, fields, types. `owner` = a class
+// name the item classes mustn't take ("" = none).
+std::vector<Issue> validate_models(const std::vector<ModelDef>& ms, const std::string& owner = "");
+// s013 m3 -- a model changed from `was` to `now` (renamed, fields renamed /
+// removed): every view in the tree showing it follows -- its "model", its
+// "editable" list, its row's "bind"s. Fields map by position when the count is
+// the same (a rename), else by name (a removed one unbinds). True if anything
+// changed.
+bool carry_model(Node& root, const ModelDef& was, const ModelDef& now);
+// s013 -- models as JSON text (the shape a form's "models" has); throws on bad shape.
+std::vector<ModelDef> models_from_json(const std::string& text);
+std::string models_to_json(const std::vector<ModelDef>& ms);
 bool has_errors(const std::vector<Issue>& issues);
 
 // The hook a ticked signal becomes. Root signals use the root's id too, so a

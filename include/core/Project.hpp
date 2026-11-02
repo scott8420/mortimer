@@ -31,6 +31,7 @@ struct Project {
     AppInfo app;
     std::string main_form = "MainWindow";
     std::vector<std::string> forms;     // stems: forms/<stem>.mort
+    std::vector<ModelDef> models;       // s013: SHARED by every form ("models", as a form writes them)
 };
 
 Project load_project(const std::string& app_dir);   // reads <app_dir>/mortimer.json
@@ -90,6 +91,24 @@ Form about_form(const AppInfo& app);
 // written (its constructor shows core::version()). Throws if it has one. Give
 // an action `"opens": "About"` to show it. Returns the form's path.
 std::string add_about(const std::string& app_dir);
+// s013 -- make form `stem`'s model `name` the project's: it moves to
+// mortimer.json and out of the form; any OTHER form holding an identical copy
+// drops it too (they now share one class, one set of ids). Refused, in words:
+// no such model, the project already has one by that name, or another form's
+// copy differs (fields or types) -- say which. Returns the forms that changed.
+std::vector<std::string> share_model(const std::string& app_dir, const std::string& stem, const std::string& name);
+// s013 m3 -- change shared model `name` to `now` (rename, fields): mortimer.json
+// is rewritten and every form on disk follows (core::carry_model). Refused, in
+// words, when `now` isn't a valid model or takes another's name. Returns the
+// forms that changed.
+std::vector<std::string> set_shared_model(const std::string& app_dir, const std::string& name, const ModelDef& now);
+// s013 m3 -- the inverse of share_model: every form whose views show `name`
+// gets its own copy back, and the project's goes. Returns those forms (none =
+// no form showed it: it simply goes).
+std::vector<std::string> unshare_model(const std::string& app_dir, const std::string& name);
+// s013 -- a form loaded the way the project sees it: its .mort plus the
+// project's shared models.
+Form load_project_form(const std::string& app_dir, const std::string& stem);
 
 // Template rendering (the embedded project template, @TOKEN@ substitution).
 std::string render_tokens(const std::string& text, const AppInfo& app);

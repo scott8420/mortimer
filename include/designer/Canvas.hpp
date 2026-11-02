@@ -24,7 +24,10 @@
 #include "widgets/Widgets.hpp"
 
 #include <gtkmm/stack.h>
+#include <gtkmm/cssprovider.h>
+#include <giomm/filemonitor.h>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -46,6 +49,19 @@ public:
     sigc::signal<void(const std::string&, const std::string&, int)>& signal_drop() { return m_drop; }
     sigc::signal<void(const std::string&)>& signal_refused() { return m_refused; }
 
+    // s012: the project's stylesheet (resources/<bin>.css) on the canvas -- a
+    // copy scoped to the form's card (core::scope_css), so it styles the form
+    // and never the designer. "" = none. Watched: an edit reloads it. Same path
+    // again is a no-op.
+    void set_stylesheet(const std::string& path);
+    // s012 m2: show THIS text on the canvas instead of the file (the editor's
+    // typing); nullopt = back to the file. Silent: the editor reports.
+    void preview_stylesheet(std::optional<std::string> text);
+    // The first parse error of the last load ("" = none) and its line (0 = none).
+    const std::string& style_error() const { return m_css_error; }
+    int style_error_line() const { return m_css_error_line; }
+    // What the stylesheet did: (message, level 0 = note, 1 = warning).
+    sigc::signal<void(const std::string&, int)>& signal_style_said() { return m_style_said; }
     // Every "<Type>.<prop>" the canvas could not apply since it was made.
     const std::set<std::string>& unapplied() const { return m_unapplied; }
 
@@ -73,6 +89,15 @@ private:
     std::vector<std::pair<Gtk::Widget*, std::string>> m_refs;   // (StackSidebar, stack name)
     const core::Design* m_design = nullptr;   // s006: the form's models, for a ColumnView's headers
     std::set<std::string> m_unapplied;
+    void load_stylesheet(bool said);                 // (re)read m_css_path into m_css
+    std::string                     m_css_path;
+    Glib::RefPtr<Gtk::CssProvider>  m_css;          // the scoped copy, on the display
+    Glib::RefPtr<Gio::FileMonitor>  m_css_watch;
+    sigc::connection                m_css_later;    // an edit's reload, a beat after the last event
+    std::string                     m_css_error;    // the first parse error of this load
+    int                             m_css_error_line = 0;
+    std::optional<std::string>      m_css_preview;  // the editor's text, while it previews
+    sigc::signal<void(const std::string&, int)> m_style_said;
     sigc::signal<void(const std::string&)> m_pick;
 };
 

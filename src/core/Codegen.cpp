@@ -927,6 +927,98 @@ static std::string row_classes_source(const Form& f, const std::string& ui) {
     return c.str();
 }
 
+// s006 / s013 -- a model's item class: a Glib::Object with a member per field
+// and a unique id(). Nested in <Form>Ui (indent "    ") for a form's own
+// model; at namespace level in generated/Models for a shared one.
+static std::string item_decl(const ModelDef& m, const std::string& in) {
+    std::ostringstream h;
+    const std::string it = model_item(m);
+    std::string params;
+    for (const auto& x : m.fields)
+        params += (x.type == "string" ? "const std::string& " : field_cpp_type(x.type) + " ") + x.name + " = {}, ";
+    h << in << "class " << it << " : public Glib::Object {\n"
+      << in << "public:\n"
+      << in << "    static Glib::RefPtr<" << it << "> create(" << params << "std::uint64_t id = 0);\n"
+      << in << "    ~" << it << "() override { ids().erase(m_id); }\n"
+      << in << "    std::uint64_t id() const { return m_id; }\n"
+      << in << "    static bool id_taken(std::uint64_t id) { return ids().count(id) != 0; }\n\n";
+    std::size_t width = 0;
+    for (const auto& x : m.fields) width = std::max(width, field_cpp_type(x.type).size());
+    for (const auto& x : m.fields)
+        h << in << "    " << pad(field_cpp_type(x.type), width) << " " << x.name
+          << (x.type == "string" ? "" : x.type == "bool" ? " = false" : " = 0") << ";\n";
+    h << "\n" << in << "protected:\n"
+      << in << "    " << it << "() = default;\n"
+      << in << "private:\n"
+      << in << "    std::uint64_t m_id = 0;\n"
+      << in << "    static std::set<std::uint64_t>& ids() { static std::set<std::uint64_t> s; return s; }\n"
+      << in << "    static std::uint64_t& next() { static std::uint64_t n = 1; return n; }\n"
+      << in << "};\n\n";
+    return h.str();
+}
+
+static std::string item_def(const ModelDef& m, const std::string& qual) {
+    std::ostringstream c;
+    const std::string it = model_item(m), q = qual + it;
+    std::string params;
+    for (const auto& x : m.fields)
+        params += (x.type == "string" ? "const std::string& " : field_cpp_type(x.type) + " ") + x.name + ", ";
+    c << "// " << it << ": an automatic id, or yours -- never one that's taken.\n"
+      << "Glib::RefPtr<" << q << "> " << q << "::create(" << params << "std::uint64_t id) {\n"
+      << "    if (id != 0 && ids().count(id)) {\n"
+      << "        if (auto lg = log::get(log::Area::Ui)) lg->error(" << cpp_string(it + ": id {} is taken -- not created") << ", id);\n"
+      << "        return {};\n"
+      << "    }\n"
+      << "    if (id == 0) {\n"
+      << "        while (ids().count(next())) ++next();\n"
+      << "        id = next()++;\n"
+      << "    } else if (id >= next()) {\n"
+      << "        next() = id + 1;   // the counter goes on past yours\n"
+      << "    }\n"
+      << "    auto item = Glib::make_refptr_for_instance<" << it << ">(new " << it << "());\n"
+      << "    item->m_id = id;\n"
+      << "    ids().insert(id);\n";
+    for (const auto& x : m.fields) c << "    item->" << x.name << " = " << x.name << ";\n";
+    c << "    return item;\n"
+      << "}\n\n";
+    return c.str();
+}
+
+// s013 -- the project's models this form's views show (each once, in order).
+static std::vector<const ModelDef*> shared_used(const Form& f) {
+    std::vector<const ModelDef*> out;
+    walk_members(f.root, [&](const Node& n, const Node*) {
+        const auto it = n.props.find("model");
+        if (it == n.props.end() || !std::holds_alternative<std::string>(it->second)) return;
+        const auto& name = std::get<std::string>(it->second);
+        for (const auto& m : f.models) if (m.name == name) return;   // the form's own wins (validate refuses both)
+        for (const auto& m : f.shared)
+            if (m.name == name && std::find(out.begin(), out.end(), &m) == out.end()) out.push_back(&m);
+    });
+    return out;
+}
+
+std::vector<OutFile> generate_models(const std::vector<ModelDef>& models, const AppInfo& app) {
+    if (models.empty()) return {};
+    std::ostringstream h;
+    h << "// " << kGeneratedMarker << " from mortimer.json's models -- DO NOT EDIT.\n"
+      << "// The project's SHARED models: one item class each, used by every form that\n"
+      << "// shows it (a form says `TaskItem`; its Ui class has a using for it). Ids are\n"
+      << "// unique per type across the whole app -- one set, not one per form.\n"
+      << "#pragma once\n"
+      << "#include <glibmm/object.h>\n#include <glibmm/refptr.h>\n\n#include <cstdint>\n#include <set>\n#include <string>\n\n"
+      << "namespace " << app.ns << "::model {\n\n";
+    for (const auto& m : models) h << item_decl(m, "");
+    h << "}  // namespace " << app.ns << "::model\n";
+    std::ostringstream c;
+    c << "// " << kGeneratedMarker << " from mortimer.json's models -- DO NOT EDIT.\n"
+      << "#include \"generated/Models.hpp\"\n#include \"Log.hpp\"\n\n"
+      << "namespace " << app.ns << "::model {\n\n";
+    for (const auto& m : models) c << item_def(m, "");
+    c << "}  // namespace " << app.ns << "::model\n";
+    return {{"generated/Models.hpp", h.str()}, {"generated/Models.cpp", c.str()}};
+}
+
 std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
     const WidgetSpec* rootw = find_widget(f.root.type);
     const std::string ui = f.name + "Ui";
@@ -947,6 +1039,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << (f.actions.empty() ? "" : "#include <giomm/simpleactiongroup.h>\n")
       << (f.files.empty() ? "" : "#include <giomm/cancellable.h>\n")
       << (f.models.empty() ? "" : "#include <glibmm/object.h>\n#include <glibmm/refptr.h>\n#include <sigc++/signal.h>\n#include <cstdint>\n#include <set>\n#include <string>\n")
+      << (shared_used(f).empty() ? "" : "#include \"generated/Models.hpp\"\n")
       << "#include <sigc++/connection.h>\n"
       << (f.files.empty() ? "" : "#include <map>\n#include <memory>\n#include <string>\n")
       << (opens_any(f) || !list_views(f).empty() ? "#include <memory>\n" : "")
@@ -989,31 +1082,14 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
           << "    // pass your own (a database key) as the last argument. Ids are unique per\n"
           << "    // type: a taken one is refused -- create() returns null and logs an error.\n"
           << "    // An id is free again when its item is destroyed. (Main thread only.)\n";
-        for (const auto& m : f.models) {
-            const std::string it = model_item(m);
-            std::string params;
-            for (const auto& x : m.fields)
-                params += (x.type == "string" ? "const std::string& " : field_cpp_type(x.type) + " ") + x.name +
-                          " = {}, ";
-            h << "    class " << it << " : public Glib::Object {\n"
-              << "    public:\n"
-              << "        static Glib::RefPtr<" << it << "> create(" << params << "std::uint64_t id = 0);\n"
-              << "        ~" << it << "() override { ids().erase(m_id); }\n"
-              << "        std::uint64_t id() const { return m_id; }\n"
-              << "        static bool id_taken(std::uint64_t id) { return ids().count(id) != 0; }\n\n";
-            std::size_t width = 0;
-            for (const auto& x : m.fields) width = std::max(width, field_cpp_type(x.type).size());
-            for (const auto& x : m.fields)
-                h << "        " << pad(field_cpp_type(x.type), width) << " " << x.name
-                  << (x.type == "string" ? "" : x.type == "bool" ? " = false" : " = 0") << ";\n";
-            h << "\n    protected:\n"
-              << "        " << it << "() = default;\n"
-              << "    private:\n"
-              << "        std::uint64_t m_id = 0;\n"
-              << "        static std::set<std::uint64_t>& ids() { static std::set<std::uint64_t> s; return s; }\n"
-              << "        static std::uint64_t& next() { static std::uint64_t n = 1; return n; }\n"
-              << "    };\n\n";
-        }
+        for (const auto& m : f.models) h << item_decl(m, "    ");
+    }
+    if (const auto used = shared_used(f); !used.empty()) {
+        h << "    // ── shared models ── the project's (generated/Models.hpp): one class for every\n"
+          << "    // form, so a row the main window lists is the row a dialog edits.\n";
+        for (const auto* m : used)
+            h << "    using " << model_item(*m) << " = ::" << app.ns << "::model::" << model_item(*m) << ";\n";
+        h << "\n";
     }
     h << row_classes_header(f);
     h << "protected:\n";
@@ -1120,30 +1196,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << "    registry::remove(this);\n"
       << "}\n\n"
       << state_functions(f, ui);
-    for (const auto& m : f.models) {
-        const std::string it = model_item(m), q = ui + "::" + it;
-        std::string params;
-        for (const auto& x : m.fields)
-            params += (x.type == "string" ? "const std::string& " : field_cpp_type(x.type) + " ") + x.name + ", ";
-        c << "// " << it << ": an automatic id, or yours -- never one that's taken.\n"
-          << "Glib::RefPtr<" << q << "> " << q << "::create(" << params << "std::uint64_t id) {\n"
-          << "    if (id != 0 && ids().count(id)) {\n"
-          << "        if (auto lg = log::get(log::Area::Ui)) lg->error(" << cpp_string(it + ": id {} is taken -- not created") << ", id);\n"
-          << "        return {};\n"
-          << "    }\n"
-          << "    if (id == 0) {\n"
-          << "        while (ids().count(next())) ++next();\n"
-          << "        id = next()++;\n"
-          << "    } else if (id >= next()) {\n"
-          << "        next() = id + 1;   // the counter goes on past yours\n"
-          << "    }\n"
-          << "    auto item = Glib::make_refptr_for_instance<" << it << ">(new " << it << "());\n"
-          << "    item->m_id = id;\n"
-          << "    ids().insert(id);\n";
-        for (const auto& x : m.fields) c << "    item->" << x.name << " = " << x.name << ";\n";
-        c << "    return item;\n"
-          << "}\n\n";
-    }
+    for (const auto& m : f.models) c << item_def(m, ui + "::");
     c << row_classes_source(f, ui);
     c << "void " << ui << "::build_ui() {\n";
     std::vector<std::string> lines;

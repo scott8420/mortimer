@@ -104,3 +104,11 @@
     opacity: 0.6;
     margin: 4px 8px;
 }
+
+/* s012: a css class on the inspector, as a chip with its ✕. */
+.mortimer-chip {
+    border-radius: 999px;
+    padding: 0 2px 0 10px;
+    background: alpha(currentColor, 0.08);
+}
+.mortimer-chip button { min-height: 20px; min-width: 20px; padding: 0; }

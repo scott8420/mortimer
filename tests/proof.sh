@@ -63,6 +63,10 @@ check "add the stylesheet"      "$GEN" add stylesheet .
 check "configure"               cmake -B build
 check "builds (every widget, property, signal)" build
 check "selftest"                ./build/proofapp_selftest
+# s013: the KitchenSink's Note becomes the project's -- its views, rows and hooks
+# now use generated/Models' NoteItem through a using; it must still build.
+check "share Note (s013)"       "$GEN" share KitchenSink Note .
+check "builds with Note shared" build
 H0=$(userhash)
 
 echo "== rename hello -> greet, add a save button"

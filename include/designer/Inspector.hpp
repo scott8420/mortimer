@@ -34,8 +34,14 @@ public:
     // s010: the forms an action of this form may open (the project's, less this
     // one and the main window). Shown in each action's "opens" dropdown.
     void set_targets(std::vector<std::string> forms) { m_targets = std::move(forms); }
+    // s012 m3: the project's stylesheet -- its classes are offered for css_classes. "" = none.
+    void set_stylesheet(std::string path) { m_css_path = std::move(path); }
     // A refusal or a note for the status line ("\"class\" isn't a C++ name").
     sigc::signal<void(const std::string&)>& signal_said() { return m_said; }
+    // s013: the Share button on a form's own model (the shell saves, shares, reopens).
+    sigc::signal<void(const std::string&)>& signal_share() { return m_share; }
+    sigc::signal<void(const std::string&)>& signal_edit_shared() { return m_edit_shared; }   // s013 m3
+    sigc::signal<void(const std::string&)>& signal_unshare() { return m_unshare; }           // s013 m3
 
 private:
     struct Row {
@@ -52,6 +58,7 @@ private:
     void models_rows();                                       // s006: the form's models
     void menu_rows(Gtk::Label* label, Gtk::Button* reset);    // s003: a MenuButton's menu
     void editable_rows(Gtk::Label* label, Gtk::Button* reset);// s007: a ColumnView's editable fields
+    void class_rows(Gtk::Label* label, Gtk::Button* reset);   // s012: css_classes as chips
     void no_wheel_unless_focused(Gtk::Widget& w);
     struct RowModel { bool in_row = false; std::optional<core::ModelDef> model; };
     RowModel row_model() const;                               // s011: the selection inside a ListView's row?
@@ -65,10 +72,14 @@ private:
     std::vector<Row>     m_rows;
     std::string          m_key, m_type, m_parent_type;
     std::vector<std::string> m_targets;  // s010: see set_targets
+    std::string          m_css_path;     // s012: see set_stylesheet
     std::string          m_actions_sig;   // the form's action + file dialog names, as last built
     bool                 m_painting = false;
     bool                 m_rebuilding = false;
     sigc::signal<void(const std::string&)> m_said;
+    sigc::signal<void(const std::string&)> m_share;
+    sigc::signal<void(const std::string&)> m_edit_shared;
+    sigc::signal<void(const std::string&)> m_unshare;
 };
 
 }  // namespace mortimer::designer

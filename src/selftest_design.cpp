@@ -314,6 +314,19 @@ void selftest_design(const Check& check_) {
               first_error(f.d.to_form()).empty(), first_error(f.d.to_form()));
     }
 
+    // ── s013: the project's models in the design ────────────────────────────
+    {
+        Fix f;
+        const core::ModelDef task{"Task", {{"title", "string", ""}}};
+        f.d.set_shared({task});
+        const auto all = f.d.all_models();
+        check("s013 design: all_models = the form's own, then the shared",
+              !all.empty() && all.back().name == "Task" && all.size() == f.d.to_form().models.size() + 1, "");
+        check("s013 design: to_form carries the shared (validate sees them)",
+              f.d.to_form().shared.size() == 1 && f.j.size() == 0, "");
+        check("s013 design: setting them isn't a step", f.d.strays() == 0, std::to_string(f.d.strays()));
+    }
+
     // ── s010: actions -- key / title typing folds per field; opens never ────
     {
         Fix f;

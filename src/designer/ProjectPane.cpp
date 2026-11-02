@@ -34,7 +34,7 @@ ProjectPane::ProjectPane()
     auto res = Gio::Menu::create();
     res->append("Icon (.svg)…", "win.add-icon");
     res->append("Image…", "win.add-image");
-    res->append("Stylesheet", "win.add-stylesheet");
+    res->append("Stylesheet", "win.edit-style");   // s012: makes it if needed, opens the editor
     res->append("Data file…", "win.add-data");
     menu->append_section("Resources", res);
     m_add.set_menu_model(menu);
@@ -53,6 +53,7 @@ ProjectPane::ProjectPane()
         if (m_painting || i >= m_acts.size()) return;
         const RowAct a = m_acts[i];
         if (a.kind == RowAct::Form) m_open_form.emit(a.key);
+        else if (a.kind == RowAct::Resource && a.what.empty()) m_open_style.emit();   // s012: the stylesheet -> its editor
         else if (a.kind == RowAct::Resource) m_copy.emit(a.use, a.what);
     });
     m_scroll.set_child(m_list);

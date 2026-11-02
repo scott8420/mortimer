@@ -8,7 +8,9 @@
 #include <gtkmm/button.h>
 #include <gtkmm/entry.h>
 #include <gtkmm/label.h>
+#include <gtkmm/grid.h>
 #include <gtkmm/window.h>
+#include "core/Form.hpp"
 
 #include <functional>
 #include <string>
@@ -46,6 +48,25 @@ private:
     Gtk::Button m_ok;
     std::function<std::string(const std::string&)> m_check;
     std::function<void(const std::string&)>        m_done;
+};
+
+// s013 m3 -- a SHARED model, edited: its name, and per field a name, a header
+// and a type; Add field / remove. Apply hands back the model (checked as you go:
+// the button greys with the reason); the shell rewrites mortimer.json and every
+// form follows. A file operation like Share -- Cancel is the undo.
+class ModelDialog : public Gtk::Window {
+public:
+    explicit ModelDialog(Gtk::Window& parent);
+    void ask(const core::ModelDef& m, std::function<void(const core::ModelDef&)> done);
+private:
+    void rebuild();        // the field rows from m_m
+    void check();          // validate m_m -> the reason, the button
+    core::ModelDef  m_m;
+    Gtk::Entry      m_name;
+    Gtk::Grid       m_fields;
+    Gtk::Label      m_why;
+    Gtk::Button     m_ok;
+    std::function<void(const core::ModelDef&)> m_done;
 };
 
 }  // namespace mortimer::designer

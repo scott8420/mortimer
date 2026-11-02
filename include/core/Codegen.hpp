@@ -58,6 +58,9 @@ std::vector<Hook> hooks_of(const Form& f);
 
 // generated/<Form>Ui.hpp + .cpp. Precondition: validate(f) has no errors.
 std::vector<OutFile> generate_form(const Form& f, const AppInfo& app);
+// s013 -- generated/Models.hpp/.cpp: the project's shared models (namespace
+// <ns>::model), one item class each. Nothing when there are none.
+std::vector<OutFile> generate_models(const std::vector<ModelDef>& models, const AppInfo& app);
 // s010 -- generated/Shortcuts.hpp/.cpp: the keyboard-shortcuts window, a row
 // per key any of `forms` gives an action (in that order; the main form first).
 std::vector<OutFile> generate_shortcuts(const std::vector<Form>& forms, const AppInfo& app);

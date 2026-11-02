@@ -127,6 +127,18 @@ void Shell::rebuild_forms_menu() {  // helper: the project's forms
             } catch (const std::exception&) {}
         }
         m_inspector.set_targets(std::move(targets));
+        // s013: the project's models, for the views' pickers, the canvas and validate.
+        try { m_design.set_shared(m_app_dir.empty() ? std::vector<core::ModelDef>{} : core::load_project(m_app_dir).models); }
+        catch (const std::exception&) { m_design.set_shared({}); }
+        // s012: the canvas wears the project's stylesheet (resources/<bin>.css).
+        std::string css;
+        if (!m_app_dir.empty()) {
+            try {
+                css = (std::filesystem::path(m_app_dir) / "resources" / (core::load_project(m_app_dir).app.bin + ".css")).string();
+            } catch (const std::exception&) {}
+        }
+        m_canvas.set_stylesheet(css);
+        m_inspector.set_stylesheet(css);
         // ...and the canvas draws the project's own icons (resources/icons/scalable/apps/*.svg),
         // as the built app does from its bundle. Added once per project; GTK finds an
         // unthemed <name>.svg in a search-path folder.
@@ -138,6 +150,7 @@ void Shell::rebuild_forms_menu() {  // helper: the project's forms
                     Gtk::IconTheme::get_for_display(display)->add_search_path(icons);
         }
         if (m_act_add_about) m_act_add_about->set_enabled(!m_app_dir.empty() && !has_about);
+        if (m_act_edit_style) m_act_edit_style->set_enabled(!m_app_dir.empty());
     }
     // s009: the navigator lists the same project (and its resources).
     m_project.repaint(m_app_dir, m_path.empty() ? "" : std::filesystem::path(m_path).stem().string());

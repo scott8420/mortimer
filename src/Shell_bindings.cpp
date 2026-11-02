@@ -22,6 +22,7 @@ void Shell::bind_actions() {  // bindings: win.* + recents group
     m_act_add_form = add_action("add-window", [this] { on_add_form("Window"); });
     m_act_add_dialog = add_action("add-dialog", [this] { on_add_form("Dialog"); });
     m_act_add_about = add_action("add-about", sigc::mem_fun(*this, &Shell::on_add_about));
+    m_act_edit_style = add_action("edit-style", sigc::mem_fun(*this, &Shell::on_edit_style));   // s012
     for (const char* k : {"icon", "image", "data", "stylesheet"})   // s009: the navigator's +
         m_act_add_res.push_back(add_action(std::string("add-") + k, [this, k] { on_add_resource(k); }));
     add_action_with_parameter("open-form", Glib::Variant<Glib::ustring>::variant_type(),
@@ -76,6 +77,7 @@ void Shell::bind_model() {  // bindings: design <-> journal <-> panes
     m_project.signal_open_form().connect(sigc::mem_fun(*this, &Shell::on_open_form));
     m_project.signal_remove_form().connect(sigc::mem_fun(*this, &Shell::on_remove_form));
     m_project.signal_remove_resource().connect(sigc::mem_fun(*this, &Shell::on_remove_resource));
+    m_project.signal_open_style().connect(sigc::mem_fun(*this, &Shell::on_edit_style));
     m_project.signal_copy().connect([this](const std::string& text, const std::string& what) {
         get_clipboard()->set_text(text);
         say(what.empty() ? text : "Copied the " + what + ": " + text);
@@ -86,6 +88,10 @@ void Shell::bind_model() {  // bindings: design <-> journal <-> panes
     m_tree.signal_refused().connect([this](const std::string& s) { say("Can't drop there: " + s, 2); });
     m_canvas.signal_refused().connect([this](const std::string& s) { say("Can't drop there: " + s, 2); });
     m_inspector.signal_said().connect([this](const std::string& s) { say(s, 2); });
+    m_inspector.signal_share().connect(sigc::mem_fun(*this, &Shell::on_share_model));   // s013
+    m_inspector.signal_edit_shared().connect(sigc::mem_fun(*this, &Shell::on_edit_shared));
+    m_inspector.signal_unshare().connect(sigc::mem_fun(*this, &Shell::on_unshare));
+    m_canvas.signal_style_said().connect([this](const std::string& s, int level) { say(s, level); });   // s012
     m_hooks.signal_select().connect([this](const std::string& name) {
         if (const auto k = m_design.find(name); !k.empty()) on_select(k);
     });

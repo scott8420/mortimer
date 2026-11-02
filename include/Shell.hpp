@@ -2,6 +2,7 @@
 #include "widgets/Widgets.hpp"
 #include "core/Design.hpp"
 #include "designer/ProjectPane.hpp"
+#include "designer/StyleEditor.hpp"
 #include "designer/Canvas.hpp"
 #include "designer/Dialogs.hpp"
 #include "designer/HooksPane.hpp"
@@ -78,7 +79,12 @@ private:
     void on_add_form(const std::string& root_type);   // category: handler: ask a name -> add_form (Window / Dialog) -> open it
     void on_open_form(const std::string& stem);  // category: handler: another form of this project
     void on_add_resource(const std::string& kind);
-    void on_add_about();                              // category: handler: s010 + ▸ About dialog -> add_about    // category: handler: s009 + ▸ icon / image / data / stylesheet
+    void on_add_about();
+    void on_edit_style();
+    void on_share_model(const std::string& name);
+    void on_edit_shared(const std::string& name);     // category: handler: s013 m3 the dialog -> set_shared_model -> reopen
+    void on_unshare(const std::string& name);         // category: handler: s013 m3 unshare_model -> reopen
+    bool save_then(const std::string& what);          // category: helper: s013 a file op on the forms: save this one first     // category: handler: s013 save -> share_model -> generate -> reopen                             // category: handler: s012 the stylesheet editor (makes the file if needed)                              // category: handler: s010 + ▸ About dialog -> add_about    // category: handler: s009 + ▸ icon / image / data / stylesheet
     void on_remove_form(const std::string& stem);     // category: handler: s009 trash: ask -> remove_form -> generate
     void on_remove_resource(const std::string& file); // category: handler: s009 trash: ask -> remove_resource
     void on_undo();                              // category: handler
@@ -160,7 +166,8 @@ private:
     Glib::RefPtr<Gio::Menu>         m_edit_menu;
     Glib::RefPtr<Gio::Menu>         m_forms_menu;     // this project's forms, rebuilt on load
     Glib::RefPtr<Gio::SimpleAction> m_act_add_form, m_act_add_dialog;
-    Glib::RefPtr<Gio::SimpleAction> m_act_add_about;   // s010: greyed when the project has an About
+    Glib::RefPtr<Gio::SimpleAction> m_act_add_about;
+    Glib::RefPtr<Gio::SimpleAction> m_act_edit_style;   // s012: greyed outside a project   // s010: greyed when the project has an About
     std::vector<Glib::RefPtr<Gio::SimpleAction>> m_act_add_res;   // s009: icon, image, data, stylesheet
     Glib::RefPtr<Gio::SimpleAction> m_act_undo, m_act_redo, m_act_delete, m_act_up, m_act_down;
 
@@ -168,6 +175,8 @@ private:
     std::unique_ptr<ShortcutsDialog> m_shortcuts;
     std::unique_ptr<designer::NewProjectDialog> m_new_project;
     std::unique_ptr<designer::NameDialog>       m_name_dialog;
+    std::unique_ptr<designer::ModelDialog>      m_model_dialog;   // s013 m3
+    std::unique_ptr<designer::StyleEditor>      m_style_editor;   // s012: built on first use, kept
 };
 
 }  // namespace mortimer

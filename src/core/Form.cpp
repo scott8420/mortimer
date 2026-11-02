@@ -126,6 +126,49 @@ bool fits(const PropSpec& p, const Value& v) {
 
 }  // namespace
 
+// s013 -- a list of models, as a form or mortimer.json writes it.
+static std::vector<ModelDef> models_from(const json& arr) {
+    std::vector<ModelDef> out;
+    if (!arr.is_array()) throw std::runtime_error("models must be a list");
+    for (const auto& x : arr) {
+        if (!x.is_object()) throw std::runtime_error("a model is {\"name\": ..., \"fields\": [...]}");
+        ModelDef m;
+        m.name = x.value("name", "");
+        if (x.contains("fields")) {
+            if (!x["fields"].is_array()) throw std::runtime_error("a model's fields must be a list");
+            for (const auto& y : x["fields"]) {
+                if (!y.is_object()) throw std::runtime_error("a field is {\"name\": ..., \"type\": ...}");
+                m.fields.push_back({y.value("name", ""), y.value("type", "string"), y.value("title", "")});
+            }
+        }
+        out.push_back(std::move(m));
+    }
+    return out;
+}
+static json models_to(const std::vector<ModelDef>& ms) {
+    json a = json::array();
+    for (const auto& m : ms) {
+        json o;
+        o["name"] = m.name;
+        json fs = json::array();
+        for (const auto& x : m.fields) {
+            json y;
+            y["name"] = x.name;
+            y["type"] = x.type;
+            if (!x.title.empty()) y["title"] = x.title;
+            fs.push_back(y);
+        }
+        o["fields"] = fs;
+        a.push_back(o);
+    }
+    return a;
+}
+std::vector<ModelDef> models_from_json(const std::string& text) {
+    try { return models_from(json::parse(text)); }
+    catch (const json::exception& e) { throw std::runtime_error(std::string("models: ") + e.what()); }
+}
+std::string models_to_json(const std::vector<ModelDef>& ms) { return models_to(ms).dump(2); }
+
 Form form_from_json(const std::string& text) {
     json j;
     try {
@@ -167,22 +210,7 @@ Form form_from_json(const std::string& text) {
             f.files.push_back(std::move(d));
         }
     }
-    if (j.contains("models")) {
-        if (!j["models"].is_array()) throw std::runtime_error("models must be a list");
-        for (const auto& x : j["models"]) {
-            if (!x.is_object()) throw std::runtime_error("a model is {\"name\": ..., \"fields\": [...]}");
-            ModelDef m;
-            m.name = x.value("name", "");
-            if (x.contains("fields")) {
-                if (!x["fields"].is_array()) throw std::runtime_error("a model's fields must be a list");
-                for (const auto& y : x["fields"]) {
-                    if (!y.is_object()) throw std::runtime_error("a field is {\"name\": ..., \"type\": ...}");
-                    m.fields.push_back({y.value("name", ""), y.value("type", "string"), y.value("title", "")});
-                }
-            }
-            f.models.push_back(std::move(m));
-        }
-    }
+    if (j.contains("models")) f.models = models_from(j["models"]);
     return f;
 }
 
@@ -219,24 +247,7 @@ std::string form_to_json(const Form& f) {
         }
         j["files"] = a;
     }
-    if (!f.models.empty()) {
-        json a = json::array();
-        for (const auto& m : f.models) {
-            json o;
-            o["name"] = m.name;
-            json fs = json::array();
-            for (const auto& x : m.fields) {
-                json y;
-                y["name"] = x.name;
-                y["type"] = x.type;
-                if (!x.title.empty()) y["title"] = x.title;
-                fs.push_back(y);
-            }
-            o["fields"] = fs;
-            a.push_back(o);
-        }
-        j["models"] = a;
-    }
+    if (!f.models.empty()) j["models"] = models_to(f.models);
     return j.dump(2) + "\n";
 }
 
@@ -362,6 +373,7 @@ std::string field_title(const FieldDef& f) {
 
 const ModelDef* find_model(const Form& f, const std::string& name) {
     for (const auto& m : f.models) if (m.name == name) return &m;
+    for (const auto& m : f.shared) if (m.name == name) return &m;   // s013: the project's
     return nullptr;
 }
 
@@ -477,7 +489,93 @@ bool bind_writes(const std::string& type, const std::string& ft) {
     return type == "Entry" && ft == "string";
 }
 
+bool carry_model(Node& root, const ModelDef& was, const ModelDef& now) {
+    std::map<std::string, std::string> to;   // old field -> new ("" = gone)
+    for (std::size_t i = 0; i < was.fields.size(); ++i) {
+        const auto& old = was.fields[i].name;
+        std::string t;
+        if (now.fields.size() == was.fields.size()) t = now.fields[i].name;
+        else for (const auto& x : now.fields) if (x.name == old) t = old;
+        to[old] = t;
+    }
+    bool changed = false;
+    std::function<void(Node&, bool)> go = [&](Node& n, bool in_view) {
+        if (in_view) {   // a row widget: its bind
+            const auto b = n.props.find("bind");
+            if (b != n.props.end() && std::holds_alternative<std::string>(b->second)) {
+                const auto r = to.find(std::get<std::string>(b->second));
+                if (r != to.end() && r->second != r->first) {
+                    if (r->second.empty()) n.props.erase(b);
+                    else b->second = Value(r->second);
+                    changed = true;
+                }
+            }
+        }
+        bool mine = false;
+        if (const auto m = n.props.find("model"); m != n.props.end() && std::holds_alternative<std::string>(m->second) &&
+                                                  std::get<std::string>(m->second) == was.name) {
+            mine = true;
+            if (now.name != was.name) { m->second = Value(now.name); changed = true; }
+            if (const auto e = n.props.find("editable"); e != n.props.end() && std::holds_alternative<StringList>(e->second)) {
+                StringList is;
+                for (const auto& f : std::get<StringList>(e->second)) {
+                    const auto r = to.find(f);
+                    if (r == to.end()) is.push_back(f);
+                    else if (!r->second.empty()) is.push_back(r->second);
+                }
+                if (is != std::get<StringList>(e->second)) {
+                    changed = true;
+                    if (is.empty()) n.props.erase(e);
+                    else e->second = Value(is);
+                }
+            }
+        }
+        for (auto& c : n.children) go(c, in_view || (mine && n.type == "ListView"));
+    };
+    go(root, false);
+    return changed;
+}
+
 // ── validate ───────────────────────────────────────────────────────────────
+
+// s013 -- a list of models on its own (a form's, or the project's): names,
+// fields, types. `owner` = a class name the items mustn't collide with.
+std::vector<Issue> validate_models(const std::vector<ModelDef>& ms, const std::string& owner) {
+    std::vector<Issue> out;
+    auto err = [&](const std::string& w, const std::string& m) { out.push_back({true, w, m}); };
+    auto warn = [&](const std::string& w, const std::string& m) { out.push_back({false, w, m}); };
+    // s006: models -- a class name each, fields that are C++ members.
+    std::set<std::string> models;
+    for (const auto& m : ms) {
+        const std::string where = "model " + (m.name.empty() ? std::string("?") : m.name);
+        if (!is_identifier(m.name) || is_cpp_keyword(m.name)) {
+            err(where, "a model's name must be a C++ class name (Note, Patient)");
+            continue;
+        }
+        if (!(m.name[0] >= 'A' && m.name[0] <= 'Z'))
+            warn(where, "\"" + m.name + "\" -- class names start with a capital by convention");
+        if (!models.insert(m.name).second) err(where, "model \"" + m.name + "\" is declared twice");
+        if (!owner.empty() && (model_item(m) == owner + "Ui" || model_item(m) == owner))
+            err(where, "its class " + model_item(m) + " would be the form's own name");
+        if (m.fields.empty()) err(where, "a model needs at least one field (a column to show)");
+        std::set<std::string> fields;
+        // The item's own names: id(), create(), id_taken(), and its private helpers.
+        static const std::set<std::string> taken{"id", "create", "id_taken", "ids", "next"};
+        for (const auto& x : m.fields) {
+            const std::string fw = where + "." + (x.name.empty() ? std::string("?") : x.name);
+            if (!is_identifier(x.name) || is_cpp_keyword(x.name))
+                err(fw, "a field's name must be a C++ identifier (title, due_date)");
+            else if (taken.count(x.name))
+                err(fw, "\"" + x.name + "\" is taken -- every item already has " +
+                            (x.name == "id" ? "an id() (automatic, or yours via create)" : "a " + x.name));
+            else if (!fields.insert(x.name).second)
+                err(fw, "field \"" + x.name + "\" is declared twice");
+            if (std::find(field_types().begin(), field_types().end(), x.type) == field_types().end())
+                err(fw, "type \"" + x.type + "\" -- a field is string, int, double or bool");
+        }
+    }
+    return out;
+}
 
 static const ModelDef* model_of_node(const Form& f, const Node& n) {
     const auto it = n.props.find("model");
@@ -550,35 +648,14 @@ std::vector<Issue> validate(const Form& f) {
             warn(where, "a folder dialog shows folders only -- its filters are ignored");
     }
     // s006: models -- a class name each, fields that are C++ members.
-    std::set<std::string> models;
-    for (const auto& m : f.models) {
-        const std::string where = "model " + (m.name.empty() ? std::string("?") : m.name);
-        if (!is_identifier(m.name) || is_cpp_keyword(m.name)) {
-            err(where, "a model's name must be a C++ class name (Note, Patient)");
-            continue;
-        }
-        if (!(m.name[0] >= 'A' && m.name[0] <= 'Z'))
-            warn(where, "\"" + m.name + "\" -- class names start with a capital by convention");
-        if (!models.insert(m.name).second) err(where, "model \"" + m.name + "\" is declared twice");
-        if (model_item(m) == f.name + "Ui" || model_item(m) == f.name)
-            err(where, "its class " + model_item(m) + " would be the form's own name");
-        if (m.fields.empty()) err(where, "a model needs at least one field (a column to show)");
-        std::set<std::string> fields;
-        // The item's own names: id(), create(), id_taken(), and its private helpers.
-        static const std::set<std::string> taken{"id", "create", "id_taken", "ids", "next"};
-        for (const auto& x : m.fields) {
-            const std::string fw = where + "." + (x.name.empty() ? std::string("?") : x.name);
-            if (!is_identifier(x.name) || is_cpp_keyword(x.name))
-                err(fw, "a field's name must be a C++ identifier (title, due_date)");
-            else if (taken.count(x.name))
-                err(fw, "\"" + x.name + "\" is taken -- every item already has " +
-                            (x.name == "id" ? "an id() (automatic, or yours via create)" : "a " + x.name));
-            else if (!fields.insert(x.name).second)
-                err(fw, "field \"" + x.name + "\" is declared twice");
-            if (std::find(field_types().begin(), field_types().end(), x.type) == field_types().end())
-                err(fw, "type \"" + x.type + "\" -- a field is string, int, double or bool");
-        }
-    }
+    for (const auto& i : validate_models(f.models, f.name)) out.push_back(i);
+    // s013: a form's own model can't take a shared one's name -- which would its
+    // views mean?
+    for (const auto& m : f.models)
+        for (const auto& x : f.shared)
+            if (m.name == x.name)
+                err("model " + m.name, m.name + " is shared by the project -- this form's own " + m.name +
+                                           " would hide it (delete it here, or share it under another name)");
     walk(f.root, [&](const Node& n, const Node*) {
         // The generated class's own members: m_hooks, m_actions, m_files, m_alive.
         static const std::set<std::string> taken{"hooks", "actions", "files", "alive"};

@@ -1,5 +1,6 @@
 #include "designer/Inspector.hpp"
 #include "designer/GProps.hpp"
+#include "Log.hpp"
 #include "core/Catalog.hpp"
 
 #include <gtkmm/button.h>
@@ -14,9 +15,17 @@
 #include <gtkmm/spinbutton.h>
 #include <gtkmm/stringlist.h>
 #include <gtkmm/adjustment.h>
+#include <gtkmm/flowbox.h>
+#include <gtkmm/menubutton.h>
+#include <gtkmm/popover.h>
+#include <gtkmm/separator.h>
+#include <glibmm/fileutils.h>
+#include "core/CssScope.hpp"
+#include <filesystem>
 #include <glibmm/markup.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <sstream>
 
@@ -114,6 +123,10 @@ bool Inspector::show(const std::string& sel) {
     if (const auto f = m_d.get(core::Design::kForm))
     {
         for (const auto& a : f->actions) sig += a.name + ">" + a.opens + ",";   // s010: and what it opens
+        for (const auto& m : m_d.shared()) {                                    // s013: and the project's models
+            sig += "^" + m.name + ":";
+            for (const auto& x : m.fields) sig += x.name + "/" + x.type + ",";
+        }
         for (const auto& t : m_targets) sig += "~" + t;                        // and what it could open
         sig += "|";   // s005: and the file dialogs' names
         for (const auto& x : f->files) sig += x.name + ",";
@@ -301,9 +314,8 @@ Inspector::RowModel Inspector::row_model() const {
         if (u->type == "ListView") {
             out.in_row = true;
             const auto it = u->props.find("model");
-            const auto f = m_d.get(core::Design::kForm);
-            if (f && it != u->props.end() && std::holds_alternative<std::string>(it->second))
-                for (const auto& m : f->models)
+            if (it != u->props.end() && std::holds_alternative<std::string>(it->second))
+                for (const auto& m : m_d.all_models())   // s013: the form's own or the project's
                     if (m.name == std::get<std::string>(it->second)) out.model = m;
             break;
         }
@@ -353,6 +365,7 @@ void Inspector::prop_row(const std::string& type, const std::string& prop, bool 
     // s003: two properties get their own editors.
     if (!pack && prop == "menu") { menu_rows(label, reset); return; }
     if (!pack && prop == "editable" && type == "ColumnView") { editable_rows(label, reset); return; }
+    if (!pack && prop == "css_classes") { class_rows(label, reset); return; }   // s012
     if (!pack && prop == "action_name") {   // pick one of the form's actions (or app.quit)
         spec.kind = PropKind::Ref;
         spec.ref_type = "@action";
@@ -439,7 +452,7 @@ void Inspector::prop_row(const std::string& type, const std::string& prop, bool 
                             values.push_back(std::get<std::string>(it->second));
                 } else if (spec.ref_type == "@model") {   // s006: one of the form's models
                     if (const auto f = m_d.get(core::Design::kForm))
-                        for (const auto& m : f->models) values.push_back(m.name);
+                        for (const auto& m : m_d.all_models()) values.push_back(m.name);   // s013: + shared
                     if (const auto r = m_d.get(m_key))   // a name the form no longer has stays visible
                         if (const auto it = r->props.find(prop); it != r->props.end() &&
                             std::holds_alternative<std::string>(it->second) &&
@@ -500,8 +513,9 @@ void Inspector::editable_rows(Gtk::Label* label, Gtk::Button* reset) {
     const auto f = m_d.get(core::Design::kForm);
     if (!r || !f) return;
     const core::ModelDef* md = nullptr;
+    const auto every = m_d.all_models();   // s013: the form's own or the project's
     if (const auto it = r->props.find("model"); it != r->props.end() && std::holds_alternative<std::string>(it->second))
-        for (const auto& m : f->models)
+        for (const auto& m : every)
             if (m.name == std::get<std::string>(it->second)) md = &m;
     auto* box = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 0);
     box->set_name("designer.inspector.prop.editable");
@@ -843,10 +857,21 @@ void Inspector::models_rows() {
         del->set_icon_name("user-trash-symbolic");
         del->set_has_frame(false);
         del->set_margin_top(6);
-        del->set_tooltip_text("Delete the model (not while a ColumnView shows it)");
+        del->set_tooltip_text("Delete the model (not while a view shows it)");
+        // s013: Share -- the model becomes the project's, for every form.
+        auto* share = Gtk::make_managed<Gtk::Button>();
+        share->set_icon_name("emblem-shared-symbolic");
+        share->set_has_frame(false);
+        share->set_margin_top(6);
+        share->set_tooltip_text("Share " + name + " with the project: it moves to mortimer.json, and every form "
+                                "can show it (one " + name + "Item class, one set of ids). Saves this form first.");
+        share->signal_clicked().connect([this, name] { m_share.emit(name); });
+        auto* tail = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL);
+        tail->append(*share);
+        tail->append(*del);
         m_grid->attach(*e, 0, m_line);
         m_grid->attach(*cls, 1, m_line);
-        m_grid->attach(*del, 2, m_line++);
+        m_grid->attach(*tail, 2, m_line++);
         auto rename = [this, e, name, edit] {
             if (m_painting || m_rebuilding || e->get_text().raw() == name) return;
             edit([e](core::ModelDef& m) { m.name = e->get_text(); });
@@ -942,6 +967,50 @@ void Inspector::models_rows() {
     add->set_halign(Gtk::Align::START);
     add->signal_clicked().connect([this] { core::design::add_model(m_j, m_d); });
     m_grid->attach(*add, 0, m_line++, 3, 1);
+
+    // s013: the project's models -- every form's to show; read here (they're
+    // not this form's to change: mortimer.json holds them).
+    if (m_d.shared().empty()) return;
+    auto* head = Gtk::make_managed<Gtk::Label>("Shared by the project");
+    head->set_xalign(0);
+    head->set_margin_top(10);
+    head->add_css_class("heading");
+    m_grid->attach(*head, 0, m_line++, 3, 1);
+    for (const auto& m : m_d.shared()) {
+        auto* n = Gtk::make_managed<Gtk::Label>(m.name);
+        n->set_xalign(0);
+        n->add_css_class("set");
+        n->set_tooltip_text("In mortimer.json -- a view picks it like the form's own; your code says " +
+                            core::model_item(m) + ".");
+        auto* cls = Gtk::make_managed<Gtk::Label>(core::model_item(m) + " · shared");
+        cls->add_css_class("dim-label");
+        cls->set_xalign(0);
+        // s013 m3: edit it (every form follows) or hand each form its own copy back.
+        const std::string name = m.name;
+        auto* ed = Gtk::make_managed<Gtk::Button>();
+        ed->set_icon_name("document-edit-symbolic");
+        ed->set_has_frame(false);
+        ed->set_tooltip_text("Edit " + name + " -- every form's views follow a rename (saves this form first)");
+        ed->signal_clicked().connect([this, name] { m_edit_shared.emit(name); });
+        auto* un = Gtk::make_managed<Gtk::Button>();
+        un->set_icon_name("edit-undo-symbolic");
+        un->set_has_frame(false);
+        un->set_tooltip_text("Unshare " + name + ": each form that shows it gets its own copy back");
+        un->signal_clicked().connect([this, name] { m_unshare.emit(name); });
+        auto* tail = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL);
+        tail->append(*ed);
+        tail->append(*un);
+        m_grid->attach(*n, 0, m_line);
+        m_grid->attach(*cls, 1, m_line);
+        m_grid->attach(*tail, 2, m_line++);
+        std::string fields;
+        for (const auto& x : m.fields) fields += (fields.empty() ? "" : ", ") + x.name + ": " + x.type;
+        auto* fl = Gtk::make_managed<Gtk::Label>(fields);
+        fl->set_xalign(0);
+        fl->set_wrap(true);
+        fl->add_css_class("doc");
+        m_grid->attach(*fl, 0, m_line++, 3, 1);
+    }
 }
 
 // ── s003: a MenuButton's menu ───────────────────────────────────────────────
@@ -949,6 +1018,152 @@ void Inspector::models_rows() {
 // nothing); a separator starts a new section. Up / down / delete per row.
 // The whole list is the property's value: each edit writes it back through
 // set_prop (typing in a label merges into one step).
+// ── s012: css_classes as chips ─────────────────────────────────────────────
+// A chip per class (✕ takes it off), then + : the classes the project's
+// stylesheet defines, GTK's own, or any name typed. Each add / remove is its
+// own undo step (a tick, not typing).
+namespace {
+const std::vector<std::string>& gtk_classes() {
+    static const std::vector<std::string> c{
+        "suggested-action", "destructive-action", "flat", "pill", "circular", "linked", "card",
+        "boxed-list", "dim-label", "heading", "title-1", "title-2", "title-3", "title-4", "caption",
+        "monospace", "numeric", "accent", "success", "warning", "error", "toolbar", "osd", "frame", "view"};
+    return c;
+}
+bool class_name_ok(const std::string& n) {
+    if (n.empty() || std::isdigit(static_cast<unsigned char>(n[0]))) return false;
+    for (char c : n)
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_')) return false;
+    return true;
+}
+}  // namespace
+
+void Inspector::class_rows(Gtk::Label* label, Gtk::Button* reset) {
+    m_grid->attach(*label, 0, m_line);
+    m_grid->attach(*reset, 2, m_line);
+    auto* flow = Gtk::make_managed<Gtk::FlowBox>();
+    flow->set_selection_mode(Gtk::SelectionMode::NONE);
+    flow->set_column_spacing(4);
+    flow->set_row_spacing(4);
+    flow->set_max_children_per_line(4);
+    flow->set_hexpand(true);
+    flow->set_can_focus(false);   // a chip isn't a stop for the keyboard; its ✕ is
+    // The + sits BESIDE the flow, not in it: inside, the FlowBox activates its
+    // child on the release and takes the focus -- the popover closed 11 ms after
+    // it opened (seen with the DIAG log, s012 m3).
+    auto* holder = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 2);
+    holder->append(*flow);
+    m_grid->attach(*holder, 1, m_line++);
+
+    auto now = [this]() -> core::StringList {
+        if (const auto r = m_d.get(m_key))
+            if (const auto it = r->props.find("css_classes"); it != r->props.end() &&
+                std::holds_alternative<core::StringList>(it->second))
+                return std::get<core::StringList>(it->second);
+        return {};
+    };
+    auto write = [this](const core::StringList& l) {
+        if (m_painting || m_rebuilding) return;
+        core::design::set_prop(m_j, m_d, m_key, "css_classes",
+                               l.empty() ? std::nullopt : std::optional<Value>(Value(l)), false);
+    };
+    auto add = [now, write](const std::string& c) {
+        auto l = now();
+        if (std::find(l.begin(), l.end(), c) == l.end()) { l.push_back(c); write(l); }
+    };
+
+    // The + and its popover: rebuilt each time it opens (the stylesheet may have changed).
+    auto* plus = Gtk::make_managed<Gtk::MenuButton>();
+    plus->set_icon_name("list-add-symbolic");
+    plus->set_has_frame(false);
+    plus->set_tooltip_text("Add a style class: the stylesheet's own, GTK's, or any name");
+    plus->set_halign(Gtk::Align::START);
+    holder->append(*plus);
+    auto* pop = Gtk::make_managed<Gtk::Popover>();
+    auto* pbox = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 2);
+    pbox->set_margin(6);
+    // Capped and scrolling: a popover taller than the room the screen leaves it
+    // closed the instant it mapped (found s012 m3 -- the DIAG log, then a short
+    // list stayed open where the long one didn't).
+    auto* pscroll = Gtk::make_managed<Gtk::ScrolledWindow>();
+    pscroll->set_policy(Gtk::PolicyType::NEVER, Gtk::PolicyType::AUTOMATIC);
+    pscroll->set_propagate_natural_height(true);
+    pscroll->set_max_content_height(280);
+    pscroll->set_child(*pbox);
+    pop->set_child(*pscroll);
+    plus->set_popover(*pop);
+    // Its contents are rebuilt when the row paints (after every change) -- NOT in
+    // the popover's own show: rebuilding it while it maps closed it at once
+    // (seen with the DIAG log, s012 m3).
+    auto fill = [this, pbox, pop, now, add] {
+        while (auto* c = pbox->get_first_child()) pbox->remove(*c);
+        const auto have = now();
+        auto section = [&](const std::string& title, const std::vector<std::string>& names) {
+            std::vector<std::string> left;
+            for (const auto& n : names) if (std::find(have.begin(), have.end(), n) == have.end()) left.push_back(n);
+            if (left.empty()) return;
+            auto* h = Gtk::make_managed<Gtk::Label>(title);
+            h->set_xalign(0);
+            h->add_css_class("dim-label");
+            h->add_css_class("caption");
+            pbox->append(*h);
+            auto* fb = Gtk::make_managed<Gtk::FlowBox>();
+            fb->set_selection_mode(Gtk::SelectionMode::NONE);
+            fb->set_max_children_per_line(3);
+            for (const auto& n : left) {
+                auto* b = Gtk::make_managed<Gtk::Button>(n);
+                b->set_has_frame(false);
+                b->signal_clicked().connect([pop, add, n] { pop->popdown(); add(n); });
+                fb->append(*b);
+            }
+            pbox->append(*fb);
+        };
+        std::vector<std::string> mine;
+        if (!m_css_path.empty() && std::filesystem::is_regular_file(m_css_path)) {
+            try { mine = core::css_class_names(Glib::file_get_contents(m_css_path)); } catch (const Glib::Error&) {}
+        }
+        section("From " + std::filesystem::path(m_css_path).filename().string(), mine);
+        section("GTK", gtk_classes());
+        auto* other = Gtk::make_managed<Gtk::Entry>();
+        other->set_placeholder_text("another class, Enter");
+        other->signal_activate().connect([other, pop, add] {
+            const std::string n = other->get_text();
+            if (!class_name_ok(n)) { other->add_css_class("error"); return; }
+            pop->popdown();
+            add(n);
+        });
+        pbox->append(*other);
+    };
+
+    m_rows.push_back({[flow, label, reset, now, write, fill, pop](const core::Rec&) {
+        if (!pop->get_visible()) fill();
+        const auto l = now();
+        if (!l.empty()) label->add_css_class("set");
+        else label->remove_css_class("set");
+        reset->set_opacity(l.empty() ? 0.0 : 1.0);
+        reset->set_sensitive(!l.empty());
+        // The chips, as the record says now.
+        while (auto* c = flow->get_first_child()) flow->remove(*c);
+        for (const auto& c : l) {
+            auto* chip = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 2);
+            chip->add_css_class("mortimer-chip");
+            chip->append(*Gtk::make_managed<Gtk::Label>(c));
+            auto* x = Gtk::make_managed<Gtk::Button>();
+            x->set_icon_name("window-close-symbolic");
+            x->set_has_frame(false);
+            x->set_tooltip_text("Take " + c + " off");
+            x->signal_clicked().connect([now, write, c] {
+                auto l2 = now();
+                std::erase(l2, c);
+                write(l2);
+            });
+            chip->append(*x);
+            chip->set_halign(Gtk::Align::START);
+            flow->append(*chip);
+        }
+    }});
+}
+
 void Inspector::menu_rows(Gtk::Label* label, Gtk::Button* reset) {
     m_grid->attach(*label, 0, m_line);
     m_grid->attach(*reset, 2, m_line++);

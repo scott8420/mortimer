@@ -37,6 +37,7 @@ public:
     sigc::signal<void(const std::string&, const std::string&)>& signal_copy() { return m_copy; }   // (text, what)
     sigc::signal<void(const std::string&)>& signal_remove_form() { return m_remove_form; }
     sigc::signal<void(const std::string&)>& signal_remove_resource() { return m_remove_resource; }
+    sigc::signal<void()>& signal_open_style() { return m_open_style; }   // s012: the STYLE row
 
 private:
     struct RowAct { enum { None, Form, Resource } kind = None; std::string key, use, what; };
@@ -53,6 +54,7 @@ private:
     sigc::signal<void(const std::string&, const std::string&)> m_copy;
     sigc::signal<void(const std::string&)> m_remove_form;
     sigc::signal<void(const std::string&)> m_remove_resource;
+    sigc::signal<void()> m_open_style;
 };
 
 }  // namespace mortimer::designer

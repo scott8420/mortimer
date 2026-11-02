@@ -46,6 +46,7 @@ add_custom_command(
 add_library(mortimer_core STATIC
     src/core/Recents.cpp
     src/core/TextMap.cpp
+    src/core/CssScope.cpp   # s012: the app stylesheet, scoped to the canvas
     # The SHORTCUT-REGISTRY paradigm: one list, two consumers (App wires accels
     # from it, ShortcutsDialog renders from it) so a key and its advertised row
     # can't drift. GTK-free, so it lives in core and the selftest guards it
@@ -141,6 +142,7 @@ add_executable(mortimer
     src/designer/HooksPane.cpp
     src/designer/Dialogs.cpp
     src/designer/ProjectPane.cpp   # s009: the navigator's forms + resources, + and trash
+    src/designer/StyleEditor.cpp   # s012: the app's stylesheet, edited, the canvas previewing
     src/Registry.cpp
     src/Log.cpp
 )

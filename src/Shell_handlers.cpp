@@ -161,6 +161,91 @@ void Shell::on_add_about() {  // handler: s010 + ▸ About dialog -> add_about -
     }
 }
 
+void Shell::on_edit_style() {  // handler: s012 the stylesheet editor -- makes resources/<bin>.css if needed
+    if (m_app_dir.empty()) { say("A stylesheet belongs to a project -- open one, or File ▸ New Project.", 1); return; }
+    try {
+        const auto pr = core::load_project(m_app_dir);
+        const auto path = std::filesystem::path(m_app_dir) / "resources" / (pr.app.bin + ".css");
+        if (!std::filesystem::exists(path)) {
+            core::add_stylesheet(m_app_dir);
+            rebuild_forms_menu();
+            say("Added resources/" + pr.app.bin + ".css -- every window of the app loads it (generated/Style.cpp).");
+        }
+        if (!m_style_editor) m_style_editor = std::make_unique<designer::StyleEditor>(m_canvas);
+        m_style_editor->open(path.string(), *this);
+    } catch (const std::exception& e) {
+        say(e.what(), 2);
+    }
+}
+
+void Shell::on_share_model(const std::string& name) {  // handler: s013 the form's model -> the project's
+    if (m_app_dir.empty() || m_path.empty()) {
+        say("Sharing a model needs the form in a project -- save it into an app's forms/ first.", 1);
+        return;
+    }
+    // share_model edits the .mort on disk, so the form is saved first (if it has changes).
+    if (dirty() && !save_to(m_path)) return;
+    const std::string dir = m_app_dir, path = m_path;
+    const std::string stem = std::filesystem::path(path).stem().string();
+    try {
+        const auto changed = core::share_model(dir, stem, name);
+        core::generate_project(dir);
+        load_form(core::load_form(path), path);   // reopened as it is now (the journal starts fresh)
+        std::string out;
+        for (const auto& c : changed) out += (out.empty() ? "" : ", ") + c;
+        say(name + " is the project's now (mortimer.json) -- taken out of " + out +
+            ". Every form's views can show it; your code still says " + name + "Item.");
+    } catch (const std::exception& e) {
+        say(e.what(), 2);
+    }
+}
+
+bool Shell::save_then(const std::string& what) {  // helper: these change forms on disk -- this one saved first
+    if (m_app_dir.empty() || m_path.empty()) {
+        say(what + " needs the form in a project -- save it into an app's forms/ first.", 1);
+        return false;
+    }
+    return !dirty() || save_to(m_path);
+}
+
+void Shell::on_edit_shared(const std::string& name) {  // handler: s013 m3 the dialog -> every form follows
+    if (!save_then("Editing a shared model")) return;
+    core::ModelDef m;
+    for (const auto& x : m_design.shared()) if (x.name == name) m = x;
+    if (m.name.empty()) return;
+    if (!m_model_dialog) m_model_dialog = std::make_unique<designer::ModelDialog>(*this);
+    const std::string dir = m_app_dir, path = m_path;
+    m_model_dialog->ask(m, [this, dir, path, name](const core::ModelDef& now) {
+        try {
+            const auto changed = core::set_shared_model(dir, name, now);
+            core::generate_project(dir);
+            load_form(core::load_form(path), path);
+            std::string out;
+            for (const auto& c : changed) out += (out.empty() ? "" : ", ") + c;
+            say("Shared model " + now.name + " saved in mortimer.json" +
+                (out.empty() ? std::string(" -- no form needed to change.") : " -- followed in " + out + "."));
+        } catch (const std::exception& e) {
+            say(e.what(), 2);
+        }
+    });
+}
+
+void Shell::on_unshare(const std::string& name) {  // handler: s013 m3 each user gets its copy back
+    if (!save_then("Unsharing a model")) return;
+    const std::string dir = m_app_dir, path = m_path;
+    try {
+        const auto users = core::unshare_model(dir, name);
+        core::generate_project(dir);
+        load_form(core::load_form(path), path);
+        std::string out;
+        for (const auto& c : users) out += (out.empty() ? "" : ", ") + c;
+        say(users.empty() ? name + " is gone -- no form showed it."
+                          : name + " is each form's own again: " + out + " (Share puts it back).");
+    } catch (const std::exception& e) {
+        say(e.what(), 2);
+    }
+}
+
 void Shell::on_open_form(const std::string& stem) {  // handler: another form of this project
     if (m_app_dir.empty()) return;
     open_path((std::filesystem::path(m_app_dir) / "forms" / (stem + ".mort")).string());

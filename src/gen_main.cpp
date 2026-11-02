@@ -34,7 +34,10 @@ int usage() {
         "  mortimer-gen add stylesheet [APP_DIR]              resources/<bin>.css, loaded for every window\n"
         "  mortimer-gen add about [APP_DIR]                   forms/About.mort, an About dialog (+ your half)\n"
         "  mortimer-gen remove resource FILE [APP_DIR]        unbundle; the file moves to removed/\n"
-        "  mortimer-gen remove form STEM [APP_DIR]            the form + your halves move to removed/\n";
+        "  mortimer-gen remove form STEM [APP_DIR]            the form + your halves move to removed/\n"
+        "  mortimer-gen share FORM MODEL [APP_DIR]            the form's model becomes the project's (shared)\n"
+        "  mortimer-gen unshare MODEL [APP_DIR]               every form that shows it gets its own copy back\n"
+        "  mortimer-gen models [APP_DIR]                      the project's shared models\n";
     return 2;
 }
 
@@ -150,13 +153,45 @@ int main(int argc, char** argv) {
         }
         if (cmd == "check") {
             if (a.size() < 2) return usage();
-            const auto f = core::load_form(a[1]);
+            auto f = core::load_form(a[1]);
+            // s013: in a project, its shared models are the form's to show too.
+            if (const auto app = core::project_of(a[1]); !app.empty()) f.shared = core::load_project(app).models;
             const auto issues = core::validate(f);
             print_issues(f.name, issues);
             std::cout << (core::has_errors(issues) ? "  not ok\n" : "  ok\n");
             return core::has_errors(issues) ? 1 : 0;
         }
         if (cmd == "catalog") return cmd_catalog(a.size() > 1 ? a[1] : "");
+        // s013: shared models.
+        if (cmd == "share" && a.size() >= 3) {
+            const std::string dir = a.size() > 3 ? a[3] : ".";
+            const auto changed = core::share_model(dir, a[1], a[2]);
+            std::cout << a[2] << " is the project's now (mortimer.json); out of:";
+            for (const auto& c : changed) std::cout << " " << c;
+            std::cout << "\n";
+            return cmd_generate(dir);
+        }
+        if (cmd == "unshare" && a.size() >= 2) {   // s013 m3
+            const std::string dir = a.size() > 2 ? a[2] : ".";
+            const auto users = core::unshare_model(dir, a[1]);
+            if (users.empty()) std::cout << a[1] << " is gone -- no form showed it\n";
+            else {
+                std::cout << a[1] << " is each form's own again:";
+                for (const auto& u : users) std::cout << " " << u;
+                std::cout << "\n";
+            }
+            return cmd_generate(dir);
+        }
+        if (cmd == "models") {
+            const auto pr = core::load_project(a.size() > 1 ? a[1] : ".");
+            if (pr.models.empty()) std::cout << "  (no shared models -- mortimer-gen share FORM MODEL)\n";
+            for (const auto& m : pr.models) {
+                std::cout << "  " << m.name << " (" << core::model_item(m) << "):";
+                for (const auto& x : m.fields) std::cout << " " << x.name << ":" << x.type;
+                std::cout << "\n";
+            }
+            return 0;
+        }
         // s009: the bundle and the forms, as the navigator's + and delete do them.
         if (cmd == "resources") {
             for (const auto& r : core::list_resources(a.size() > 1 ? a[1] : "."))
