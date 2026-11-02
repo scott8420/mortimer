@@ -320,7 +320,8 @@ Form starter_form(const AppInfo& app) {
     f.name = "MainWindow";
     f.actions = {{"hello", "<Control>h", false}, {"quit", "<Control>q", false}};
     f.root = {"ApplicationWindow", "main_window",
-              {{"title", Value(app.name)}, {"default_width", I(800)}, {"default_height", I(560)}},
+              {{"title", Value(app.name)}, {"default_width", I(800)}, {"default_height", I(560)},
+               {"remember", Value(true)}},   // s008: a new app comes back as it was left
               {}, {}, {header, body}};
     return f;
 }

@@ -3,7 +3,7 @@
   "name": "KitchenSink",
   "root": {
     "type": "Window", "id": "kitchen_sink",
-    "props": { "title": "Every widget", "modal": false, "hide_on_close": false, "default_width": 900, "default_height": 640, "resizable": true,
+    "props": { "title": "Every widget", "modal": false, "hide_on_close": false, "default_width": 900, "default_height": 640, "resizable": true, "remember": true,
                "hexpand": true, "vexpand": true, "halign": "fill", "valign": "fill", "margin": 0,
                "margin_start": 0, "margin_end": 0, "margin_top": 0, "margin_bottom": 0,
                "width_request": 400, "height_request": 300, "sensitive": true,

@@ -74,6 +74,10 @@ std::vector<PropSpec> window_props() {
         b("modal", "set_modal({v})", "Blocks its parent while it's up."),
         b("hide_on_close", "set_hide_on_close({v})",
           "The X hides it instead of destroying it -- build once, present() again."),
+        // s008: window state, generated (the {state} setter is the restore block).
+        b("remember", "{state}",
+          "Comes back as it was left: its size (maximized too), its Paneds' dividers, its Stacks' pages. "
+          "Kept in ~/.config/<app>/window-state.json."),
     };
 }
 

@@ -331,6 +331,11 @@ const ModelDef* find_model(const Form& f, const std::string& name) {
     return nullptr;
 }
 
+bool remembers(const Form& f) {
+    const auto it = f.root.props.find("remember");
+    return it != f.root.props.end() && std::holds_alternative<bool>(it->second) && std::get<bool>(it->second);
+}
+
 std::string view_selection(const Node& n) {
     const auto it = n.props.find("selection");
     if (it == n.props.end() || !std::holds_alternative<std::string>(it->second)) return "single";

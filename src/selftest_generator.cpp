@@ -84,7 +84,8 @@ void selftest_generator(const Check& check) {
             unique = unique && types.insert(w.type).second;
             for (const auto& p : w.props)
                 setters = setters && (has(p.setter, "{v}") || has(p.setter, "{item}") || has(p.setter, "{list}") ||
-                                      has(p.setter, "{menu}") || has(p.setter, "{model}"));
+                                      has(p.setter, "{menu}") || has(p.setter, "{model}") ||
+                                      has(p.setter, "{state}"));
             for (const auto& s : w.signals)
                 signals = signals && (s.ret == "void" || !s.ret_default.empty());
         }
@@ -622,6 +623,60 @@ class X : public ui::XUi {
               has(c, "m_notes_selection->get_object(position)"), "");
         check("codegen table: selected -> the selected row (null for none)",
               has(c, "m_notes_selection->get_selected_item()"), "");
+    }
+
+    // ── s008: window state ──────────────────────────────────────────────────
+    {
+        using core::Value;
+        auto f = small_form();
+        f.root.props["remember"] = Value(true);
+        core::Node a{"Label", "a", {}, {{"slot", Value(std::string("start"))}}, {}, {}};
+        core::Node pg{"Label", "pg", {}, {{"name", Value(std::string("first"))}}, {}, {}};
+        core::Node st{"Stack", "pages", {}, {{"slot", Value(std::string("end"))}}, {}, {pg}};
+        f.root.children[0].children.push_back({"Paned", "split", {}, {}, {}, {a, st}});
+        check("state: the probe validates", errors_of(f).empty(), errors_of(f).empty() ? "" : errors_of(f)[0]);
+        check("state: remembers() reads the root", core::remembers(f) && !core::remembers(small_form()), "");
+        const core::AppInfo app = core::derive_app("Probe Tool");
+        const auto out = core::generate_form(f, app);
+        const std::string& h = out[0].content;
+        const std::string& c = out[1].content;
+        check("codegen state: save is public, restore private",
+              has(h, "    void save_window_state();") && has(h, "    void restore_window_state();"), "");
+        check("codegen state: restored after build_ui, before the hooks",
+              has(c, "    build_ui();\n    restore_window_state();\n    bind_hooks();"), "");
+        check("codegen state: saved on UNMAP (a destroyed window never hides)",
+              has(c, "signal_unmap().connect(sigc::mem_fun(*this, &ProbeUi::save_window_state))") &&
+              !has(c, "signal_hide()"), "");
+        check("codegen state: deleted while on screen still saves",
+              has(c, "if (get_visible()) save_window_state();"), "");
+        check("codegen state: size + maximized, sane sizes only",
+              has(c, "set_default_size(") && has(c, "*w < 30000") && has(c, "maximize();") &&
+              has(c, "get_default_size(w, h);") && has(c, "is_maximized()"), "");
+        check("codegen state: a Paned's divider, a Stack's page (only a page it has)",
+              has(c, "state::put_int(k + \"split.position\", m_split.get_position());") &&
+              has(c, "m_split.set_position(") && has(c, "m_pages.get_child_by_name(*page)") &&
+              has(c, "state::put_string(k + \"pages.page\", page);"), "");
+        check("codegen state: keys under the form's name", has(c, "const std::string k = \"Probe.\";"), "");
+        check("codegen state: no setter for remember", !has(c, "{state}"), "");
+        const auto plain = core::generate_form(small_form(), app);
+        check("codegen state: not remembering -> no state code",
+              !has(plain[0].content, "window_state") && !has(plain[1].content, "WindowState"), "");
+        const auto sup = core::generate_support(app);
+        std::string wsh, wsc;
+        for (const auto& o : sup) {
+            if (o.path == "generated/WindowState.hpp") wsh = o.content;
+            if (o.path == "generated/WindowState.cpp") wsc = o.content;
+        }
+        check("support state: WindowState.hpp/.cpp, the app's namespace",
+              has(wsh, "namespace probetool::ui::state {") && has(wsc, "namespace probetool::ui::state {"),
+              wsh.substr(0, 0));
+        check("support state: ~/.config/<bin>/window-state.json, written atomically",
+              has(wsc, "\"/probetool/window-state.json\"") && has(wsc, "g_file_set_contents(") &&
+              has(wsc, "g_get_user_config_dir()"), "");
+        check("support state: a file it can't read starts fresh (warns, never throws)",
+              has(wsc, "isn't readable -- starting fresh") && !has(wsc, "throw"), "");
+        check("support state: no token left unfilled", !has(wsh + wsc, "@NS@") && !has(wsh + wsc, "@BIN@") &&
+                                                        !has(wsh + wsc, "@MARK@"), "");
     }
 
     // ── s007: editable cells, multi-selection ───────────────────────────────

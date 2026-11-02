@@ -61,7 +61,7 @@ std::string replace(std::string s, const std::string& from, const std::string& t
 // a `{menu}` setter builds a Gio::Menu from "Label=action" rows (s003).
 std::vector<std::string> setter_lines(const PropSpec& p, const Value& v, const std::string& obj) {
     std::vector<std::string> out;
-    if (p.setter == "{model}") return out;   // s006: the model block does it (model_lines)
+    if (p.setter == "{model}" || p.setter == "{state}") return out;   // s006 / s008: a block does it
     if (p.kind == PropKind::StringList && p.setter.find("{menu}") != std::string::npos) {
         out.push_back("{");
         out.push_back("    auto menu = Gio::Menu::create();");
@@ -391,6 +391,52 @@ std::string parse_helpers(const Form& f) {
            "}  // namespace\n\n";
 }
 
+// s008 -- the window's state: size + maximized, each Paned's divider, each
+// Stack's page, under "<Form>.<what>" in generated/WindowState's file.
+std::string state_functions(const Form& f, const std::string& ui) {
+    if (!remembers(f)) return "";
+    std::vector<const Node*> paneds, stacks;
+    walk(f.root, [&](const Node& n, const Node* parent) {
+        if (!parent) return;
+        if (n.type == "Paned") paneds.push_back(&n);
+        if (n.type == "Stack") stacks.push_back(&n);
+    });
+    const std::string k = cpp_string(f.name + ".");
+    std::ostringstream c;
+    c << "// ── window state ── as it was left (generated/WindowState.cpp keeps the file)\n"
+      << "void " << ui << "::restore_window_state() {\n"
+      << "    const std::string k = " << k << ";\n"
+      << "    const auto w = state::get_int(k + \"width\"), h = state::get_int(k + \"height\");\n"
+      << "    if (w && h && *w > 0 && *h > 0 && *w < 30000 && *h < 30000)\n"
+      << "        set_default_size(static_cast<int>(*w), static_cast<int>(*h));\n"
+      << "    if (state::get_bool(k + \"maximized\").value_or(false)) maximize();\n";
+    for (const Node* p : paneds)
+        c << "    if (const auto p = state::get_int(k + \"" << p->id << ".position\"); p && *p >= 0)\n"
+          << "        m_" << p->id << ".set_position(static_cast<int>(*p));\n";
+    for (const Node* s : stacks)
+        c << "    if (const auto page = state::get_string(k + \"" << s->id << ".page\"); page && m_" << s->id
+          << ".get_child_by_name(*page))\n"
+          << "        m_" << s->id << ".set_visible_child(*page);\n";
+    c << "}\n\n"
+      << "void " << ui << "::save_window_state() {\n"
+      << "    const std::string k = " << k << ";\n"
+      << "    int w = 0, h = 0;\n"
+      << "    get_default_size(w, h);   // the unmaximized size, kept by GTK while maximized\n"
+      << "    if (w > 0 && h > 0) {\n"
+      << "        state::put_int(k + \"width\", w);\n"
+      << "        state::put_int(k + \"height\", h);\n"
+      << "    }\n"
+      << "    state::put_bool(k + \"maximized\", is_maximized());\n";
+    for (const Node* p : paneds)
+        c << "    state::put_int(k + \"" << p->id << ".position\", m_" << p->id << ".get_position());\n";
+    for (const Node* s : stacks)
+        c << "    if (const auto page = m_" << s->id << ".get_visible_child_name(); !page.empty())\n"
+          << "        state::put_string(k + \"" << s->id << ".page\", page);\n";
+    c << "    state::save();\n"
+      << "}\n\n";
+    return c.str();
+}
+
 void build_node(const Form& f, const Node& n, bool is_root, std::vector<std::string>& lines) {
     const WidgetSpec* w = find_widget(n.type);
     const std::string obj = is_root ? "" : "m_" + n.id + ".";
@@ -623,6 +669,11 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << "    ~" << ui << "() override;\n\n"
       << "    " << ui << "(const " << ui << "&) = delete;\n"
       << "    " << ui << "& operator=(const " << ui << "&) = delete;\n\n"
+      << (remembers(f)
+              ? "    // s008: the window remembers. It saves itself when it leaves the screen\n"
+                "    // (closed, hidden); call this to save sooner. Restored in the constructor.\n"
+                "    void save_window_state();\n\n"
+              : "")
       << (f.root.type == "Dialog"
               ? "    // A dialog: make it transient for `parent` and show it. Built once, it hides\n"
                 "    // on close (the X), so calling this again re-presents the same window.\n"
@@ -711,6 +762,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
     h << "private:\n"
       << "    void build_ui();     // construct: properties, then packing, top-down\n"
       << "    void bind_hooks();   // every ticked signal -> its hook (last, so no setter fires one)\n"
+      << (remembers(f) ? "    void restore_window_state();   // s008: after build_ui, before the hooks\n" : "")
       << "    std::vector<sigc::connection> m_hooks;   // cut first in the destructor\n"
       << edited_members(f, members)
       << (f.actions.empty() ? "" : rootw->type == "ApplicationWindow" ? "" :
@@ -729,6 +781,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
     c << header_banner(f, "Construction, wiring, and the unhooked defaults of " + f.name + ".")
       << "#include \"generated/" << ui << ".hpp\"\n"
       << "#include \"generated/Hooks.hpp\"\n"
+      << (remembers(f) ? "#include \"generated/WindowState.hpp\"\n" : "")
       << "#include \"Registry.hpp\"\n"
       << (f.actions.empty() ? "" :
           "\n#include <giomm/simpleaction.h>\n#include <gtkmm/shortcut.h>\n#include <gtkmm/shortcutaction.h>\n"
@@ -749,9 +802,11 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << "    set_name(" << cpp_string(reg) << ");\n"
       << "    registry::add(" << cpp_string(reg) << ", this);\n"
       << "    build_ui();\n"
+      << (remembers(f) ? "    restore_window_state();\n" : "")
       << "    bind_hooks();\n"
       << "}\n\n"
       << ui << "::~" << ui << "() {\n"
+      << (remembers(f) ? "    if (get_visible()) save_window_state();   // deleted while still on screen (the unmap would come after the cut)\n" : "")
       << "    // Cut the hooks FIRST. " << f.name << " is already gone by now, and a signal the\n"
       << "    // teardown fires (a Stack changing page, a ListBox dropping its selection)\n"
       << "    // must not reach a hook -- a REQUIRED one is pure virtual here.\n"
@@ -763,7 +818,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
           "    for (auto& [name, cancel] : m_files) if (cancel) cancel->cancel();\n")
       << "    registry::remove(this);\n"
       << "}\n\n"
-      ;
+      << state_functions(f, ui);
     for (const auto& m : f.models) {
         const std::string it = model_item(m), q = ui + "::" + it;
         std::string params;
@@ -793,7 +848,12 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
     build_node(f, f.root, true, lines);
     for (const auto& l : lines) c << (l.empty() ? "" : "    " + l) << "\n";
     c << "}\n\n"
-      << "void " << ui << "::bind_hooks() {\n";
+      << "void " << ui << "::bind_hooks() {\n"
+      << (remembers(f) ? "    // s008: leaving the screen saves where it was left. UNMAP, not hide: in GTK 4\n"
+                         "    // a closed window that doesn't hide-on-close is destroyed without a hide,\n"
+                         "    // but hiding and destroying both unmap it.\n"
+                         "    m_hooks.push_back(signal_unmap().connect(sigc::mem_fun(*this, &" + ui + "::save_window_state)));\n"
+                       : "");
     walk(f.root, [&](const Node& n, const Node* parent) {
         const WidgetSpec* w = find_widget(n.type);
         for (const auto& hk : n.signals) {
@@ -887,6 +947,212 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
     return {{"generated/" + ui + ".hpp", h.str()}, {"generated/" + ui + ".cpp", c.str()}};
 }
 
+// s008 -- the window-state file, shared by every form that remembers. Flat
+// JSON, one key per line, so it reads and diffs by eye; read once, written
+// whole (atomically) on every save. Unknown or malformed -> ignored, never fatal.
+const char* const kWindowStateHpp = R"WS(// @MARK@ -- DO NOT EDIT.
+// Where windows were left: ~/.config/@BIN@/window-state.json, flat,
+//   { "MainWindow.width": 900, "MainWindow.maximized": false, "MainWindow.split.position": 240 }
+// A form with "remember" restores from it in its constructor and saves when it
+// leaves the screen. Yours to use too (put_*, then save()) for state of your own.
+#pragma once
+#include <cstdint>
+#include <optional>
+#include <string>
+
+namespace @NS@::ui::state {
+
+std::optional<std::int64_t> get_int(const std::string& key);
+std::optional<bool>         get_bool(const std::string& key);
+std::optional<std::string>  get_string(const std::string& key);
+void put_int(const std::string& key, std::int64_t v);
+void put_bool(const std::string& key, bool v);
+void put_string(const std::string& key, const std::string& v);
+void save();               // the file, now (atomic: a crash never leaves half of it)
+std::string path();        // where it lives
+
+}  // namespace @NS@::ui::state
+)WS";
+
+const char* const kWindowStateCpp = R"WS(// @MARK@ -- DO NOT EDIT.
+#include "generated/WindowState.hpp"
+#include "Log.hpp"
+
+#include <glib.h>
+#include <glib/gstdio.h>
+#include <charconv>
+#include <map>
+
+namespace @NS@::ui::state {
+
+namespace {
+
+// key -> the value's JSON text (a number, true / false, or a quoted string).
+std::map<std::string, std::string>& values() {
+    static std::map<std::string, std::string> v;
+    return v;
+}
+
+std::string quote(const std::string& s) {
+    std::string o = "\"";
+    for (unsigned char c : s) {
+        switch (c) {
+            case '"':  o += "\\\""; break;
+            case '\\': o += "\\\\"; break;
+            case '\n': o += "\\n"; break;
+            case '\t': o += "\\t"; break;
+            case '\r': o += "\\r"; break;
+            default:
+                if (c < 0x20) { char b[8]; g_snprintf(b, sizeof b, "\\u%04x", c); o += b; }
+                else o += static_cast<char>(c);
+        }
+    }
+    return o + "\"";
+}
+
+// A tiny reader for the flat object this file writes: { "key": value, ... }.
+struct Reader {
+    const std::string& s;
+    std::size_t i = 0;
+    void ws() { while (i < s.size() && (s[i] == ' ' || s[i] == '\n' || s[i] == '\r' || s[i] == '\t')) ++i; }
+    bool eat(char c) { ws(); if (i < s.size() && s[i] == c) { ++i; return true; } return false; }
+    bool string(std::string& out) {   // after the opening quote is checked
+        if (!eat('"')) return false;
+        out.clear();
+        while (i < s.size() && s[i] != '"') {
+            char c = s[i++];
+            if (c == '\\' && i < s.size()) {
+                const char e = s[i++];
+                switch (e) {
+                    case 'n': c = '\n'; break;
+                    case 't': c = '\t'; break;
+                    case 'r': c = '\r'; break;
+                    case 'b': c = '\b'; break;
+                    case 'f': c = '\f'; break;
+                    case 'u': {
+                        if (i + 4 > s.size()) return false;
+                        unsigned cp = 0;
+                        if (std::from_chars(s.data() + i, s.data() + i + 4, cp, 16).ec != std::errc()) return false;
+                        i += 4;
+                        char buf[8];
+                        out.append(buf, static_cast<std::size_t>(g_unichar_to_utf8(cp, buf)));
+                        continue;
+                    }
+                    default: c = e;   // " \ /
+                }
+            }
+            out += c;
+        }
+        return eat('"');
+    }
+    bool value(std::string& raw) {    // the token as written
+        ws();
+        if (i < s.size() && s[i] == '"') {
+            std::string v;
+            if (!string(v)) return false;
+            raw = quote(v);
+            return true;
+        }
+        const std::size_t b = i;
+        while (i < s.size() && s[i] != ',' && s[i] != '}' && s[i] != ' ' && s[i] != '\n' && s[i] != '\r' && s[i] != '\t') ++i;
+        raw = s.substr(b, i - b);
+        return !raw.empty();
+    }
+};
+
+bool& loaded() { static bool l = false; return l; }
+
+void load() {
+    if (loaded()) return;
+    loaded() = true;
+    gchar* text = nullptr;
+    gsize len = 0;
+    if (!g_file_get_contents(path().c_str(), &text, &len, nullptr)) return;   // none yet: fine
+    const std::string s(text, len);
+    g_free(text);
+    Reader r{s};
+    std::map<std::string, std::string> got;
+    bool ok = r.eat('{');
+    if (ok && !r.eat('}')) {
+        do {
+            std::string k, v;
+            ok = r.string(k) && r.eat(':') && r.value(v);
+            if (ok) got[k] = v;
+        } while (ok && r.eat(','));
+        ok = ok && r.eat('}');
+    }
+    if (!ok) {
+        if (auto lg = log::get(log::Area::Ui)) lg->warn("window state: {} isn't readable -- starting fresh", path());
+        return;
+    }
+    values() = std::move(got);
+}
+
+const std::string* find(const std::string& key) {
+    load();
+    const auto it = values().find(key);
+    return it == values().end() ? nullptr : &it->second;
+}
+
+}  // namespace
+
+std::string path() {
+    return std::string(g_get_user_config_dir()) + "/@BIN@/window-state.json";
+}
+
+std::optional<std::int64_t> get_int(const std::string& key) {
+    const auto* v = find(key);
+    if (!v) return std::nullopt;
+    std::int64_t n = 0;
+    const auto [end, ec] = std::from_chars(v->data(), v->data() + v->size(), n);
+    if (ec != std::errc() || end != v->data() + v->size()) return std::nullopt;
+    return n;
+}
+
+std::optional<bool> get_bool(const std::string& key) {
+    const auto* v = find(key);
+    if (!v || (*v != "true" && *v != "false")) return std::nullopt;
+    return *v == "true";
+}
+
+std::optional<std::string> get_string(const std::string& key) {
+    const auto* v = find(key);
+    if (!v || v->empty() || v->front() != '"') return std::nullopt;
+    std::string out;
+    Reader r{*v};
+    if (!r.string(out)) return std::nullopt;
+    return out;
+}
+
+void put_int(const std::string& key, std::int64_t v) { load(); values()[key] = std::to_string(v); }
+void put_bool(const std::string& key, bool v) { load(); values()[key] = v ? "true" : "false"; }
+void put_string(const std::string& key, const std::string& v) { load(); values()[key] = quote(v); }
+
+void save() {
+    load();
+    std::string out = "{\n";
+    bool first = true;
+    for (const auto& [k, v] : values()) {
+        out += (first ? "  " : ",\n  ") + quote(k) + ": " + v;
+        first = false;
+    }
+    out += "\n}\n";
+    const std::string p = path();
+    gchar* dir = g_path_get_dirname(p.c_str());
+    g_mkdir_with_parents(dir, 0700);
+    g_free(dir);
+    GError* err = nullptr;
+    if (!g_file_set_contents(p.c_str(), out.c_str(), static_cast<gssize>(out.size()), &err)) {
+        if (auto lg = log::get(log::Area::Ui)) lg->warn("window state: can't write {}: {}", p, err ? err->message : "?");
+        if (err) g_error_free(err);
+        return;
+    }
+    if (auto lg = log::get(log::Area::Ui)) lg->debug("window state: saved {}", p);
+}
+
+}  // namespace @NS@::ui::state
+)WS";
+
 std::vector<OutFile> generate_support(const AppInfo& app) {
     std::set<std::string> headers;
     std::ostringstream w;
@@ -943,13 +1209,24 @@ std::vector<OutFile> generate_support(const AppInfo& app) {
        << "| `<Form>.hooks.txt` | every hook: hooked, unhooked, missing, stale -- with lines to paste |\n"
        << "| `<Form>.hooks.json` | the same, for tools (and the stale-hook memory) |\n"
        << "| `Widgets.hpp` | the `Named<W>` aliases |\n"
-       << "| `Hooks.hpp/.cpp` | the once-per-hook \"unhooked\" warning |\n\n"
+       << "| `Hooks.hpp/.cpp` | the once-per-hook \"unhooked\" warning |\n"
+       << "| `WindowState.hpp/.cpp` | where windows were left (a form's `remember`) |\n\n"
        << "Your half is `include/<Form>.hpp` + `src/<Form>.cpp`. Mortimer writes those\n"
        << "once, the first time a form is generated, and never again.\n";
 
+    auto fill = [&](std::string t) {
+        for (const auto& [from, to] : {std::pair<std::string, std::string>{"@NS@", app.ns}, {"@BIN@", app.bin},
+                                       {"@MARK@", kGeneratedMarker}}) {
+            for (std::size_t at = 0; (at = t.find(from, at)) != std::string::npos; at += to.size())
+                t.replace(at, from.size(), to);
+        }
+        return t;
+    };
     return {{"generated/Widgets.hpp", w.str()},
             {"generated/Hooks.hpp", hh.str()},
             {"generated/Hooks.cpp", hc.str()},
+            {"generated/WindowState.hpp", fill(kWindowStateHpp)},
+            {"generated/WindowState.cpp", fill(kWindowStateCpp)},
             {"generated/README.md", rd.str()}};
 }
 

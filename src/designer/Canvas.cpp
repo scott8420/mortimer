@@ -406,6 +406,7 @@ bool Canvas::apply_one(Gtk::Widget& w, const core::Rec& r, const std::string& p,
     }
     if ((p == "editable" || p == "selection") && r.type == "ColumnView")
         return true;   // s007: run-time behaviour; "model" above marks the editable headers
+    if (p == "remember") return true;   // s008: run-time behaviour (generated/WindowState)
     if (p == "stack" && r.type == "StackSidebar" && std::holds_alternative<std::string>(v)) {
         m_refs.emplace_back(&w, std::get<std::string>(v));
         return true;

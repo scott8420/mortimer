@@ -34,7 +34,7 @@ std::string gobject_name(const std::string& p) {
         {"transition", "transition-type"},   {"hscrollbar", "hscrollbar-policy"},
         {"vscrollbar", "vscrollbar-policy"},
         {"margin", ""}, {"lower", ""}, {"upper", ""}, {"step", ""}, {"page", ""}, {"value", ""},
-        {"items", ""},  {"css_classes", ""}, {"stack", ""}, {"menu", ""}, {"model", ""}, {"selection", ""}, {"editable", ""},
+        {"items", ""},  {"css_classes", ""}, {"stack", ""}, {"menu", ""}, {"model", ""}, {"selection", ""}, {"editable", ""}, {"remember", ""},
     };
     if (const auto it = renamed.find(p); it != renamed.end()) return it->second;
     return dashed(p);

@@ -111,6 +111,8 @@ const ModelDef* find_model(const Form& f, const std::string& name);
 // default, also for an unknown value), "multiple" or "none". editable: the
 // field names the user may change in place (as written; validate checks them).
 std::string view_selection(const Node& n);
+// s008 -- the form's window comes back as it was left (root prop "remember").
+bool remembers(const Form& f);
 StringList  view_editable(const Node& n);
 bool        view_edits(const Node& n, const std::string& field);
 
