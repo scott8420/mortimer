@@ -148,6 +148,14 @@ GenerateResult generate_project(const std::string& app_dir) {
     };
 
     for (const auto& f : generate_support(pr.app)) emit(f);
+    // s014: generated/Undo needs the journal, include/core/Undo.hpp -- a new app has
+    // it from the template; an older one gets it here, once (then it's yours).
+    if (!fs::exists(root / "include" / "core" / "Undo.hpp"))
+        for (const auto& t : project_templates())
+            if (std::string(t.path) == "@BIN@/include/core/Undo.hpp") {
+                write_if_changed(root / "include" / "core" / "Undo.hpp", render_tokens(t.content, pr.app));
+                r.notes.push_back("include/core/Undo.hpp written (the undo journal generated/Undo uses)");
+            }
     // s013: the shared models -- checked once, generated once (none -> pruned).
     for (const auto& i : validate_models(pr.models)) r.issues.push_back({"mortimer.json", i});
     for (const auto& f : generate_models(pr.models, pr.app)) emit(f);
@@ -317,8 +325,9 @@ Form starter_form(const AppInfo& app) {
     // the hook are one fact (Form::actions).
     Node menu{"MenuButton", "menu",
               {{"icon_name", S("open-menu-symbolic")},
-               {"menu", Value(StringList{"Say Hello=win.hello", "-", "Keyboard Shortcuts=win.shortcuts",
-                                         "About " + app.name + "=win.about", "-", "Quit=win.quit"})}},
+               {"menu", Value(StringList{"Undo=win.undo", "Redo=win.redo", "-", "Say Hello=win.hello", "-",
+                                         "Keyboard Shortcuts=win.shortcuts", "About " + app.name + "=win.about", "-",
+                                         "Quit=win.quit"})}},
               {{"slot", S("end")}}, {}, {}};
     Node header{"HeaderBar", "header", {}, {{"slot", S("titlebar")}}, {}, {open, menu}};
 
@@ -348,7 +357,10 @@ Form starter_form(const AppInfo& app) {
     f.actions = {{"hello", "<Control>h", false},
                  {"shortcuts", "<Control>question", false, "", kShortcutsTarget},
                  {"about", "", false, "", "About"},
-                 {"quit", "<Control>q", false}};
+                 {"quit", "<Control>q", false},
+                 // s014: the app's undo -- every edit a user makes in a generated list.
+                 {"undo", "<Control>z", false, "", "", "undo"},
+                 {"redo", "<Control><Shift>z", false, "", "", "redo"}};
     f.root = {"ApplicationWindow", "main_window",
               {{"title", Value(app.name)}, {"default_width", I(800)}, {"default_height", I(560)},
                {"remember", Value(true)}},   // s008: a new app comes back as it was left

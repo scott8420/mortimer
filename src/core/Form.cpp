@@ -186,7 +186,7 @@ Form form_from_json(const std::string& text) {
         for (const auto& a : j["actions"]) {
             if (!a.is_object()) throw std::runtime_error("an action is {\"name\": ..., \"accel\": ...}");
             f.actions.push_back({a.value("name", ""), a.value("accel", ""), a.value("required", false),
-                                 a.value("title", ""), a.value("opens", "")});
+                                 a.value("title", ""), a.value("opens", ""), a.value("does", "")});
         }
     }
     if (j.contains("files")) {
@@ -228,6 +228,7 @@ std::string form_to_json(const Form& f) {
             if (x.required) o["required"] = true;
             if (!x.title.empty()) o["title"] = x.title;
             if (!x.opens.empty()) o["opens"] = x.opens;
+            if (!x.does.empty()) o["does"] = x.does;
             a.push_back(o);
         }
         j["actions"] = a;
@@ -560,7 +561,9 @@ std::vector<Issue> validate_models(const std::vector<ModelDef>& ms, const std::s
         if (m.fields.empty()) err(where, "a model needs at least one field (a column to show)");
         std::set<std::string> fields;
         // The item's own names: id(), create(), id_taken(), and its private helpers.
-        static const std::set<std::string> taken{"id", "create", "id_taken", "ids", "next"};
+        static const std::set<std::string> taken{"id", "create", "id_taken", "ids", "next",
+                                                 "find", "snapshot", "restore", "undo_type", "signal_changed",
+                                                 "out_", "in_", "fields_"};   // s014
         for (const auto& x : m.fields) {
             const std::string fw = where + "." + (x.name.empty() ? std::string("?") : x.name);
             if (!is_identifier(x.name) || is_cpp_keyword(x.name))
@@ -606,7 +609,12 @@ std::vector<Issue> validate(const Form& f) {
             continue;
         }
         if (!actions.insert(a.name).second) err(where, "action \"" + a.name + "\" is declared twice");
-        if (a.opens.empty()) {
+        if (!a.does.empty()) {   // s014: built in -- no hook
+            if (a.does != "undo" && a.does != "redo")
+                err(where, "does \"" + a.does + "\" -- an action does undo or redo (or runs its hook)");
+            if (!a.opens.empty()) err(where, "it does " + a.does + " and opens " + a.opens + " -- one or the other");
+            if (a.required) warn(where, "it does " + a.does + ", so there is no hook to require");
+        } else if (a.opens.empty()) {
             if (!hooks.insert(action_hook(a)).second) err(where, "two things make the hook " + action_hook(a) + "()");
         } else {
             // s010: it opens a window -- no hook. The project checks the form exists.

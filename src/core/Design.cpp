@@ -832,6 +832,7 @@ const std::vector<Verb>& verbs() {
         {"key_action",   [](DesignJournal& j, Design& d) { set_action(j, d, "save", {"save", "<Control><Shift>s", true}); }},
         {"opens_action", [](DesignJournal& j, Design& d) { set_action(j, d, "save", {"save", "<Control>s", false, "", "@shortcuts"}); }},
         {"title_action", [](DesignJournal& j, Design& d) { set_action(j, d, "save", {"save", "<Control>s", false, "Save it"}); }},
+        {"does_action",  [](DesignJournal& j, Design& d) { set_action(j, d, "save", {"save", "<Control>z", false, "", "", "undo"}); }},
         {"add_file",     [](DesignJournal& j, Design& d) { add_file(j, d, "export_pdf"); }},
         {"add_model",    [](DesignJournal& j, Design& d) { add_model(j, d, "Patient"); }},
         {"remove_model", [](DesignJournal& j, Design& d) { remove_model(j, d, "Note"); }},

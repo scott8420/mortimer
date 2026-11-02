@@ -122,7 +122,7 @@ bool Inspector::show(const std::string& sel) {
     std::string sig;
     if (const auto f = m_d.get(core::Design::kForm))
     {
-        for (const auto& a : f->actions) sig += a.name + ">" + a.opens + ",";   // s010: and what it opens
+        for (const auto& a : f->actions) sig += a.name + ">" + a.opens + "!" + a.does + ",";   // s010 / s014: and what it opens / does
         for (const auto& m : m_d.shared()) {                                    // s013: and the project's models
             sig += "^" + m.name + ":";
             for (const auto& x : m.fields) sig += x.name + "/" + x.type + ",";
@@ -580,7 +580,8 @@ void Inspector::actions_rows() {
         const std::string name = a0.name;
         auto* e = Gtk::make_managed<Gtk::Entry>();
         e->set_hexpand(true);
-        e->set_tooltip_text(a0.opens.empty() ? "on_action_" + name + "()  ·  win." + core::gio_action_name(name)
+        e->set_tooltip_text(!a0.does.empty() ? "win." + core::gio_action_name(name) + " does " + a0.does + " (the app's journal)"
+                            : a0.opens.empty() ? "on_action_" + name + "()  ·  win." + core::gio_action_name(name)
                                              : "win." + core::gio_action_name(name) + " opens " +
                                                    (a0.opens == core::kShortcutsTarget ? std::string("the shortcuts window")
                                                                                        : a0.opens));
@@ -591,7 +592,7 @@ void Inspector::actions_rows() {
         auto* req = Gtk::make_managed<Gtk::CheckButton>();
         req->set_tooltip_text(a0.opens.empty() ? "Required: the hook is pure virtual"
                                                : "It opens a window -- there is no hook to require");
-        req->set_sensitive(a0.opens.empty());
+        req->set_sensitive(a0.opens.empty() && a0.does.empty());
         auto* del = Gtk::make_managed<Gtk::Button>();
         del->set_icon_name("user-trash-symbolic");
         del->set_has_frame(false);
@@ -609,12 +610,16 @@ void Inspector::actions_rows() {
         title->set_hexpand(true);
         title->set_tooltip_text("Its row in the keyboard-shortcuts window. Empty = the menu row's label, "
                                 "else the name made readable.");
-        std::vector<std::string> opens{"", core::kShortcutsTarget};
+        // s014: "!undo" / "!redo" stand for does undo / redo (the app's journal).
+        // (The rebuild key below also notes `does`, so the tooltips follow.)
+        auto choice_of = [](const core::ActionDef& a) { return a.does.empty() ? a.opens : "!" + a.does; };
+        std::vector<std::string> opens{"", "!undo", "!redo", core::kShortcutsTarget};
         for (const auto& t : m_targets) opens.push_back(t);
-        if (std::find(opens.begin(), opens.end(), a0.opens) == opens.end()) opens.push_back(a0.opens);   // stale: shown
+        if (std::find(opens.begin(), opens.end(), choice_of(a0)) == opens.end()) opens.push_back(choice_of(a0));   // stale: shown
         std::vector<Glib::ustring> shown;
         for (const auto& o : opens)
-            shown.push_back(o.empty() ? "runs its hook" : o == core::kShortcutsTarget ? "opens Shortcuts" : "opens " + o);
+            shown.push_back(o.empty() ? "runs its hook" : o == "!undo" ? "does Undo" : o == "!redo" ? "does Redo"
+                            : o == core::kShortcutsTarget ? "opens Shortcuts" : "opens " + o);
         auto* op = Gtk::make_managed<Gtk::DropDown>(Gtk::StringList::create(shown));
         op->set_tooltip_text("Run on_action_" + name + "(), or open a window of the project: built the first "
                              "time, then shown again (the X hides it). No hook, no code.");
@@ -631,13 +636,15 @@ void Inspector::actions_rows() {
             if (m_painting || m_rebuilding) return;
             if (auto a = current()) { a->title = title->get_text(); core::design::set_action(m_j, m_d, name, *a); }
         });
-        op->property_selected().signal_changed().connect([this, op, opens, name, current] {
+        op->property_selected().signal_changed().connect([this, op, opens, name, current, choice_of] {
             if (m_painting || m_rebuilding) return;
             const auto i = op->get_selected();
             if (i >= opens.size()) return;
-            if (auto a = current(); a && a->opens != opens[i]) {
-                a->opens = opens[i];
-                if (!a->opens.empty()) a->required = false;   // nothing to require
+            if (auto a = current(); a && choice_of(*a) != opens[i]) {
+                const bool does = opens[i].rfind("!", 0) == 0;
+                a->does = does ? opens[i].substr(1) : std::string();
+                a->opens = does ? std::string() : opens[i];
+                if (!a->opens.empty() || !a->does.empty()) a->required = false;   // nothing to require
                 std::string why;
                 if (!core::design::set_action(m_j, m_d, name, *a, &why) && !why.empty()) m_said.emit(why);
             }
@@ -663,18 +670,18 @@ void Inspector::actions_rows() {
             if (auto a = current()) { a->required = req->get_active(); core::design::set_action(m_j, m_d, name, *a); }
         });
         del->signal_clicked().connect([this, name] { core::design::remove_action(m_j, m_d, name); });
-        m_rows.push_back({[this, e, key, req, title, op, opens, current](const core::Rec&) {
+        m_rows.push_back({[this, e, key, req, title, op, opens, current, choice_of](const core::Rec&) {
             const auto a = current();
             if (!a) return;
             if (!e->has_focus() && e->get_text().raw() != a->name) e->set_text(a->name);
             if (key->get_text().raw() != a->accel) key->set_text(a->accel);
             req->set_active(a->required);
-            req->set_sensitive(a->opens.empty());
+            req->set_sensitive(a->opens.empty() && a->does.empty());
             if (title->get_text().raw() != a->title) title->set_text(a->title);
             auto bare = *a;   // what it would say with no title of its own
             bare.title.clear();
             title->set_placeholder_text(core::action_title(m_d.to_form(), bare));
-            const auto at = std::find(opens.begin(), opens.end(), a->opens);
+            const auto at = std::find(opens.begin(), opens.end(), choice_of(*a));
             if (at != opens.end() && op->get_selected() != static_cast<guint>(at - opens.begin()))
                 op->set_selected(static_cast<guint>(at - opens.begin()));
         }});

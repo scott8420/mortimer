@@ -192,15 +192,36 @@ const ModelDef* model_of(const Form& f, const Node& n) {
                ? find_model(f, std::get<std::string>(it->second)) : nullptr;
 }
 
+// s014 m2 -- the view's store, registered with the app's undo by name
+// ("<Form>.<view>"), so add_<view> / remove_<view> -- and their undo -- can
+// find it. Dropped in the destructor.
+std::vector<std::string> list_registration(const Form& f, const Node& n, const std::string& item) {
+    const std::string store = "m_" + n.id + "_store";
+    return {
+        "undo::register_list(" + cpp_string(f.name + "." + n.id) + ", {   // s014: rows added / removed undoably",
+        "    [this](const Glib::RefPtr<Glib::ObjectBase>& o) {",
+        "        for (guint i = 0, k = " + store + "->get_n_items(); i < k; ++i)",
+        "            if (Glib::RefPtr<Glib::ObjectBase>(" + store + "->get_item(i)) == o) return static_cast<int>(i);",
+        "        return -1;",
+        "    },",
+        "    [this](guint at, const Glib::RefPtr<Glib::ObjectBase>& o) {",
+        "        if (auto x = std::dynamic_pointer_cast<" + item + ">(o)) " + store + "->insert(at, x);",
+        "    },",
+        "    [this](guint at) { " + store + "->remove(at); },",
+        "    [this] { return " + store + "->get_n_items(); }});",
+    };
+}
+
 // s011 -- a ListView: the store, the selection, and a factory that makes the
 // row class once per VISIBLE row (setup) and fills it from the row's item
 // (bind) -- as you scroll, GTK hands a built row a different item.
-std::vector<std::string> list_view_lines(const Form&, const Node& n, const ModelDef& m) {
+std::vector<std::string> list_view_lines(const Form& f, const Node& n, const ModelDef& m) {
     std::vector<std::string> out;
     const std::string item = model_item(m), v = "m_" + n.id, store = v + "_store", sel = v + "_selection";
     const std::string mode = view_selection(n), row = row_class(n);
     out.push_back("// the model: " + item + " rows -- fill " + store + ", each laid out as a " + row);
     out.push_back(store + " = Gio::ListStore<" + item + ">::create();");
+    for (const auto& l : list_registration(f, n, item)) out.push_back(l);
     if (mode == "multiple") {
         out.push_back(sel + " = Gtk::MultiSelection::create(" + store + ");   // Ctrl / Shift pick several");
     } else if (mode == "none") {
@@ -216,8 +237,8 @@ std::vector<std::string> list_view_lines(const Form&, const Node& n, const Model
     out.push_back("    factory->signal_setup().connect([this](const Glib::RefPtr<Gtk::ListItem>& cell) {");
     out.push_back("        cell->set_child(*Gtk::make_managed<" + row + ">(*this));   // it calls this form's hooks");
     out.push_back("    });");
-    out.push_back("    // Scrolling hands a built row another item: bind refills it. (Changed an item's");
-    out.push_back("    // member yourself? " + store + "->items_changed(position, 1, 1) re-binds that row.)");
+    out.push_back("    // Scrolling hands a built row another item: bind refills it. (Changed an item yourself?");
+    out.push_back("    // undo::edit(item, \"label\", [&] { ... }) is undoable AND re-binds; undo::refresh(item) just re-binds.)");
     out.push_back("    factory->signal_bind().connect([](const Glib::RefPtr<Gtk::ListItem>& cell) {");
     out.push_back("        auto* row = dynamic_cast<" + row + "*>(cell->get_child());");
     out.push_back("        auto item = std::dynamic_pointer_cast<" + item + ">(cell->get_item());");
@@ -260,6 +281,7 @@ std::vector<std::string> model_lines(const Form& f, const Node& n) {
     if (n.type == "ListView") return list_view_lines(f, n, *m);   // s011: a designed row, no columns
     out.push_back("// the model: " + item + " rows -- fill " + store + "; a header click sorts");
     out.push_back(store + " = Gio::ListStore<" + item + ">::create();");
+    for (const auto& l : list_registration(f, n, item)) out.push_back(l);
     const std::string sorted = "Gtk::SortListModel::create(" + store + ", " + v + ".get_sorter())";
     if (mode == "multiple") {
         out.push_back(sel + " = Gtk::MultiSelection::create(" + sorted + ");   // Ctrl / Shift pick several");
@@ -347,7 +369,8 @@ std::vector<std::string> model_lines(const Form& f, const Node& n) {
                 out.push_back("        w->signal_toggled().connect([this, w, li] {");
                 out.push_back("            auto item = std::dynamic_pointer_cast<" + item + ">(li->get_item());");
                 out.push_back("            if (!item || item->" + x.name + " == w->get_active()) return;");
-                out.push_back("            item->" + x.name + " = w->get_active();");
+                out.push_back("            undo::edit(item, " + cpp_string("Edit \u201C" + field_title(x) + "\u201D") +
+                              ", [&] { item->" + x.name + " = w->get_active(); }, {}, false);   // s014: undoable");
             } else {
                 out.push_back("        w->property_editing().signal_changed().connect([this, w, li, " + open_var + "] {");
                 out.push_back("            if (w->get_editing()) { *" + open_var + " = w; return; }");
@@ -359,7 +382,8 @@ std::vector<std::string> model_lines(const Form& f, const Node& n) {
                 if (x.type == "string") {
                     out.push_back("            const std::string now = w->get_text();");
                     out.push_back("            if (now == item->" + x.name + ") return;");
-                    out.push_back("            item->" + x.name + " = now;");
+                    out.push_back("            undo::edit(item, " + cpp_string("Edit \u201C" + field_title(x) + "\u201D") +
+                                  ", [&] { item->" + x.name + " = now; }, {}, false);   // s014: undoable");
                 } else {
                     out.push_back("            " + field_cpp_type(x.type) + " now{};");
                     out.push_back("            if (!parse_cell(w->get_text(), now)) {   // not a number: put it back");
@@ -374,7 +398,8 @@ std::vector<std::string> model_lines(const Form& f, const Node& n) {
                                   (x.type == "int" ? "std::to_string(now)" : "Glib::ustring::format(now)") +
                                   ");   // as the column shows it (\" 07\" -> \"7\")");
                     out.push_back("            if (now == item->" + x.name + ") return;");
-                    out.push_back("            item->" + x.name + " = now;");
+                    out.push_back("            undo::edit(item, " + cpp_string("Edit \u201C" + field_title(x) + "\u201D") +
+                                  ", [&] { item->" + x.name + " = now; }, {}, false);   // s014: undoable");
                 }
             }
             out.push_back("            " + v + "_edited.emit(item, " + cpp_string(x.name) + ");");
@@ -388,8 +413,15 @@ std::vector<std::string> model_lines(const Form& f, const Node& n) {
         out.push_back("        if (auto* w = dynamic_cast<" + widget + "*>(" +
                       (boxed ? "cell->get_child() ? cell->get_child()->get_first_child() : nullptr"
                              : "cell->get_child()") + "); item && w)");
+        out.push_back("        {");
         out.push_back(check ? "            w->set_active(item->" + x.name + ");"
                             : "            w->set_text(" + text + ");");
+        out.push_back("            // s014: the cell follows its item -- an undo / redo / edit() re-shows it.");
+        out.push_back("            undo::follow(*w, item->signal_changed().connect([w, item = item.get()] {");
+        out.push_back(check ? "                w->set_active(item->" + x.name + ");"
+                            : "                w->set_text(" + replace(text, "item->", "item->") + ");");
+        out.push_back("            }));");
+        out.push_back("        }");
         out.push_back("    });");
         out.push_back("    auto column = Gtk::ColumnViewColumn::create(" + cpp_string(field_title(x)) + ", factory);");
         out.push_back("    column->set_resizable(true);");
@@ -623,7 +655,7 @@ std::vector<Hook> hooks_of(const Form& f) {
     });
     // s003: each action is a hook too (widget = the action's name, type "Action").
     for (const auto& a : f.actions)
-        if (a.opens.empty())   // s010: one that opens a window has no hook
+        if (a.opens.empty() && a.does.empty())   // s010 / s014: one that opens a window or does undo has no hook
             out.push_back({action_hook(a), "void", "", "", a.name, "Action", "activate", a.required});
     // s005: each file dialog's answer is a hook; Cancel is one too when ticked.
     for (const auto& d : f.files) {
@@ -847,8 +879,13 @@ static std::string row_wiring(const Form& f, const Node& v, const ModelDef& md) 
               << "    " << obj << s->connect << ".connect([this] {\n"
               << "        if (m_binding || !m_item || !*m_alive) return;\n";
             if (writes && sname == wsig) {
+                // s014: through the undo door; typing / a slider's steps fold into one step.
+                const bool folds = n.type == "Entry" || n.type == "Scale" || n.type == "SpinButton";
                 c << "        if (m_item->" << fd->name << " != " << read << ") {\n"
-                  << "            m_item->" << fd->name << " = " << read << ";\n";
+                  << "            const auto now = " << read << ";\n"
+                  << "            undo::edit(m_item, " << cpp_string("Edit \u201C" + field_title(*fd) + "\u201D")
+                  << ", [&] { m_item->" << fd->name << " = now; }"
+                  << ", " << (folds ? "\"" + n.id + "#\" + std::to_string(m_item->id())" : std::string("{}")) << ", false);\n";
                 if (edited) c << "            m_ui->m_" << v.id << "_edited.emit(m_item, " << cpp_string(fd->name) << ");\n";
                 c << "        }\n";
             }
@@ -909,7 +946,10 @@ static std::string row_classes_source(const Form& f, const std::string& ui) {
         for (const auto& l : lines) c << (l.empty() ? "" : "    " + l) << "\n";
         c << row_wiring(f, *v, *md);
         c << "}\n\n"
-          << "void " << q << "::unbind() { m_item.reset(); }\n\n"
+          << "void " << q << "::unbind() {\n"
+          << "    undo::follow(*this, {});   // stop following it\n"
+          << "    m_item.reset();\n"
+          << "}\n\n"
           << "void " << q << "::bind(const Glib::RefPtr<" << model_item(*md) << ">& item) {\n"
           << "    m_item = item;\n"
           << "    m_binding = true;   // the setters below fire the widgets' signals -- that's not the user\n";
@@ -922,6 +962,8 @@ static std::string row_classes_source(const Form& f, const std::string& ui) {
         });
         if (!any) c << "    // nothing in the row binds a field yet\n";
         c << "    m_binding = false;\n"
+          << "    // s014: the row follows its item -- an undo / redo / edit() re-shows it.\n"
+          << "    undo::follow(*this, item->signal_changed().connect([this] { if (m_item) bind(m_item); }));\n"
           << "}\n\n";
     }
     return c.str();
@@ -931,6 +973,7 @@ static std::string row_classes_source(const Form& f, const std::string& ui) {
 // and a unique id(). Nested in <Form>Ui (indent "    ") for a form's own
 // model; at namespace level in generated/Models for a shared one.
 static std::string item_decl(const ModelDef& m, const std::string& in) {
+    // s014: + find(id), snapshot() / restore(), undo_type() -- the undo door's needs.
     std::ostringstream h;
     const std::string it = model_item(m);
     std::string params;
@@ -941,7 +984,15 @@ static std::string item_decl(const ModelDef& m, const std::string& in) {
       << in << "    static Glib::RefPtr<" << it << "> create(" << params << "std::uint64_t id = 0);\n"
       << in << "    ~" << it << "() override { ids().erase(m_id); }\n"
       << in << "    std::uint64_t id() const { return m_id; }\n"
-      << in << "    static bool id_taken(std::uint64_t id) { return ids().count(id) != 0; }\n\n";
+      << in << "    static bool id_taken(std::uint64_t id) { return ids().count(id) != 0; }\n"
+      << in << "    static Glib::RefPtr<" << it << "> find(std::uint64_t id);   // the live item with that id, or null\n"
+      << in << "    // s014 -- for undo: the fields as text, put back from text; the journal's name for the type.\n"
+      << in << "    std::string snapshot() const;\n"
+      << in << "    void restore(const std::string& fields);\n"
+      << in << "    static const char* undo_type();\n"
+      << in << "    // Emitted when its fields change through the undo (an edit, undo, redo): every row\n"
+      << in << "    // and cell showing it re-shows it. Emit it yourself after changing fields directly.\n"
+      << in << "    sigc::signal<void()>& signal_changed() { return m_changed; }\n\n";
     std::size_t width = 0;
     for (const auto& x : m.fields) width = std::max(width, field_cpp_type(x.type).size());
     for (const auto& x : m.fields)
@@ -951,13 +1002,17 @@ static std::string item_decl(const ModelDef& m, const std::string& in) {
       << in << "    " << it << "() = default;\n"
       << in << "private:\n"
       << in << "    std::uint64_t m_id = 0;\n"
-      << in << "    static std::set<std::uint64_t>& ids() { static std::set<std::uint64_t> s; return s; }\n"
+      << in << "    sigc::signal<void()> m_changed;\n"
+      << in << "    // id -> the live item (find() and id_taken() read it; the destructor removes it)\n"
+      << in << "    static std::map<std::uint64_t, " << it << "*>& ids() { static std::map<std::uint64_t, " << it << "*> s; return s; }\n"
       << in << "    static std::uint64_t& next() { static std::uint64_t n = 1; return n; }\n"
       << in << "};\n\n";
     return h.str();
 }
 
-static std::string item_def(const ModelDef& m, const std::string& qual) {
+// `qual`: how the definitions name the class ("MainWindowUi::" / "" at namespace
+// level); `key`: the type's name in the undo journal ("MainWindowUi::" / "model::").
+static std::string item_def(const ModelDef& m, const std::string& qual, const std::string& ns, const std::string& key) {
     std::ostringstream c;
     const std::string it = model_item(m), q = qual + it;
     std::string params;
@@ -977,10 +1032,52 @@ static std::string item_def(const ModelDef& m, const std::string& qual) {
       << "    }\n"
       << "    auto item = Glib::make_refptr_for_instance<" << it << ">(new " << it << "());\n"
       << "    item->m_id = id;\n"
-      << "    ids().insert(id);\n";
+      << "    ids()[id] = item.get();\n";
     for (const auto& x : m.fields) c << "    item->" << x.name << " = " << x.name << ";\n";
-    c << "    return item;\n"
+    // s014: the type tells the app's undo how to find / read / write its items, once.
+    c << "    static const bool registered = [] {\n"
+      << "        ::" << ns << "::ui::undo::register_type(undo_type(), {\n"
+      << "            [](std::uint64_t n) -> Glib::RefPtr<Glib::ObjectBase> { return find(n); },\n"
+      << "            [](const Glib::RefPtr<Glib::ObjectBase>& o) {\n"
+      << "                auto x = std::dynamic_pointer_cast<" << it << ">(o);\n"
+      << "                return x ? x->snapshot() : std::string();\n"
+      << "            },\n"
+      << "            [](const Glib::RefPtr<Glib::ObjectBase>& o, const std::string& s) {\n"
+      << "                if (auto x = std::dynamic_pointer_cast<" << it << ">(o)) x->restore(s);\n"
+      << "            },\n"
+      << "            [](const Glib::RefPtr<Glib::ObjectBase>& o) {\n"
+      << "                if (auto x = std::dynamic_pointer_cast<" << it << ">(o)) x->m_changed.emit();\n"
+      << "            },\n"
+      << "            [](std::uint64_t n, const std::string& s) -> Glib::RefPtr<Glib::ObjectBase> {\n"
+      << "                auto x = create(" << [&] { std::string d; for (std::size_t i = 0; i < m.fields.size(); ++i) d += "{}, "; return d; }() << "n);\n"
+      << "                if (x) x->restore(s);\n"
+      << "                return x;\n"
+      << "            }});\n"
+      << "        return true;\n"
+      << "    }();\n"
+      << "    (void)registered;\n"
+      << "    return item;\n"
       << "}\n\n";
+    c << "Glib::RefPtr<" << q << "> " << q << "::find(std::uint64_t id) {\n"
+      << "    const auto it = ids().find(id);\n"
+      << "    if (it == ids().end()) return {};\n"
+      << "    it->second->reference();   // a new RefPtr to a live item: it takes its own reference\n"
+      << "    return Glib::make_refptr_for_instance<" << it << ">(it->second);\n"
+      << "}\n\n"
+      << "const char* " << q << "::undo_type() { return " << cpp_string(key + it) << "; }\n\n"
+      << "std::string " << q << "::snapshot() const {\n"
+      << "    ::" << ns << "::ui::undo::Writer out_;   // (trailing _: a field may be called anything)\n";
+    for (const auto& x : m.fields)
+        c << "    out_." << (x.type == "string" ? "str" : x.type == "int" ? "num" : x.type == "double" ? "dbl" : "flag")
+          << "(" << x.name << ");\n";
+    c << "    return out_.out;\n"
+      << "}\n\n"
+      << "void " << q << "::restore(const std::string& fields_) {\n"
+      << "    ::" << ns << "::ui::undo::Reader in_(fields_);\n";
+    for (const auto& x : m.fields)
+        c << "    " << x.name << " = in_." << (x.type == "string" ? "str" : x.type == "int" ? "num" : x.type == "double" ? "dbl" : "flag")
+          << "();\n";
+    c << "}\n\n";
     return c.str();
 }
 
@@ -1006,15 +1103,15 @@ std::vector<OutFile> generate_models(const std::vector<ModelDef>& models, const 
       << "// shows it (a form says `TaskItem`; its Ui class has a using for it). Ids are\n"
       << "// unique per type across the whole app -- one set, not one per form.\n"
       << "#pragma once\n"
-      << "#include <glibmm/object.h>\n#include <glibmm/refptr.h>\n\n#include <cstdint>\n#include <set>\n#include <string>\n\n"
+      << "#include <glibmm/object.h>\n#include <glibmm/refptr.h>\n\n#include <cstdint>\n#include <map>\n#include <set>\n#include <string>\n\n"
       << "namespace " << app.ns << "::model {\n\n";
     for (const auto& m : models) h << item_decl(m, "");
     h << "}  // namespace " << app.ns << "::model\n";
     std::ostringstream c;
     c << "// " << kGeneratedMarker << " from mortimer.json's models -- DO NOT EDIT.\n"
-      << "#include \"generated/Models.hpp\"\n#include \"Log.hpp\"\n\n"
+      << "#include \"generated/Models.hpp\"\n#include \"generated/Undo.hpp\"\n#include \"Log.hpp\"\n\n"
       << "namespace " << app.ns << "::model {\n\n";
-    for (const auto& m : models) c << item_def(m, "");
+    for (const auto& m : models) c << item_def(m, "", app.ns, "model::");
     c << "}  // namespace " << app.ns << "::model\n";
     return {{"generated/Models.hpp", h.str()}, {"generated/Models.cpp", c.str()}};
 }
@@ -1038,7 +1135,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << "#include <" << rootw->header << ">\n"
       << (f.actions.empty() ? "" : "#include <giomm/simpleactiongroup.h>\n")
       << (f.files.empty() ? "" : "#include <giomm/cancellable.h>\n")
-      << (f.models.empty() ? "" : "#include <glibmm/object.h>\n#include <glibmm/refptr.h>\n#include <sigc++/signal.h>\n#include <cstdint>\n#include <set>\n#include <string>\n")
+      << (f.models.empty() ? "" : "#include <glibmm/object.h>\n#include <glibmm/refptr.h>\n#include <sigc++/signal.h>\n#include <cstdint>\n#include <map>\n#include <set>\n#include <string>\n")
       << (shared_used(f).empty() ? "" : "#include \"generated/Models.hpp\"\n")
       << "#include <sigc++/connection.h>\n"
       << (f.files.empty() ? "" : "#include <map>\n#include <memory>\n#include <string>\n")
@@ -1122,6 +1219,10 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
         if (!md) continue;
         h << "    // " << m->id << "'s rows: append " << model_item(*md) << "::create(...) here; the table follows\n"
           << "    Glib::RefPtr<Gio::ListStore<" << model_item(*md) << ">> m_" << m->id << "_store;\n"
+          << "    // s014 m2: add / remove a row UNDOABLY (Ctrl+Z puts a removed row back, in its place).\n"
+          << "    // Filling the store in your constructor isn't a user's edit: append to it directly.\n"
+          << "    bool add_" << m->id << "(const Glib::RefPtr<" << model_item(*md) << ">& item, int position = -1);\n"
+          << "    bool remove_" << m->id << "(const Glib::RefPtr<" << model_item(*md) << ">& item);\n"
           << "    Glib::RefPtr<Gtk::" << (view_selection(*m) == "multiple" ? "MultiSelection" :
                                         view_selection(*m) == "none" ? "NoSelection" : "SingleSelection")
           << "> m_" << m->id << "_selection;   // over the sorted rows\n\n";
@@ -1154,6 +1255,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << "#include \"generated/" << ui << ".hpp\"\n"
       << "#include \"generated/Hooks.hpp\"\n"
       << "#include \"generated/Style.hpp\"\n"
+      << "#include \"generated/Undo.hpp\"\n"
       << (remembers(f) ? "#include \"generated/WindowState.hpp\"\n" : "")
       << "#include \"Registry.hpp\"\n"
       << opens_includes(f)
@@ -1187,6 +1289,13 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << "    // teardown fires (a Stack changing page, a ListBox dropping its selection)\n"
       << "    // must not reach a hook -- a REQUIRED one is pure virtual here.\n"
       << "    for (auto& c : m_hooks) c.disconnect();\n"
+      << [&] {   // s014 m2: its lists leave the undo
+             std::string o;
+             for (auto* m : members)
+                 if (model_of(f, *m)) o += "    undo::unregister_list(" + cpp_string(f.name + "." + m->id) + ");\n";
+             return o;
+         }()
+
       << (list_views(f).empty() ? "" : "    *m_rows_alive = false;   // and the list rows' (they go with their views)\n")
       << (f.files.empty() ? "" :
           "    // A file dialog still up: drop the token (its answer is now ignored) and\n"
@@ -1196,14 +1305,27 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << "    registry::remove(this);\n"
       << "}\n\n"
       << state_functions(f, ui);
-    for (const auto& m : f.models) c << item_def(m, ui + "::");
+    for (const auto& m : f.models) c << item_def(m, ui + "::", app.ns, ui + "::");
     c << row_classes_source(f, ui);
     c << "void " << ui << "::build_ui() {\n";
     std::vector<std::string> lines;
     build_node(f, f.root, true, lines);
     for (const auto& l : lines) c << (l.empty() ? "" : "    " + l) << "\n";
-    c << "}\n\n"
-      << "void " << ui << "::bind_hooks() {\n"
+    c << "}\n\n";
+    for (auto* m : members) {   // s014 m2
+        const ModelDef* md = model_of(f, *m);
+        if (!md) continue;
+        const std::string it = model_item(*md), key = f.name + "." + m->id;
+        c << "bool " << ui << "::add_" << m->id << "(const Glib::RefPtr<" << it << ">& item, int position) {\n"
+          << "    return item && undo::add(" << cpp_string(key) << ", " << it << "::undo_type(), item->id(), position, "
+          << cpp_string("Add " + md->name) << ");\n"
+          << "}\n\n"
+          << "bool " << ui << "::remove_" << m->id << "(const Glib::RefPtr<" << it << ">& item) {\n"
+          << "    return item && undo::remove(" << cpp_string(key) << ", " << it << "::undo_type(), item->id(), "
+          << cpp_string("Delete " + md->name) << ");\n"
+          << "}\n\n";
+    }
+    c << "void " << ui << "::bind_hooks() {\n"
       << (remembers(f) ? "    // s008: leaving the screen saves where it was left. UNMAP, not hide: in GTK 4\n"
                          "    // a closed window that doesn't hide-on-close is destroyed without a hide,\n"
                          "    // but hiding and destroying both unmap it.\n"
@@ -1267,7 +1389,12 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
             const std::string gio = gio_action_name(a.name);
             c << "    {\n"
               << "        auto a = Gio::SimpleAction::create(" << cpp_string(gio) << ");\n";
-            if (a.opens.empty())
+            if (!a.does.empty())   // s014: the app's undo journal; greyed when there's nothing to do
+                c << "        // " << a.does << ": the app's journal (generated/Undo) -- greyed while there's nothing to " << a.does << ".\n"
+                  << "        m_hooks.push_back(a->signal_activate().connect([](const Glib::VariantBase&) { undo::" << a.does << "(); }));\n"
+                  << "        a->set_enabled(undo::can_" << a.does << "());\n"
+                  << "        m_hooks.push_back(undo::on_change([a] { a->set_enabled(undo::can_" << a.does << "()); }));\n";
+            else if (a.opens.empty())
                 c << "        m_hooks.push_back(a->signal_activate().connect(\n"
                   << "            [this](const Glib::VariantBase&) { " << action_hook(a) << "(); }));\n";
             else
@@ -1516,6 +1643,325 @@ void save() {
 // loaded once, by whichever window is built first, above the theme. (Every
 // form calls ensure(), so an app made before s009 gets it on regenerate -- its
 // App.cpp is the user's and isn't written again.)
+// s014 -- the app's undo: one journal over every generated item (by type and
+// id, its fields as text), the write-backs' one door, the lists re-bound on
+// undo / redo. Needs include/core/Undo.hpp (the journal) -- a new app has it;
+// generate_project writes it into an older one.
+const char* const kUndoHpp = R"UN(// @MARK@ -- DO NOT EDIT.
+// The app's undo: ONE journal for every item a user edits (a table cell, a
+// row's check, a switch, a number, a text box), Ctrl+Z / Ctrl+Shift+Z.
+//
+// A step is two pictures (docs/undo.md): each item it touched, as its fields
+// were BEFORE and AFTER, by id -- "MainWindowUi::NoteItem#12" -> the fields as
+// text. Undo puts BEFORE back, redo AFTER, and every list showing that item
+// re-binds its row. Nothing to write per edit: the generated write-backs go
+// through edit() -- the one door.
+//
+// Your own edits join in the same way:
+//     ui::undo::edit(item, "Mark done", [&] { item->done = true; });
+// (item is any generated XItem; the label is what Undo will say.)
+#pragma once
+#include "core/Undo.hpp"
+
+#include <glibmm/object.h>
+#include <sigc++/connection.h>
+#include <glibmm/refptr.h>
+
+#include <cstdint>
+#include <functional>
+#include <optional>
+#include <string>
+
+namespace @NS@::ui::undo {
+
+// The records the journal holds: an item by "<type>#<id>", its fields as text.
+struct Records {
+    using Id    = std::string;
+    using Value = std::string;
+    std::optional<Value> get(const Id& id) const;
+    void put(const Id& id, const std::optional<Value>& v);
+};
+using Journal = ::@NS@::core::Journal<Records>;
+Journal& journal();
+
+// How a type's items are found, read, written and announced (each generated
+// item class registers itself the first time one is made).
+struct Type {
+    std::function<Glib::RefPtr<Glib::ObjectBase>(std::uint64_t)> find;     // the live item, or null
+    std::function<std::string(const Glib::RefPtr<Glib::ObjectBase>&)> read;
+    std::function<void(const Glib::RefPtr<Glib::ObjectBase>&, const std::string&)> write;
+    std::function<void(const Glib::RefPtr<Glib::ObjectBase>&)> changed;   // emits its signal_changed()
+    // m2: make it again (an undone delete): that id, those fields.
+    std::function<Glib::RefPtr<Glib::ObjectBase>(std::uint64_t, const std::string&)> make;
+};
+void register_type(const std::string& type, Type t);
+
+// m2 -- a LIST rows can be added to / removed from undoably: a view's store,
+// by name ("MainWindow.tasks"). The generated forms register theirs and drop
+// them going; a step whose list is gone does nothing.
+struct List {
+    std::function<int(const Glib::RefPtr<Glib::ObjectBase>&)> index_of;   // -1: not in it
+    std::function<void(guint, const Glib::RefPtr<Glib::ObjectBase>&)> insert;
+    std::function<void(guint)> remove;
+    std::function<guint()> size;
+};
+void register_list(const std::string& name, List l);
+void unregister_list(const std::string& name);
+
+// A row added to / removed from a list, as one step. A removed row comes back
+// on undo -- the same item (same id, same fields), in the same place.
+bool add(const std::string& list, const std::string& type, std::uint64_t id, int position, const std::string& label);
+bool remove(const std::string& list, const std::string& type, std::uint64_t id, const std::string& label);
+
+// A row / a cell FOLLOWS the item it shows: `w` keeps `c` (a connection to the
+// item's signal_changed) until it's bound to another item, or goes. GTK keeps a
+// row as it is when the same item comes back from the list -- so the item
+// itself says it changed, and what shows it re-shows it. (found s014: the list
+// was told, the row wasn't re-bound.)
+void follow(Glib::ObjectBase& w, sigc::connection c);
+
+// THE DOOR: run `change` on the item as one step labelled `label`. Steps with
+// the same non-empty `merge` key close together fold into one (typing).
+// `rebind`: re-bind the rows showing it afterwards (your code's edits want it;
+// a widget writing back what the user just typed doesn't -- it already shows it).
+bool edit(const std::string& type, std::uint64_t id, const std::string& label,
+          const std::function<void()>& change, const std::string& merge = {}, bool rebind = true);
+template <class Item>
+bool edit(const Glib::RefPtr<Item>& item, const std::string& label, const std::function<void()>& change,
+          const std::string& merge = {}, bool rebind = true) {
+    return item && edit(Item::undo_type(), item->id(), label, change, merge, rebind);
+}
+
+// Re-show every row / cell showing this item (you changed it outside edit()).
+template <class Item>
+void refresh(const Glib::RefPtr<Item>& item) { if (item) item->signal_changed().emit(); }
+
+bool undo();
+bool redo();
+bool can_undo();
+bool can_redo();
+std::string undo_label();   // "Edit “title”" -- what the step did
+std::string redo_label();
+// Called after every change to the journal (an edit kept, undone, redone):
+// re-label / grey your Undo and Redo here. The generated undo / redo actions do.
+sigc::connection on_change(const std::function<void()>& f);
+
+// The fields as text -- what snapshot() / restore() of a generated item use.
+// Length-prefixed, so any text (commas, newlines, quotes) round-trips.
+struct Writer {
+    std::string out;
+    void str(const std::string& s);
+    void num(std::int64_t v) { str(std::to_string(v)); }
+    void dbl(double v);
+    void flag(bool v) { str(v ? "1" : "0"); }
+};
+struct Reader {
+    explicit Reader(const std::string& s) : in(s) {}
+    std::string str();
+    std::int64_t num();
+    double dbl();
+    bool flag() { return str() == "1"; }
+    const std::string& in;
+    std::size_t at = 0;
+};
+
+}  // namespace @NS@::ui::undo
+)UN";
+const char* const kUndoCpp = R"UN(// @MARK@ -- DO NOT EDIT.
+#include "generated/Undo.hpp"
+#include "Log.hpp"
+
+#include <glib-object.h>
+#include <sigc++/signal.h>
+
+#include <charconv>
+#include <cstdio>
+#include <map>
+#include <vector>
+
+namespace @NS@::ui::undo {
+
+namespace {
+std::map<std::string, Type>& types() { static std::map<std::string, Type> t; return t; }
+std::map<std::string, List>& lists() { static std::map<std::string, List> l; return l; }
+sigc::signal<void()>& changed() { static sigc::signal<void()> s; return s; }
+Records& records() { static Records r; return r; }
+
+// "MainWindowUi::NoteItem#12" -> the type's entry and 12.
+const Type* split(const std::string& id, std::uint64_t& n) {
+    const auto hash = id.rfind('#');
+    if (hash == std::string::npos) return nullptr;
+    const auto it = types().find(id.substr(0, hash));
+    if (it == types().end()) return nullptr;
+    const std::string digits = id.substr(hash + 1);
+    if (std::from_chars(digits.data(), digits.data() + digits.size(), n).ec != std::errc{}) return nullptr;
+    return &it->second;
+}
+}  // namespace
+
+Journal& journal() {
+    static Journal j = [] {
+        Journal jj(records());
+        jj.set_on_change([] { changed().emit(); });
+        return jj;
+    }();
+    return j;
+}
+
+void register_type(const std::string& type, Type t) { types()[type] = std::move(t); }
+
+// m2: "MainWindow.tasks|model::TaskItem#7" -- a row's place in a list.
+// Present = (its position, its fields); absent = not in the list.
+std::optional<std::string> row_get(const std::string& list, const std::string& item) {
+    std::uint64_t n = 0;
+    const Type* t = split(item, n);
+    const auto l = lists().find(list);
+    if (!t || l == lists().end()) return std::nullopt;
+    const auto it = t->find(n);
+    if (!it) return std::nullopt;
+    const int at = l->second.index_of(it);
+    if (at < 0) return std::nullopt;
+    Writer w;
+    w.num(at);
+    w.str(t->read(it));
+    return w.out;
+}
+
+void row_put(const std::string& list, const std::string& item, const std::optional<std::string>& v) {
+    std::uint64_t n = 0;
+    const Type* t = split(item, n);
+    const auto l = lists().find(list);
+    if (!t || l == lists().end()) return;   // that window is gone: nothing to put back into
+    auto it = t->find(n);
+    if (!v) {   // out of the list
+        if (!it) return;
+        const int at = l->second.index_of(it);
+        if (at >= 0) l->second.remove(static_cast<guint>(at));
+        return;
+    }
+    Reader r(*v);
+    const auto at = r.num();
+    const std::string fields = r.str();
+    if (!it) it = t->make(n, fields);   // an undone delete: the same item again
+    else t->write(it, fields);
+    if (!it || l->second.index_of(it) >= 0) return;
+    const guint size = l->second.size();
+    l->second.insert(at < 0 || static_cast<guint>(at) > size ? size : static_cast<guint>(at), it);
+}
+
+std::optional<std::string> Records::get(const Id& id) const {
+    if (const auto bar = id.find('|'); bar != std::string::npos) return row_get(id.substr(0, bar), id.substr(bar + 1));
+    std::uint64_t n = 0;
+    const Type* t = split(id, n);
+    if (!t) return std::nullopt;
+    const auto item = t->find(n);
+    if (!item) return std::nullopt;
+    return t->read(item);
+}
+
+void Records::put(const Id& id, const std::optional<Value>& v) {
+    if (const auto bar = id.find('|'); bar != std::string::npos) { row_put(id.substr(0, bar), id.substr(bar + 1), v); return; }
+    std::uint64_t n = 0;
+    const Type* t = split(id, n);
+    if (!t || !v) return;   // an item that's gone stays gone (creating / deleting rows is your code's)
+    const auto item = t->find(n);
+    if (!item) return;
+    t->write(item, *v);
+    t->changed(item);   // what shows it re-shows it
+}
+
+void register_list(const std::string& name, List l) { lists()[name] = std::move(l); }
+void unregister_list(const std::string& name) { lists().erase(name); }
+
+bool add(const std::string& list, const std::string& type, std::uint64_t id, int position, const std::string& label) {
+    const std::string rec = list + "|" + type + "#" + std::to_string(id);
+    std::uint64_t n = 0;
+    const Type* t = split(type + "#" + std::to_string(id), n);
+    const auto l = lists().find(list);
+    if (!t || l == lists().end()) return false;
+    return journal().run(label, {rec}, [&] {
+        const auto it = t->find(n);
+        if (!it || l->second.index_of(it) >= 0) return;
+        const guint size = l->second.size();
+        l->second.insert(position < 0 || static_cast<guint>(position) > size ? size : static_cast<guint>(position), it);
+    });
+}
+
+bool remove(const std::string& list, const std::string& type, std::uint64_t id, const std::string& label) {
+    const std::string rec = list + "|" + type + "#" + std::to_string(id);
+    if (!row_get(list, type + "#" + std::to_string(id))) return false;   // not in it: not a step
+    return journal().run(label, {rec}, [&] { row_put(list, type + "#" + std::to_string(id), std::nullopt); });
+}
+
+void follow(Glib::ObjectBase& w, sigc::connection c) {
+    // Held on the widget itself: replaced by the next follow(), cut when it goes.
+    g_object_set_data_full(w.gobj(), "mortimer-follow", new sigc::connection(c), [](gpointer p) {
+        auto* x = static_cast<sigc::connection*>(p);
+        x->disconnect();
+        delete x;
+    });
+}
+
+bool edit(const std::string& type, std::uint64_t id, const std::string& label,
+          const std::function<void()>& change, const std::string& merge, bool rebind) {
+    const bool kept = journal().run(label, {type + "#" + std::to_string(id)}, [&] { change(); }, merge);
+    if (kept && rebind)
+        if (const auto it = types().find(type); it != types().end())
+            if (const auto item = it->second.find(id)) it->second.changed(item);
+    return kept;
+}
+
+bool undo() {
+    if (!journal().can_undo()) return false;
+    const auto what = journal().undo_label();
+    journal().undo();
+    if (auto lg = log::get(log::Area::Ui)) lg->info("undo: {}", what);
+    return true;
+}
+bool redo() {
+    if (!journal().can_redo()) return false;
+    const auto what = journal().redo_label();
+    journal().redo();
+    if (auto lg = log::get(log::Area::Ui)) lg->info("redo: {}", what);
+    return true;
+}
+bool can_undo() { return journal().can_undo(); }
+bool can_redo() { return journal().can_redo(); }
+std::string undo_label() { return journal().undo_label(); }
+std::string redo_label() { return journal().redo_label(); }
+sigc::connection on_change(const std::function<void()>& f) { return changed().connect(f); }
+
+void Writer::str(const std::string& s) { out += std::to_string(s.size()) + ":" + s; }
+void Writer::dbl(double v) {
+    char buf[64];
+    const auto r = std::to_chars(buf, buf + sizeof buf, v);   // shortest that reads back the same
+    str(std::string(buf, r.ptr));
+}
+std::string Reader::str() {
+    const auto colon = in.find(':', at);
+    if (colon == std::string::npos) return {};
+    std::size_t len = 0;
+    std::from_chars(in.data() + at, in.data() + colon, len);
+    const std::string s = in.substr(colon + 1, len);
+    at = colon + 1 + len;
+    return s;
+}
+std::int64_t Reader::num() {
+    const std::string s = str();
+    std::int64_t v = 0;
+    std::from_chars(s.data(), s.data() + s.size(), v);
+    return v;
+}
+double Reader::dbl() {
+    const std::string s = str();
+    double v = 0;
+    std::from_chars(s.data(), s.data() + s.size(), v);
+    return v;
+}
+
+}  // namespace @NS@::ui::undo
+)UN";
+
 const char* const kStyleHpp = R"ST(// @MARK@ -- DO NOT EDIT.
 // resources/@BIN@.css, bundled: every window's constructor calls ensure(); the
 // first one loads it (if the bundle has it -- the navigator's + ▸ Stylesheet).
@@ -1750,6 +2196,8 @@ std::vector<OutFile> generate_support(const AppInfo& app) {
             {"generated/WindowState.cpp", fill(kWindowStateCpp)},
             {"generated/Style.hpp", fill(kStyleHpp)},
             {"generated/Style.cpp", fill(kStyleCpp)},
+            {"generated/Undo.hpp", fill(kUndoHpp)},
+            {"generated/Undo.cpp", fill(kUndoCpp)},
             {"generated/README.md", rd.str()}};
 }
 

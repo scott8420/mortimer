@@ -64,6 +64,7 @@ struct ActionDef {
     bool        required = false;// the hook is pure virtual
     std::string title;           // s010: the shortcuts window's row; "" = derived
     std::string opens;           // s010: a form stem or "@shortcuts"; "" = a hook
+    std::string does;            // s014: "undo" | "redo" -- the app's undo journal; "" = a hook (or opens)
     bool operator==(const ActionDef&) const = default;
 };
 // s010 -- the shortcuts window's name as an `opens` target.

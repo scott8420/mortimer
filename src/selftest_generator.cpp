@@ -993,7 +993,8 @@ class X : public ui::XUi {
               has(c, "m_t_n.set_label(std::to_string(item->n));") && has(c, "m_t_done.set_active(item->done);"), "");
         check("s011 m2 codegen: a bound check writes back (only when it differs), then edited",
               has(c, "m_t_done.signal_toggled().connect([this] {") &&
-              has(c, "if (m_item->done != m_t_done.get_active()) {") && has(c, "m_item->done = m_t_done.get_active();") &&
+              has(c, "if (m_item->done != m_t_done.get_active()) {") &&
+              has(c, "undo::edit(m_item, \"Edit \u201CDone\u201D\", [&] { m_item->done = now; }, {}, false);") &&
               !has(c, "set_can_target(false)"), "");
         check("s011 codegen: store, selection (no sorter), factory setup + bind",
               has(c, "m_task_list_store = Gio::ListStore<TaskItem>::create();") &&
@@ -1035,7 +1036,7 @@ class X : public ui::XUi {
               has(c2, "m_t_en.set_editable(false);   // shows n (an int); not written back"), "");
         check("s011 m2 codegen: bind() isn't the user; unbind lets go; the token dies first",
               has(c2, "    m_binding = true;") && has(c2, "    m_binding = false;") &&
-              has(c2, "::unbind() { m_item.reset(); }") && has(c2, "*m_rows_alive = false;") &&
+              has(c2, "::unbind() {\n    undo::follow(*this, {});") && has(c2, "*m_rows_alive = false;") &&
               has(h2, "std::shared_ptr<bool> m_rows_alive = std::make_shared<bool>(true);"), "");
         { auto u = core::user_stubs(g, app);
           check("s011 m2 stubs: your half overrides the row hook", has(u[0].content, "void on_t_del_clicked(const Glib::RefPtr<TaskItem>& item) override;"), ""); }
@@ -1197,5 +1198,81 @@ class X : public ui::XUi {
                   !fs::exists(ad / "generated" / "Models.hpp") && !g2.ok(), "");
         }
         fs::remove_all(tmp);
+    }
+
+    // ── s014: the app's journal is Mortimer's, word for word ───────────────
+    {
+        std::string tmpl;
+        for (const auto& t : core::project_templates())
+            if (std::string(t.path) == "@BIN@/include/core/Undo.hpp") tmpl = t.content;
+        std::string mine = slurp(fs::path(MORTIMER_SOURCE_DIR) / "include" / "core" / "Undo.hpp");
+        for (std::size_t at = 0; (at = mine.find("namespace mortimer::core", at)) != std::string::npos;)
+            mine.replace(at, 24, "namespace @NS@::core");
+        check("s014 template: include/core/Undo.hpp is Mortimer's journal (namespace aside)",
+              !tmpl.empty() && tmpl == mine, tmpl.empty() ? "missing" : "differs");
+        const auto sup = core::generate_support(core::derive_app("Undoer"));
+        std::string uh, uc;
+        for (const auto& o : sup) { if (o.path == "generated/Undo.hpp") uh = o.content; if (o.path == "generated/Undo.cpp") uc = o.content; }
+        check("s014 support: generated/Undo -- the journal over items, the door, follow",
+              has(uh, "using Journal = ::undoer::core::Journal<Records>;") &&
+              has(uh, "bool edit(const std::string& type, std::uint64_t id") &&
+              has(uh, "void follow(Glib::ObjectBase& w, sigc::connection c);") &&
+              has(uc, "t->changed(item);") && !has(uh, "@NS@"), "");
+        core::ModelDef m{"Note", {{"title", "string", ""}, {"n", "int", ""}, {"w", "double", ""}, {"done", "bool", ""}}};
+        core::Form f;
+        f.name = "MainWindow";
+        f.models = {m};
+        f.root = {"Window", "main_window", {}, {}, {}, {}};
+        const auto o = core::generate_form(f, core::derive_app("Undoer"));
+        check("s014 items: find / snapshot / restore / undo_type / signal_changed, and they register",
+              has(o[0].content, "static Glib::RefPtr<NoteItem> find(std::uint64_t id);") &&
+              has(o[0].content, "sigc::signal<void()>& signal_changed() { return m_changed; }") &&
+              has(o[1].content, "::undoer::ui::undo::register_type(undo_type(), {") &&
+              has(o[1].content, "out_.str(title);") && has(o[1].content, "out_.num(n);") &&
+              has(o[1].content, "out_.dbl(w);") && has(o[1].content, "done = in_.flag();"), "");
+        check("s014 items: the undo type names the class where it lives",
+              has(o[1].content, "return \"MainWindowUi::NoteItem\";"), "");
+        core::Form a;
+        a.name = "X";
+        a.root = {"Window", "x", {}, {}, {}, {}};
+        a.actions = {{"undo", "<Control>z", false, "", "", "undo"}, {"bad", "", false, "", "", "frob"}};
+        bool frob = false, hook = false;
+        for (const auto& i : core::validate(a)) frob = frob || (i.error && has(i.what, "does \"frob\""));
+        for (const auto& k : core::hooks_of(a)) hook = hook || k.name == "on_action_undo";
+        check("s014 actions: does undo has no hook; an unknown does is refused", frob && !hook, "");
+        a.actions.pop_back();
+        const auto ao = core::generate_form(a, core::derive_app("Undoer"));
+        check("s014 actions: undo runs the journal, greyed while there's nothing",
+              has(ao[1].content, "undo::undo(); }));") && has(ao[1].content, "a->set_enabled(undo::can_undo());"), "");
+        check("s014 starter: Undo / Redo keys and menu rows",
+              has(core::form_to_json(core::starter_form(core::derive_app("Undoer"))), "\"does\": \"undo\"") &&
+              has(core::form_to_json(core::starter_form(core::derive_app("Undoer"))), "Undo=win.undo"), "");
+    }
+
+    // ── s014 m2: rows added / removed undoably ─────────────────────────────
+    {
+        using core::Value;
+        core::Form f;
+        f.name = "MainWindow";
+        f.models = {{"Note", {{"title", "string", ""}, {"done", "bool", ""}}}};
+        core::Node lbl{"Label", "r_t", {{"bind", Value(std::string("title"))}}, {}, {}, {}};
+        core::Node row{"Box", "r", {}, {}, {}, {lbl}};
+        core::Node lv{"ListView", "notes", {{"model", Value(std::string("Note"))}}, {}, {}, {row}};
+        f.root = {"Window", "main_window", {}, {}, {}, {lv}};
+        const auto o = core::generate_form(f, core::derive_app("Rows"));
+        check("s014 m2: add_<view> / remove_<view> declared, through the undo",
+              has(o[0].content, "bool add_notes(const Glib::RefPtr<NoteItem>& item, int position = -1);") &&
+              has(o[0].content, "bool remove_notes(const Glib::RefPtr<NoteItem>& item);") &&
+              has(o[1].content, "undo::remove(\"MainWindow.notes\", NoteItem::undo_type(), item->id(), \"Delete Note\")"), "");
+        check("s014 m2: the store is registered by name, and dropped going",
+              has(o[1].content, "undo::register_list(\"MainWindow.notes\", {") &&
+              has(o[1].content, "undo::unregister_list(\"MainWindow.notes\");"), "");
+        check("s014 m2: an item can be made again (an undone delete): that id, those fields",
+              has(o[1].content, "auto x = create({}, {}, n);") && has(o[1].content, "if (x) x->restore(s);"), "");
+        std::string uc;
+        for (const auto& x : core::generate_support(core::derive_app("Rows"))) if (x.path == "generated/Undo.cpp") uc = x.content;
+        check("s014 m2 runtime: a row record is (position, fields); absent = out of the list; made again on undo",
+              has(uc, "row_get(") && has(uc, "if (!it) it = t->make(n, fields);   // an undone delete") &&
+              has(uc, "if (!row_get(list, type + \"#\" + std::to_string(id))) return false;   // not in it: not a step"), "");
     }
 }
