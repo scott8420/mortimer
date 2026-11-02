@@ -74,12 +74,39 @@ struct FileDef {
     bool operator==(const FileDef&) const = default;
 };
 
+// s006 -- a MODEL: the row type of a list. "Note" becomes <Form>Ui::NoteItem,
+// a Glib::Object with one plain C++ member per field and an id(): automatic
+// (a counter) or yours (a database key) -- unique per type, a taken one refused.
+// A ColumnView names a model ("model": "Note") and shows a column per field.
+struct FieldDef {
+    std::string name;              // C++ member: "title"
+    std::string type = "string";   // string | int | double | bool
+    std::string title;             // the column header; "" = from the name ("due_date" -> "Due date")
+    bool operator==(const FieldDef&) const = default;
+};
+struct ModelDef {
+    std::string           name;    // "Note" -> NoteItem
+    std::vector<FieldDef> fields;
+    bool operator==(const ModelDef&) const = default;
+};
+
 struct Form {
     std::string name;   // the class stem: "MainWindow" -> MainWindowUi + MainWindow
     Node        root;
     std::vector<ActionDef> actions;   // s003: on disk only when there are any
     std::vector<FileDef>   files;     // s005: on disk only when there are any
+    std::vector<ModelDef>  models;    // s006: on disk only when there are any
 };
+
+// s006 -- models.
+inline const StringList& field_types() {
+    static const StringList t{"string", "int", "double", "bool"};
+    return t;
+}
+std::string model_item(const ModelDef& m);           // "Note" -> "NoteItem"
+std::string field_cpp_type(const std::string& t);    // string -> std::string, int -> std::int64_t ...
+std::string field_title(const FieldDef& f);          // the header shown
+const ModelDef* find_model(const Form& f, const std::string& name);
 
 // s005 -- file dialogs.
 inline const StringList& file_modes() {

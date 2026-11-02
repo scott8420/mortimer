@@ -166,6 +166,22 @@ Form form_from_json(const std::string& text) {
             f.files.push_back(std::move(d));
         }
     }
+    if (j.contains("models")) {
+        if (!j["models"].is_array()) throw std::runtime_error("models must be a list");
+        for (const auto& x : j["models"]) {
+            if (!x.is_object()) throw std::runtime_error("a model is {\"name\": ..., \"fields\": [...]}");
+            ModelDef m;
+            m.name = x.value("name", "");
+            if (x.contains("fields")) {
+                if (!x["fields"].is_array()) throw std::runtime_error("a model's fields must be a list");
+                for (const auto& y : x["fields"]) {
+                    if (!y.is_object()) throw std::runtime_error("a field is {\"name\": ..., \"type\": ...}");
+                    m.fields.push_back({y.value("name", ""), y.value("type", "string"), y.value("title", "")});
+                }
+            }
+            f.models.push_back(std::move(m));
+        }
+    }
     return f;
 }
 
@@ -199,6 +215,24 @@ std::string form_to_json(const Form& f) {
             a.push_back(o);
         }
         j["files"] = a;
+    }
+    if (!f.models.empty()) {
+        json a = json::array();
+        for (const auto& m : f.models) {
+            json o;
+            o["name"] = m.name;
+            json fs = json::array();
+            for (const auto& x : m.fields) {
+                json y;
+                y["name"] = x.name;
+                y["type"] = x.type;
+                if (!x.title.empty()) y["title"] = x.title;
+                fs.push_back(y);
+            }
+            o["fields"] = fs;
+            a.push_back(o);
+        }
+        j["models"] = a;
     }
     return j.dump(2) + "\n";
 }
@@ -274,6 +308,28 @@ std::string action_hook(const ActionDef& a) { return "on_action_" + a.name; }
 std::string file_chosen_hook(const FileDef& f) { return "on_" + f.name + "_chosen"; }
 std::string file_cancelled_hook(const FileDef& f) { return "on_" + f.name + "_cancelled"; }
 std::string file_chooser(const FileDef& f) { return "choose_" + f.name; }
+
+std::string model_item(const ModelDef& m) { return m.name + "Item"; }
+
+std::string field_cpp_type(const std::string& t) {
+    if (t == "int") return "std::int64_t";
+    if (t == "double") return "double";
+    if (t == "bool") return "bool";
+    return "std::string";
+}
+
+std::string field_title(const FieldDef& f) {
+    if (!f.title.empty()) return f.title;
+    std::string t = f.name;
+    for (auto& c : t) if (c == '_') c = ' ';
+    if (!t.empty() && t[0] >= 'a' && t[0] <= 'z') t[0] = static_cast<char>(t[0] - 'a' + 'A');
+    return t;
+}
+
+const ModelDef* find_model(const Form& f, const std::string& name) {
+    for (const auto& m : f.models) if (m.name == name) return &m;
+    return nullptr;
+}
 
 FileFilterRow parse_file_filter(const std::string& s) {
     FileFilterRow r;
@@ -376,6 +432,36 @@ std::vector<Issue> validate(const Form& f) {
         if (d.mode == "folder" && !d.filters.empty())
             warn(where, "a folder dialog shows folders only -- its filters are ignored");
     }
+    // s006: models -- a class name each, fields that are C++ members.
+    std::set<std::string> models;
+    for (const auto& m : f.models) {
+        const std::string where = "model " + (m.name.empty() ? std::string("?") : m.name);
+        if (!is_identifier(m.name) || is_cpp_keyword(m.name)) {
+            err(where, "a model's name must be a C++ class name (Note, Patient)");
+            continue;
+        }
+        if (!(m.name[0] >= 'A' && m.name[0] <= 'Z'))
+            warn(where, "\"" + m.name + "\" -- class names start with a capital by convention");
+        if (!models.insert(m.name).second) err(where, "model \"" + m.name + "\" is declared twice");
+        if (model_item(m) == f.name + "Ui" || model_item(m) == f.name)
+            err(where, "its class " + model_item(m) + " would be the form's own name");
+        if (m.fields.empty()) err(where, "a model needs at least one field (a column to show)");
+        std::set<std::string> fields;
+        // The item's own names: id(), create(), id_taken(), and its private helpers.
+        static const std::set<std::string> taken{"id", "create", "id_taken", "ids", "next"};
+        for (const auto& x : m.fields) {
+            const std::string fw = where + "." + (x.name.empty() ? std::string("?") : x.name);
+            if (!is_identifier(x.name) || is_cpp_keyword(x.name))
+                err(fw, "a field's name must be a C++ identifier (title, due_date)");
+            else if (taken.count(x.name))
+                err(fw, "\"" + x.name + "\" is taken -- every item already has " +
+                            (x.name == "id" ? "an id() (automatic, or yours via create)" : "a " + x.name));
+            else if (!fields.insert(x.name).second)
+                err(fw, "field \"" + x.name + "\" is declared twice");
+            if (std::find(field_types().begin(), field_types().end(), x.type) == field_types().end())
+                err(fw, "type \"" + x.type + "\" -- a field is string, int, double or bool");
+        }
+    }
     walk(f.root, [&](const Node& n, const Node*) {
         // The generated class's own members: m_hooks, m_actions, m_files, m_alive.
         static const std::set<std::string> taken{"hooks", "actions", "files", "alive"};
@@ -430,7 +516,11 @@ std::vector<Issue> validate(const Form& f) {
                 }
                 if (!ok) err(where, "\"" + key + "\" is one of: " + choices);
             }
-            if (p->kind == PropKind::Ref) {
+            if (p->kind == PropKind::Ref && p->ref_type == "@model") {   // s006: one of the form's models
+                const auto& s = std::get<std::string>(v);
+                if (!find_model(f, s))
+                    err(where, "\"" + key + "\" names model \"" + s + "\" -- the form has no such model (add it to the form's models)");
+            } else if (p->kind == PropKind::Ref) {
                 const auto& s = std::get<std::string>(v);
                 auto it = ids.find(s);
                 if (it == ids.end())
@@ -441,6 +531,17 @@ std::vector<Issue> validate(const Form& f) {
                 else if (it->second == &f.root)
                     err(where, "\"" + key + "\" cannot point at the window itself");
             }
+        }
+
+        // s006: a ColumnView shows a model; its store and selection are members.
+        if (n.type == "ColumnView") {
+            if (!n.props.count("model")) {
+                if (!n.signals.empty()) err(where, "its hooks hand you a row of its model -- pick a model first");
+                else warn(where, "shows nothing until it has a model");
+            }
+            for (const char* m : {"_store", "_selection"})
+                if (ids.count(n.id + m))
+                    err(where, "the generated class has m_" + n.id + m + " -- widget \"" + n.id + m + "\" collides");
         }
 
         // signals

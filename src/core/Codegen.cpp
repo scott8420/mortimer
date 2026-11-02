@@ -61,6 +61,7 @@ std::string replace(std::string s, const std::string& from, const std::string& t
 // a `{menu}` setter builds a Gio::Menu from "Label=action" rows (s003).
 std::vector<std::string> setter_lines(const PropSpec& p, const Value& v, const std::string& obj) {
     std::vector<std::string> out;
+    if (p.setter == "{model}") return out;   // s006: the model block does it (model_lines)
     if (p.kind == PropKind::StringList && p.setter.find("{menu}") != std::string::npos) {
         out.push_back("{");
         out.push_back("    auto menu = Gio::Menu::create();");
@@ -179,15 +180,88 @@ std::vector<std::string> pack_lines(const WidgetSpec& pw, const std::string& pob
     return out;
 }
 
-void build_node(const Node& n, bool is_root, std::vector<std::string>& lines) {
+// s006 -- a ColumnView's model: the store (yours to fill), sorted by the
+// clicked header, a single selection; then a column per field, each with a
+// factory (setup makes the cell widget once, bind fills it per row) and a
+// sorter (a string or a number read from the row).
+const ModelDef* model_of(const Form& f, const Node& n) {
+    const auto it = n.props.find("model");
+    return it != n.props.end() && std::holds_alternative<std::string>(it->second)
+               ? find_model(f, std::get<std::string>(it->second)) : nullptr;
+}
+
+std::vector<std::string> model_lines(const Form& f, const Node& n) {
+    std::vector<std::string> out;
+    const ModelDef* m = model_of(f, n);
+    if (!m) return out;
+    const std::string item = model_item(*m), v = "m_" + n.id, store = v + "_store", sel = v + "_selection";
+    out.push_back("// the model: " + item + " rows -- fill " + store + "; a header click sorts");
+    out.push_back(store + " = Gio::ListStore<" + item + ">::create();");
+    out.push_back(sel + " = Gtk::SingleSelection::create(Gtk::SortListModel::create(" + store + ", " + v + ".get_sorter()));");
+    out.push_back(sel + "->set_autoselect(false);");
+    out.push_back(sel + "->set_can_unselect(true);");
+    out.push_back(v + ".set_model(" + sel + ");");
+    for (const auto& x : m->fields) {
+        const bool check = x.type == "bool";
+        const std::string widget = check ? "Gtk::CheckButton" : "Gtk::Label";
+        std::string text = "item->" + x.name;
+        if (x.type == "int") text = "std::to_string(item->" + x.name + ")";
+        if (x.type == "double") text = "Glib::ustring::format(item->" + x.name + ")";
+        out.push_back("{   // column " + x.name + " (" + x.type + ")");
+        out.push_back("    auto factory = Gtk::SignalListItemFactory::create();");
+        out.push_back("    factory->signal_setup().connect([](const Glib::RefPtr<Gtk::ListItem>& cell) {");
+        if (check) {
+            out.push_back("        auto* w = Gtk::make_managed<Gtk::CheckButton>();");
+            out.push_back("        w->set_can_target(false);   // shows the value; read-only");
+            out.push_back("        w->set_focusable(false);");
+            out.push_back("        w->set_halign(Gtk::Align::CENTER);");
+        } else {
+            out.push_back("        auto* w = Gtk::make_managed<Gtk::Label>();");
+            out.push_back(std::string("        w->set_xalign(") + (x.type == "string" ? "0" : "1") + ");");
+        }
+        out.push_back("        cell->set_child(*w);");
+        out.push_back("    });");
+        out.push_back("    factory->signal_bind().connect([](const Glib::RefPtr<Gtk::ListItem>& cell) {");
+        out.push_back("        auto item = std::dynamic_pointer_cast<" + item + ">(cell->get_item());");
+        out.push_back("        if (auto* w = dynamic_cast<" + widget + "*>(cell->get_child()); item && w)");
+        out.push_back(check ? "            w->set_active(item->" + x.name + ");"
+                            : "            w->set_text(" + text + ");");
+        out.push_back("    });");
+        out.push_back("    auto column = Gtk::ColumnViewColumn::create(" + cpp_string(field_title(x)) + ", factory);");
+        out.push_back("    column->set_resizable(true);");
+        if (x.type == "string") out.push_back("    column->set_expand(true);");
+        if (x.type == "string")
+            out.push_back("    column->set_sorter(Gtk::StringSorter::create(Gtk::ClosureExpression<Glib::ustring>::create(\n"
+                          "        [](const Glib::RefPtr<Glib::ObjectBase>& o) {\n"
+                          "            auto item = std::dynamic_pointer_cast<" + item + ">(o);\n"
+                          "            return item ? Glib::ustring(item->" + x.name + ") : Glib::ustring();\n"
+                          "        })));");
+        else
+            out.push_back("    column->set_sorter(Gtk::NumericSorter<double>::create(Gtk::ClosureExpression<double>::create(\n"
+                          "        [](const Glib::RefPtr<Glib::ObjectBase>& o) {\n"
+                          "            auto item = std::dynamic_pointer_cast<" + item + ">(o);\n"
+                          "            return item ? static_cast<double>(item->" + x.name + ") : 0.0;\n"
+                          "        })));");
+        out.push_back("    " + v + ".append_column(column);");
+        out.push_back("}");
+    }
+    return out;
+}
+
+void build_node(const Form& f, const Node& n, bool is_root, std::vector<std::string>& lines) {
     const WidgetSpec* w = find_widget(n.type);
     const std::string obj = is_root ? "" : "m_" + n.id + ".";
     auto props = prop_lines(n, *w, obj);
     for (auto& l : props) lines.push_back(l);
+    for (auto& l : model_lines(f, n)) {   // a line may hold several (a sorter's lambda)
+        std::stringstream ss(l);
+        std::string one;
+        while (std::getline(ss, one)) lines.push_back(one);
+    }
     for (const auto& c : n.children) {
         lines.push_back("");
         lines.push_back("// " + c.id + " (" + c.type + ")");
-        build_node(c, false, lines);
+        build_node(f, c, false, lines);
         for (auto& l : pack_lines(*w, obj, c)) lines.push_back(l);
     }
 }
@@ -252,7 +326,14 @@ std::vector<Hook> hooks_of(const Form& f) {
         for (const auto& h : n.signals) {
             const SignalSpec* s = find_signal(*w, h.signal);
             if (!s) continue;
-            out.push_back({hook_name(n, h), s->ret, s->params, s->ret_default, n.id, n.type,
+            std::string params = s->params;
+            if (params == "{item}") {   // s006: a row of the widget's model
+                const auto it = n.props.find("model");
+                const std::string item = it != n.props.end() && std::holds_alternative<std::string>(it->second)
+                                             ? std::get<std::string>(it->second) + "Item" : "Glib::ObjectBase";
+                params = "const Glib::RefPtr<" + item + ">& item";
+            }
+            out.push_back({hook_name(n, h), s->ret, params, s->ret_default, n.id, n.type,
                            h.signal, h.required});
         }
     });
@@ -381,6 +462,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << "#include <" << rootw->header << ">\n"
       << (f.actions.empty() ? "" : "#include <giomm/simpleactiongroup.h>\n")
       << (f.files.empty() ? "" : "#include <giomm/cancellable.h>\n")
+      << (f.models.empty() ? "" : "#include <glibmm/object.h>\n#include <glibmm/refptr.h>\n#include <cstdint>\n#include <set>\n#include <string>\n")
       << "#include <sigc++/connection.h>\n"
       << (f.files.empty() ? "" : "#include <map>\n#include <memory>\n#include <string>\n")
       << "#include <vector>\n\n"
@@ -411,6 +493,37 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
         }
         h << "\n";
     }
+    if (!f.models.empty()) {
+        h << "    // ── models ── the row types. Item::create(fields...) gives each a fresh id();\n"
+          << "    // pass your own (a database key) as the last argument. Ids are unique per\n"
+          << "    // type: a taken one is refused -- create() returns null and logs an error.\n"
+          << "    // An id is free again when its item is destroyed. (Main thread only.)\n";
+        for (const auto& m : f.models) {
+            const std::string it = model_item(m);
+            std::string params;
+            for (const auto& x : m.fields)
+                params += (x.type == "string" ? "const std::string& " : field_cpp_type(x.type) + " ") + x.name +
+                          " = {}, ";
+            h << "    class " << it << " : public Glib::Object {\n"
+              << "    public:\n"
+              << "        static Glib::RefPtr<" << it << "> create(" << params << "std::uint64_t id = 0);\n"
+              << "        ~" << it << "() override { ids().erase(m_id); }\n"
+              << "        std::uint64_t id() const { return m_id; }\n"
+              << "        static bool id_taken(std::uint64_t id) { return ids().count(id) != 0; }\n\n";
+            std::size_t width = 0;
+            for (const auto& x : m.fields) width = std::max(width, field_cpp_type(x.type).size());
+            for (const auto& x : m.fields)
+                h << "        " << pad(field_cpp_type(x.type), width) << " " << x.name
+                  << (x.type == "string" ? "" : x.type == "bool" ? " = false" : " = 0") << ";\n";
+            h << "\n    protected:\n"
+              << "        " << it << "() = default;\n"
+              << "    private:\n"
+              << "        std::uint64_t m_id = 0;\n"
+              << "        static std::set<std::uint64_t>& ids() { static std::set<std::uint64_t> s; return s; }\n"
+              << "        static std::uint64_t& next() { static std::uint64_t n = 1; return n; }\n"
+              << "    };\n\n";
+        }
+    }
     h << "protected:\n";
     if (hooks.empty()) {
         h << "    // ── hooks: none ticked in the form yet ──\n\n";
@@ -436,6 +549,13 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
             h << "    widgets::" << pad(m->type, width) << " m_" << m->id << ";\n";
         h << "\n";
     }
+    for (auto* m : members) {
+        const ModelDef* md = model_of(f, *m);
+        if (!md) continue;
+        h << "    // " << m->id << "'s rows: append " << model_item(*md) << "::create(...) here; the table follows\n"
+          << "    Glib::RefPtr<Gio::ListStore<" << model_item(*md) << ">> m_" << m->id << "_store;\n"
+          << "    Glib::RefPtr<Gtk::SingleSelection> m_" << m->id << "_selection;   // over the sorted rows\n\n";
+    }
     h << "private:\n"
       << "    void build_ui();     // construct: properties, then packing, top-down\n"
       << "    void bind_hooks();   // every ticked signal -> its hook (last, so no setter fires one)\n"
@@ -460,6 +580,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << (f.actions.empty() ? "" :
           "\n#include <giomm/simpleaction.h>\n#include <gtkmm/shortcut.h>\n#include <gtkmm/shortcutaction.h>\n"
           "#include <gtkmm/shortcutcontroller.h>\n#include <gtkmm/shortcuttrigger.h>\n")
+      << (f.models.empty() || !f.files.empty() ? "" : "\n#include \"Log.hpp\"\n")
       << (f.files.empty() ? "" :
           "\n#include \"Log.hpp\"\n\n#include <giomm/file.h>\n#include <giomm/liststore.h>\n"
           "#include <glibmm/fileutils.h>\n#include <gtkmm/error.h>\n#include <gtkmm/filedialog.h>\n"
@@ -488,9 +609,34 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
           "    for (auto& [name, cancel] : m_files) if (cancel) cancel->cancel();\n")
       << "    registry::remove(this);\n"
       << "}\n\n"
-      << "void " << ui << "::build_ui() {\n";
+      ;
+    for (const auto& m : f.models) {
+        const std::string it = model_item(m), q = ui + "::" + it;
+        std::string params;
+        for (const auto& x : m.fields)
+            params += (x.type == "string" ? "const std::string& " : field_cpp_type(x.type) + " ") + x.name + ", ";
+        c << "// " << it << ": an automatic id, or yours -- never one that's taken.\n"
+          << "Glib::RefPtr<" << q << "> " << q << "::create(" << params << "std::uint64_t id) {\n"
+          << "    if (id != 0 && ids().count(id)) {\n"
+          << "        if (auto lg = log::get(log::Area::Ui)) lg->error(" << cpp_string(it + ": id {} is taken -- not created") << ", id);\n"
+          << "        return {};\n"
+          << "    }\n"
+          << "    if (id == 0) {\n"
+          << "        while (ids().count(next())) ++next();\n"
+          << "        id = next()++;\n"
+          << "    } else if (id >= next()) {\n"
+          << "        next() = id + 1;   // the counter goes on past yours\n"
+          << "    }\n"
+          << "    auto item = Glib::make_refptr_for_instance<" << it << ">(new " << it << "());\n"
+          << "    item->m_id = id;\n"
+          << "    ids().insert(id);\n";
+        for (const auto& x : m.fields) c << "    item->" << x.name << " = " << x.name << ";\n";
+        c << "    return item;\n"
+          << "}\n\n";
+    }
+    c << "void " << ui << "::build_ui() {\n";
     std::vector<std::string> lines;
-    build_node(f.root, true, lines);
+    build_node(f, f.root, true, lines);
     for (const auto& l : lines) c << (l.empty() ? "" : "    " + l) << "\n";
     c << "}\n\n"
       << "void " << ui << "::bind_hooks() {\n";
@@ -499,6 +645,22 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
         for (const auto& hk : n.signals) {
             const SignalSpec* s = find_signal(*w, hk.signal);
             const std::string obj = parent ? "m_" + n.id + "." : "";
+            if (s->connect == "{model}") {   // s006: hand the hook the ROW, not a position
+                const ModelDef* md = model_of(f, n);
+                if (!md) continue;
+                const std::string item = model_item(*md), sel = "m_" + n.id + "_selection";
+                if (hk.signal == "activated")
+                    c << "    m_hooks.push_back(m_" << n.id << ".signal_activate().connect([this](guint position) {\n"
+                      << "        " << hook_name(n, hk) << "(std::dynamic_pointer_cast<" << item << ">(" << sel
+                      << "->get_object(position)));\n"
+                      << "    }));\n";
+                else
+                    c << "    m_hooks.push_back(" << sel << "->signal_selection_changed().connect([this](guint, guint) {\n"
+                      << "        " << hook_name(n, hk) << "(std::dynamic_pointer_cast<" << item << ">(" << sel
+                      << "->get_selected_item()));\n"
+                      << "    }));\n";
+                continue;
+            }
             c << "    m_hooks.push_back(" << obj << s->connect << ".connect(\n"
               << "        sigc::mem_fun(*this, &" << ui << "::" << hook_name(n, hk) << ")"
               << (s->before ? ", false" : "") << "));\n";

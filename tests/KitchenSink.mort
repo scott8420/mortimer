@@ -68,6 +68,13 @@
                         ] }
                     ] }
                 ] },
+              { "type": "ScrolledWindow", "id": "table_scroller", "pack": { "name": "table", "title": "Table" },
+                "children": [
+                  { "type": "ColumnView", "id": "notes",
+                    "props": { "model": "Note", "show_row_separators": true, "show_column_separators": true,
+                               "reorderable": true },
+                    "signals": [ "activated", "selected" ] }
+                ] },
               { "type": "Box", "id": "buttons", "pack": { "name": "buttons", "title": "Buttons" },
                 "props": { "orientation": "vertical", "spacing": 8 },
                 "children": [
@@ -89,5 +96,13 @@
     { "name": "open_many", "mode": "open_multiple", "filters": ["Any=*"] },
     { "name": "save_doc", "mode": "save", "title": "Save As", "required": true },
     { "name": "pick_dir", "mode": "folder", "cancel": true }
+  ],
+  "models": [
+    { "name": "Note", "fields": [
+        { "name": "title", "type": "string" },
+        { "name": "due_date", "type": "string", "title": "Due" },
+        { "name": "count", "type": "int" },
+        { "name": "weight", "type": "double" },
+        { "name": "done", "type": "bool" } ] }
   ]
 }

@@ -21,6 +21,11 @@
 #include <gtkmm/stacksidebar.h>
 #include <gtkmm/stringlist.h>
 #include <gtkmm/switch.h>
+#include <gtkmm/columnview.h>
+#include <gtkmm/columnviewcolumn.h>
+#include <gtkmm/noselection.h>
+#include <gtkmm/signallistitemfactory.h>
+#include <giomm/liststore.h>
 
 #include <algorithm>
 
@@ -159,6 +164,7 @@ void Canvas::on_press(int, double x, double y) {
 }
 
 void Canvas::show(const core::Design& d, const std::string& sel) {
+    m_design = &d;
     // Remember which page each Stack showed, so a rebuild doesn't flip it back.
     for (const auto& [key, w] : m_widgets)
         if (auto* st = dynamic_cast<Gtk::Stack*>(w))
@@ -293,6 +299,7 @@ Gtk::Widget* Canvas::make(const core::Rec& r) {
     if (t == "Scale")          return Gtk::make_managed<Gtk::Scale>(Gtk::Orientation::HORIZONTAL);
     if (t == "SpinButton")     return Gtk::make_managed<Gtk::SpinButton>();
     if (t == "DropDown")       return Gtk::make_managed<Gtk::DropDown>();
+    if (t == "ColumnView")     return Gtk::make_managed<Gtk::ColumnView>();   // s006
     if (t == "Image") {
         auto* i = Gtk::make_managed<Gtk::Image>();
         if (!r.props.count("icon_name")) i->set_from_icon_name("image-x-generic-symbolic");
@@ -374,6 +381,22 @@ bool Canvas::apply_one(Gtk::Widget& w, const core::Rec& r, const std::string& p,
         if (!dd) return false;
         std::vector<Glib::ustring> items(std::get<core::StringList>(v).begin(), std::get<core::StringList>(v).end());
         dd->set_model(Gtk::StringList::create(items));
+        return true;
+    }
+    if (p == "model" && r.type == "ColumnView" && std::holds_alternative<std::string>(v)) {
+        // s006: the headers the generated table will have; no rows (they're
+        // yours, filled at run time).
+        auto* cv = dynamic_cast<Gtk::ColumnView*>(&w);
+        const auto f = m_design ? m_design->get(core::Design::kForm) : std::nullopt;
+        if (!cv || !f) return false;
+        cv->set_model(Gtk::NoSelection::create(Gio::ListStore<Glib::Object>::create()));
+        for (const auto& m : f->models)
+            if (m.name == std::get<std::string>(v))
+                for (const auto& x : m.fields) {
+                    auto col = Gtk::ColumnViewColumn::create(core::field_title(x), Gtk::SignalListItemFactory::create());
+                    col->set_expand(x.type == "string");
+                    cv->append_column(col);
+                }
         return true;
     }
     if (p == "stack" && r.type == "StackSidebar" && std::holds_alternative<std::string>(v)) {

@@ -30,6 +30,7 @@ void Design::load(const Form& f) {
     Rec form{"", f.name, "", 0, {}, {}, {}, {}};
     form.actions = f.actions;
     form.files = f.files;
+    form.models = f.models;
     put(kForm, form);
     std::function<void(const Node&, const Id&, double)> add = [&](const Node& n, const Id& parent, double pos) {
         const Id key = fresh_key();
@@ -53,6 +54,7 @@ Form Design::to_form() const {
     if (const auto it = m_recs.find(kForm); it != m_recs.end()) {
         f.actions = it->second.actions;
         f.files = it->second.files;
+        f.models = it->second.models;
     }
     return f;
 }

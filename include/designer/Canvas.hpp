@@ -71,6 +71,7 @@ private:
     std::map<std::string, Gtk::Widget*> m_widgets;   // design key -> built widget
     std::map<std::string, std::string>  m_page;      // Stack key -> page name it showed
     std::vector<std::pair<Gtk::Widget*, std::string>> m_refs;   // (StackSidebar, stack name)
+    const core::Design* m_design = nullptr;   // s006: the form's models, for a ColumnView's headers
     std::set<std::string> m_unapplied;
     sigc::signal<void(const std::string&)> m_pick;
 };

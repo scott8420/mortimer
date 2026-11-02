@@ -207,6 +207,25 @@ std::vector<WidgetSpec> build() {
                    false, "The selection moved (row is null when nothing is selected)."}},
                  {"gtkmm/listboxrow.h"},
                  "A vertical list of rows, each any widget. (Long lists: a ListView, later.)"});
+    // s006: a table of records. "model" names one of the form's models; the
+    // store, the sort, the selection and a column per field are generated
+    // (Codegen's model block), and the hooks hand you a row ({item}).
+    c.push_back({"ColumnView", "Gtk::ColumnView", "gtkmm/columnview.h", ChildKind::None, false,
+                 {ref("model", "{model}", "@model",
+                      "One of the form's models: its rows are the table's, a column per field."),
+                  b("show_row_separators", "set_show_row_separators({v})", "A line between rows."),
+                  b("show_column_separators", "set_show_column_separators({v})", "A line between columns."),
+                  b("reorderable", "set_reorderable({v})", "Columns can be dragged into another order.")},
+                 {{"activated", "{model}", "void", "{item}", "", false,
+                   "A row was double-clicked or Enter was pressed on it: item is that row."},
+                  {"selected", "{model}", "void", "{item}", "", false,
+                   "The selection moved (item is null when nothing is selected)."}},
+                 {"giomm/liststore.h", "gtkmm/singleselection.h", "gtkmm/sortlistmodel.h",
+                  "gtkmm/signallistitemfactory.h", "gtkmm/columnviewcolumn.h", "gtkmm/listitem.h",
+                  "gtkmm/stringsorter.h", "gtkmm/numericsorter.h", "gtkmm/expression.h",
+                  "gtkmm/label.h", "gtkmm/checkbutton.h"},
+                 "A table of records: rows of one of the form's models, a column per field. "
+                 "Click a header to sort. Put it in a ScrolledWindow."});
     c.push_back({"Image", "Gtk::Image", "gtkmm/image.h", ChildKind::None, false,
                  {s("icon_name", "set_from_icon_name({v})"), i("pixel_size", "set_pixel_size({v})")},
                  {}, {}, "An icon or picture."});

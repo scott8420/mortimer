@@ -84,7 +84,7 @@ void selftest_generator(const Check& check) {
             unique = unique && types.insert(w.type).second;
             for (const auto& p : w.props)
                 setters = setters && (has(p.setter, "{v}") || has(p.setter, "{item}") || has(p.setter, "{list}") ||
-                                      has(p.setter, "{menu}"));
+                                      has(p.setter, "{menu}") || has(p.setter, "{model}"));
             for (const auto& s : w.signals)
                 signals = signals && (s.ret == "void" || !s.ret_default.empty());
         }
@@ -546,5 +546,81 @@ class X : public ui::XUi {
         check("stubs files: the override logs what was chosen",
               has(stubs[1].content, "open_doc chosen {}\", path") &&
               has(stubs[1].content, "std::to_string(paths.size())"), "");
+    }
+
+    // ── s006: models + ColumnView ───────────────────────────────────────────
+    {
+        using core::Value;
+        auto table = [](bool with_model = true) {
+            auto f = small_form();
+            core::Node cv{"ColumnView", "notes", {}, {}, {{"activated", false, ""}, {"selected", false, ""}}, {}};
+            if (with_model) cv.props["model"] = Value(std::string("Note"));
+            f.root.children[0].children.push_back(cv);
+            f.models = {{"Note", {{"title", "string", ""}, {"due_date", "string", "Due"}, {"count", "int", ""},
+                                  {"weight", "double", ""}, {"done", "bool", ""}}}};
+            return f;
+        };
+        const auto f = table();
+        check("models: the probe table validates", errors_of(f).empty(), errors_of(f).empty() ? "" : errors_of(f)[0]);
+        const std::string text = core::form_to_json(f);
+        const auto back = core::form_from_json(text);
+        check("models: JSON round-trips", back.models == f.models && core::form_to_json(back) == text, "");
+        check("models: none -> nothing on disk", !has(core::form_to_json(small_form()), "\"models\""), "");
+        check("models: a header from the name, or the title",
+              core::field_title({"due_date", "string", ""}) == "Due date" &&
+              core::field_title({"due_date", "string", "Due"}) == "Due", "");
+
+        { auto g = f; g.models[0].name = "class";
+          check("validate models: a keyword name", any_error_has(g, "C++ class name"), ""); }
+        { auto g = f; g.models.push_back(g.models[0]);
+          check("validate models: declared twice", any_error_has(g, "declared twice"), ""); }
+        { auto g = f; g.models[0].fields.push_back({"id", "int", ""});
+          check("validate models: a field named id (every item has id())", any_error_has(g, "is taken"), ""); }
+        { auto g = f; g.models[0].fields[1].name = "title";
+          check("validate models: a field twice", any_error_has(g, "declared twice"), ""); }
+        { auto g = f; g.models[0].fields[0].type = "date";
+          check("validate models: an unknown field type", any_error_has(g, "string, int, double or bool"), ""); }
+        { auto g = f; g.models[0].fields.clear();
+          check("validate models: no fields", any_error_has(g, "at least one field"), ""); }
+        { auto g = f; g.models[0].name = "Other";
+          check("validate ColumnView: a model the form doesn't have", any_error_has(g, "no such model"), ""); }
+        { check("validate ColumnView: hooks but no model", any_error_has(table(false), "pick a model first"), ""); }
+        { auto g = f; g.root.children[0].children.push_back({"Label", "notes_store", {}, {}, {}, {}});
+          check("validate ColumnView: a widget named like its store", any_error_has(g, "m_notes_store"), ""); }
+
+        const core::AppInfo app = core::derive_app("Probe Tool");
+        const auto out = core::generate_form(f, app);
+        const std::string& h = out[0].content;
+        const std::string& c = out[1].content;
+        check("codegen models: a nested item class", has(h, "class NoteItem : public Glib::Object {"), "");
+        check("codegen models: create(fields..., id = 0)",
+              has(h, "static Glib::RefPtr<NoteItem> create(const std::string& title = {}, const std::string& due_date = {}, "
+                     "std::int64_t count = {}, double weight = {}, bool done = {}, std::uint64_t id = 0);"), "");
+        check("codegen models: plain C++ fields", has(h, "std::int64_t count = 0;") && has(h, "bool         done = false;"), "");
+        check("codegen models: the id is freed with the item", has(h, "~NoteItem() override { ids().erase(m_id); }"), "");
+        check("codegen models: a taken id is refused (null + error)",
+              has(c, "if (id != 0 && ids().count(id))") && has(c, "is taken -- not created") && has(c, "return {};"), "");
+        check("codegen models: the counter goes on past yours", has(c, "next() = id + 1;"), "");
+        check("codegen table: the store and selection are members",
+              has(h, "Glib::RefPtr<Gio::ListStore<NoteItem>> m_notes_store;") &&
+              has(h, "Glib::RefPtr<Gtk::SingleSelection> m_notes_selection;"), "");
+        check("codegen table: sorted by the clicked header",
+              has(c, "Gtk::SortListModel::create(m_notes_store, m_notes.get_sorter())"), "");
+        check("codegen table: a column per field, titled",
+              has(c, "Gtk::ColumnViewColumn::create(\"Title\", factory)") &&
+              has(c, "Gtk::ColumnViewColumn::create(\"Due\", factory)") &&
+              has(c, "Gtk::ColumnViewColumn::create(\"Done\", factory)"), "");
+        check("codegen table: strings sort as strings, the rest as numbers",
+              has(c, "Gtk::StringSorter::create(") && has(c, "Gtk::NumericSorter<double>::create("), "");
+        check("codegen table: a bool is a read-only check", has(c, "w->set_active(item->done);") &&
+                                                            has(c, "set_can_target(false)"), "");
+        check("codegen table: no setter for model (the block does it)", !has(c, "{model}"), "");
+        check("codegen table: hooks take the row",
+              has(h, "virtual void on_notes_activated(const Glib::RefPtr<NoteItem>& item);") &&
+              has(h, "virtual void on_notes_selected(const Glib::RefPtr<NoteItem>& item);"), "");
+        check("codegen table: activated -> the SORTED row at that position",
+              has(c, "m_notes_selection->get_object(position)"), "");
+        check("codegen table: selected -> the selected row (null for none)",
+              has(c, "m_notes_selection->get_selected_item()"), "");
     }
 }

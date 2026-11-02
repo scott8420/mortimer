@@ -115,6 +115,8 @@ bool Inspector::show(const std::string& sel) {
         for (const auto& a : f->actions) sig += a.name + ",";
         sig += "|";   // s005: and the file dialogs' names
         for (const auto& x : f->files) sig += x.name + ",";
+        sig += "|";   // s006: and the models' names (the model picker's choices)
+        for (const auto& m : f->models) sig += m.name + ",";
     }
     if (sel != m_key || !r || r->type != m_type || ptype != m_parent_type || sig != m_actions_sig) {
         m_actions_sig = sig;
@@ -375,6 +377,14 @@ void Inspector::prop_row(const std::string& type, const std::string& prop, bool 
                     values.push_back("app.quit");
                     // A value typed by hand elsewhere stays choosable.
                     if (const auto r = m_d.get(m_key))
+                        if (const auto it = r->props.find(prop); it != r->props.end() &&
+                            std::holds_alternative<std::string>(it->second) &&
+                            std::find(values.begin(), values.end(), std::get<std::string>(it->second)) == values.end())
+                            values.push_back(std::get<std::string>(it->second));
+                } else if (spec.ref_type == "@model") {   // s006: one of the form's models
+                    if (const auto f = m_d.get(core::Design::kForm))
+                        for (const auto& m : f->models) values.push_back(m.name);
+                    if (const auto r = m_d.get(m_key))   // a name the form no longer has stays visible
                         if (const auto it = r->props.find(prop); it != r->props.end() &&
                             std::holds_alternative<std::string>(it->second) &&
                             std::find(values.begin(), values.end(), std::get<std::string>(it->second)) == values.end())

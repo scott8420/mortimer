@@ -44,6 +44,7 @@ struct Rec {
     std::vector<SignalHook>      signals;
     std::vector<ActionDef>       actions;   // s003: on the kForm record only
     std::vector<FileDef>         files;     // s005: on the kForm record only
+    std::vector<ModelDef>        models;    // s006: on the kForm record only
     bool operator==(const Rec&) const = default;
 };
 
