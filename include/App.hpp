@@ -16,8 +16,11 @@ protected:
     App();
     void on_activate() override;
     void on_startup() override;   // accelerators, driven from core::shortcut_registry()
+    void on_open(const type_vec_files& files, const Glib::ustring& hint) override;   // `mortimer Form.mort`
 
 private:
+    Shell* shell();               // the one window, built on first need
+
     Shell* m_shell = nullptr;   // owned by the application via add_window
 };
 

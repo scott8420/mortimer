@@ -48,8 +48,27 @@ mortimer-gen catalog [Type]           # what can be placed: properties, signals,
 uninstall scripts, a `.desktop` file and icons, RULES / CANON / HANDOFF in
 `docs/`, and a starter window that builds and runs.
 
-The designer window (palette, tree, canvas, properties) is next: it drives
-the same core API as `mortimer-gen`.
+## The designer
+
+`mortimer` (or `mortimer path/to/Form.mort`) is the designer, driving the same
+core API as `mortimer-gen`:
+
+```
+ palette | tree  ||  live canvas  ||  inspector
+                  ||  hooks (live) ||
+```
+
+- **Live canvas** -- the form as real gtkmm widgets, rebuilt on every change;
+  hooks inert; click a widget to select it (it never sees the click).
+- **Palette** -- click to add into (or just after) the selection, or drag onto
+  the tree / canvas. **Tree** -- drag to reorder or reparent.
+- **Inspector** -- name, properties (set = bold + reset; unset shows GTK's own
+  default), packing, signals (tick for a hook, mark required = pure virtual).
+- **Undo** -- every edit is a step (Ctrl+Z / Ctrl+Shift+Z); typing in a field
+  is one step.
+- **Projects** -- File ▸ New Project makes the whole workspace; Save in a
+  project generates; the hooks panel shows hooked / unhooked / MISSING / STALE
+  against your header as you edit, with the lines to paste.
 
 ## Where things are
 
@@ -59,12 +78,11 @@ the same core API as `mortimer-gen`.
 | `include/core/Form.hpp` | a form: the node tree, JSON on disk, `validate()` |
 | `include/core/Codegen.hpp` | form -> `<Form>Ui` base + the one-time stubs |
 | `include/core/HookScan.hpp` | reads your header: hooked / unhooked / missing / stale |
-| `include/core/Project.hpp` | `mortimer.json`, generate-all, a new workspace |
+| `include/core/Project.hpp` | `mortimer.json`, generate-all, a new workspace, add a form, the live hooks report |
+| `include/core/Design.hpp` | what the designer edits: the form flattened by stable key under the undo journal; every designer verb + drop landing |
+| `include/Shell.hpp` | the designer window (the header is the index); panes in `include/designer/` |
 | `templates/project/` | the new-app workspace, `@TOKEN@`s, compiled into the binary (`cmake/embed.cmake`) |
 | `tests/KitchenSink.mort` | a form using **every** catalog entry -- the selftest gate requires it, `proof.sh` compiles it |
-
-The app's own window is still the Cairn spine (recents, the undo stone, the
-registry dump) until the designer replaces it.
 
 ## License
 

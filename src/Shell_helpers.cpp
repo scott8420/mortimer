@@ -1,172 +1,258 @@
 #include "Shell.hpp"
-#include "core/Recents.hpp"
 #include "Log.hpp"
+#include "core/Recents.hpp"
+#include "core/Project.hpp"
 
-#include <gtkmm/label.h>
+#include <gtkmm/alertdialog.h>
+#include <giomm/asyncresult.h>
+
 #include <gtkmm/editable.h>
 #include <gtkmm/textview.h>
 #include <glibmm/main.h>
-#include <giomm/menuitem.h>
 #include <glibmm/miscutils.h>
 #include <glibmm/variant.h>
+#include <giomm/menuitem.h>
 
 #include <filesystem>
 
-// Shell_helpers.cpp -- HELPERS. Reusable orchestration called from zones,
-// bindings, and handlers: the recents seam (path resolution, persist, and the
-// two-surface repaint).
+// Shell_helpers.cpp -- HELPERS. The repaint (every pane from the model), the
+// document's files and title, the status line, recents.
 
 namespace mortimer {
 
-std::string Shell::recents_file() const {  // helper: XDG path (UI-side resolution)
-    // The UI resolves the XDG dir (Glib here) and hands the core a plain path --
-    // the core stays GTK-free (docs/two-layer-seam.md).
-    return (std::filesystem::path(Glib::get_user_data_dir()) / "mortimer" / "recent.json")
-        .string();
+// ── the document ───────────────────────────────────────────────────────────
+
+void Shell::load_form(const core::Form& f, const std::string& path) {  // helper: a new document
+    m_journal.clear();          // ids of the old document mean nothing in this one
+    m_design.load(f);           // a load is not a user choice: no step
+    m_path = path;
+    m_app_dir = path.empty() ? std::string{} : core::project_of(path);
+    rebuild_forms_menu();
+    m_saved = core::form_to_json(m_design.to_form());
+    m_sel = m_design.root();
+    // The first row a user wants is usually the window's body.
+    for (const auto& k : m_design.children(m_sel))
+        if (const auto r = m_design.get(k); r && r->pack.find("slot") == r->pack.end()) { m_sel = k; break; }
+    update_undo_ui();
+    repaint();
+    if (!path.empty()) say("Opened " + path);
 }
 
-void Shell::note_recent(const std::string& path) {  // helper: push + persist + repaint
+bool Shell::save_to(const std::string& path) {  // helper: write the .mort
+    try {
+        const core::Form f = m_design.to_form();
+        // In a project the file's stem IS the class (forms/<Form>.mort). A
+        // renamed form would orphan your include/<Old>.hpp -- refuse in words.
+        const std::string app = core::project_of(path);
+        const std::string stem = std::filesystem::path(path).stem().string();
+        if (!app.empty() && f.name != stem) {
+            say("This form is " + stem + " in its project; renaming a project's form isn't supported yet -- "
+                "put the name back to " + stem + " (or use Add Form for a new one).", 2);
+            return false;
+        }
+        core::save_form(f, path);
+        m_path = path;
+        m_app_dir = app;
+        m_saved = core::form_to_json(f);
+        update_title();
+        if (auto lg = log::get(log::Area::Io)) lg->info("saved '{}'", path);
+        if (!m_app_dir.empty()) { generate(); rebuild_forms_menu(); repaint(); return true; }
+        const auto issues = core::validate(f);
+        if (core::has_errors(issues)) say("Saved " + path + " -- but it has problems the generator will refuse.", 1);
+        else say("Saved " + path + " (a loose form: save it into an app's forms/ to generate)");
+        return true;
+    } catch (const std::exception& e) {
+        say(std::string("Couldn't save: ") + e.what(), 2);
+        return false;
+    }
+}
+
+void Shell::generate() {  // helper: the project, after a save
+    try {
+        const auto r = core::generate_project(m_app_dir);
+        std::string s = "Saved and generated: " + std::to_string(r.written.size()) + " written, " +
+                        std::to_string(r.unchanged.size()) + " unchanged";
+        if (!r.stubs.empty()) s += ", " + std::to_string(r.stubs.size()) + " of yours started";
+        if (!r.pruned.empty()) s += ", " + std::to_string(r.pruned.size()) + " pruned";
+        int level = 0;
+        for (const auto& [form, issue] : r.issues)
+            if (issue.error) { s += " -- " + form + ": " + issue.what; level = 2; break; }
+        if (!level && !r.notes.empty()) { s += " -- " + r.notes.front(); level = 1; }
+        say(s, level);
+        m_said_recently = true;
+        if (auto lg = log::get(log::Area::Io)) lg->info("generate '{}': {}", m_app_dir, s);
+    } catch (const std::exception& e) {
+        say(std::string("Saved, but generating failed: ") + e.what(), 2);
+        m_said_recently = true;
+    }
+}
+
+void Shell::confirm_discard(std::function<void()> then) {  // helper: unsaved? ask, then go on
+    if (!dirty()) { then(); return; }
+    auto alert = Gtk::AlertDialog::create("Save changes to " + m_design.form_name() + "?");
+    alert->set_detail("If you don't save, the changes are lost.");
+    alert->set_buttons({"Cancel", "Discard", "Save"});
+    alert->set_cancel_button(0);
+    alert->set_default_button(2);
+    alert->choose(*this, [this, alert, then](const Glib::RefPtr<Gio::AsyncResult>& result) {
+        int which = 0;
+        try { which = alert->choose_finish(result); } catch (const Glib::Error&) { return; }
+        if (which == 1) { m_saved = core::form_to_json(m_design.to_form()); then(); }
+        else if (which == 2 && !m_path.empty()) { if (save_to(m_path)) then(); }
+        else if (which == 2) on_save_as();   // (then the user repeats what they asked)
+    });
+}
+
+void Shell::rebuild_forms_menu() {  // helper: the project's forms
+    if (!m_forms_menu) return;
+    m_forms_menu->remove_all();
+    if (m_act_add_form) m_act_add_form->set_enabled(!m_app_dir.empty());
+    if (m_app_dir.empty()) {
+        m_forms_menu->append("(not in a project)", "win.none");
+        return;
+    }
+    try {
+        const auto pr = core::load_project(m_app_dir);
+        for (const auto& f : pr.forms) {
+            auto item = Gio::MenuItem::create(f + (f == pr.main_form ? "  (main)" : ""), "");
+            item->set_action_and_target("win.open-form", Glib::Variant<Glib::ustring>::create(f));
+            m_forms_menu->append_item(item);
+        }
+    } catch (const std::exception& e) {
+        say(e.what(), 2);
+    }
+}
+
+bool Shell::dirty() const {  // helper
+    return !m_design.root().empty() && core::form_to_json(m_design.to_form()) != m_saved;
+}
+
+// ── repaint ────────────────────────────────────────────────────────────────
+
+void Shell::queue_repaint() {  // helper: one repaint per idle, after the writes
+    if (m_repaint_queued) return;
+    m_repaint_queued = true;
+    Glib::signal_idle().connect_once([this] {
+        m_repaint_queued = false;
+        repaint();
+    });
+}
+
+void Shell::repaint() {  // helper: every pane from the model
+    if (!m_design.get(m_sel)) m_sel = m_design.root();
+    // The tree is rebuilt: if the keyboard was on it (or nowhere), it has to be
+    // handed back to the selected row, or GTK drops it into the inspector's
+    // first Entry and Ctrl+Z / Delete land in a text box (found driving s002).
+    const Gtk::Widget* f = get_focus();
+    const bool keys_to_tree = !f || f->is_ancestor(m_tree) || f->is_ancestor(m_canvas) || m_keys_to_tree;
+    m_keys_to_tree = false;
+    m_palette.repaint(m_design, m_sel);
+    m_tree.repaint(m_design, m_sel);
+    m_canvas.show(m_design, m_sel);
+    m_inspector.show(m_sel);
+    const auto r = m_design.get(m_sel);
+    const bool child = r && !r->parent.empty();
+    if (m_act_delete) m_act_delete->set_enabled(child);
+    if (m_act_up)     m_act_up->set_enabled(child);
+    if (m_act_down)   m_act_down->set_enabled(child);
+    update_title();
+    if (!m_design.root().empty()) m_hooks.show(core::live_report(m_app_dir, m_design.to_form()), m_app_dir);
+    if (keys_to_tree) m_tree.focus_selection();
+    if (m_said_recently) m_said_recently = false;   // the refusal stays up for this repaint
+    else say_validation();
+}
+
+void Shell::select(const std::string& key) {  // helper: move the selection (not a step)
+    if (key == m_sel || !m_design.get(key)) return;
+    m_sel = key;
+    repaint();
+}
+
+void Shell::update_undo_ui() {  // helper: labels + greying
+    if (m_act_undo) m_act_undo->set_enabled(m_journal.can_undo());
+    if (m_act_redo) m_act_redo->set_enabled(m_journal.can_redo());
+    const std::string u = m_journal.can_undo() ? "Undo " + m_journal.undo_label() : "Undo";
+    const std::string r = m_journal.can_redo() ? "Redo " + m_journal.redo_label() : "Redo";
+    m_undo_button.set_tooltip_text(u + " (Ctrl+Z)");
+    m_redo_button.set_tooltip_text(r + " (Ctrl+Shift+Z)");
+    if (m_edit_menu) {
+        m_edit_menu->remove_all();
+        m_edit_menu->append(u, "win.undo");
+        m_edit_menu->append(r, "win.redo");
+    }
+}
+
+void Shell::update_title() {  // helper: name, file, dirty dot
+    const std::string name = m_design.form_name().empty() ? "Untitled" : m_design.form_name();
+    const bool d = dirty();
+    m_title.set_text((d ? "• " : "") + name);
+    if (m_path.empty()) m_subtitle.set_text("not saved");
+    else if (!m_app_dir.empty()) {
+        std::string app = std::filesystem::path(m_app_dir).filename().string();
+        try { app = core::load_project(m_app_dir).app.name; } catch (const std::exception&) {}
+        m_subtitle.set_text(app + " · forms/" + std::filesystem::path(m_path).filename().string());
+        m_subtitle.set_tooltip_text(m_path);
+    } else m_subtitle.set_text(m_path);
+    set_title(name + " — Mortimer");
+}
+
+// ── the status line ────────────────────────────────────────────────────────
+
+void Shell::say(const std::string& text, int level) {  // helper: 0 info, 1 warn, 2 error
+    m_status.set_text(text);
+    m_status.remove_css_class("warn");
+    m_status.remove_css_class("error");
+    if (level == 1) m_status.add_css_class("warn");
+    if (level == 2) m_status.add_css_class("error");
+    // A message said during a verb outlives the repaint the verb queues.
+    m_said_recently = m_repaint_queued;
+}
+
+void Shell::say_validation() {  // helper: the form's problems, or "ok"
+    if (m_design.root().empty()) return;
+    const auto issues = core::validate(m_design.to_form());
+    int errors = 0, warnings = 0;
+    const core::Issue* first = nullptr;
+    for (const auto& i : issues) {
+        (i.error ? errors : warnings)++;
+        if (!first || (i.error && !first->error)) first = &i;
+    }
+    if (!first) { say(std::to_string(m_design.count()) + " widgets · the form is valid"); return; }
+    std::string s = first->where + ": " + first->what;
+    if (errors + warnings > 1) s = std::to_string(errors + warnings) + " problems -- " + s;
+    say(s, errors ? 2 : 1);
+    m_said_recently = false;
+}
+
+// ── recents ────────────────────────────────────────────────────────────────
+
+std::string Shell::recents_file() const {  // helper: the XDG path (the UI resolves it -- the seam)
+    return (std::filesystem::path(Glib::get_user_data_dir()) / "mortimer" / "recent-forms.json").string();
+}
+
+void Shell::note_recent(const std::string& path) {  // helper
     if (path.empty()) return;
     core::recents_add(m_recents, path);
     core::save_recents(m_recents_file, m_recents);
     rebuild_recents_menu();
-    rebuild_recents_page();
 }
 
-void Shell::rebuild_recents_menu() {  // helper: repaint the submenu
+void Shell::rebuild_recents_menu() {  // helper
     if (!m_recents_menu) return;
     m_recents_menu->remove_all();
-
-    // Display name = folder basename; identical basenames get their parent dir
-    // appended so they're distinguishable (Curvz's disambiguation).
-    std::vector<std::string> names(m_recents.size());
-    for (std::size_t i = 0; i < m_recents.size(); ++i)
-        names[i] = std::filesystem::path(m_recents[i]).filename().string();
-    for (std::size_t i = 0; i < names.size(); ++i)
-        for (std::size_t j = i + 1; j < names.size(); ++j)
-            if (names[i] == names[j]) {
-                const std::string pi =
-                    std::filesystem::path(m_recents[i]).parent_path().filename().string();
-                const std::string pj =
-                    std::filesystem::path(m_recents[j]).parent_path().filename().string();
-                if (!pi.empty()) names[i] += "  (" + pi + ")";
-                if (!pj.empty()) names[j] += "  (" + pj + ")";
-            }
-
-    for (std::size_t i = 0; i < m_recents.size(); ++i) {
-        auto item = Gio::MenuItem::create(names[i], "");
-        item->set_action_and_target(
-            "recents.open", Glib::Variant<Glib::ustring>::create(m_recents[i]));
+    for (const auto& p : m_recents) {
+        const std::filesystem::path fp(p);
+        auto item = Gio::MenuItem::create(fp.stem().string() + "  (" + fp.parent_path().filename().string() + ")", "");
+        item->set_action_and_target("recents.open", Glib::Variant<Glib::ustring>::create(p));
         m_recents_menu->append_item(item);
     }
-
-    auto clear_section = Gio::Menu::create();
-    clear_section->append("Clear recent", "recents.clear");
-    m_recents_menu->append_section("", clear_section);
+    auto clear = Gio::Menu::create();
+    clear->append("Clear Recent", "recents.clear");
+    m_recents_menu->append_section("", clear);
     if (m_recents_clear) m_recents_clear->set_enabled(!m_recents.empty());
 }
 
-void Shell::rebuild_recents_page() {  // helper: repaint the live list page
-    // Clear existing rows.
-    while (auto* row = m_recents_list.get_row_at_index(0))
-        m_recents_list.remove(*row);
-
-    if (m_recents.empty()) {
-        auto* empty = Gtk::make_managed<Gtk::Label>("(nothing remembered yet)");
-        empty->set_xalign(0.0f);
-        empty->set_margin(12);
-        m_recents_list.append(*empty);
-        return;
-    }
-    for (const auto& p : m_recents) {
-        auto* lbl = Gtk::make_managed<Gtk::Label>(p);
-        lbl->set_xalign(0.0f);
-        lbl->set_margin(8);
-        lbl->set_selectable(true);
-        m_recents_list.append(*lbl);
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// s046 -- the undo stone's helpers.
-// ─────────────────────────────────────────────────────────────────────────────
-
-// One repaint per idle, AFTER the writes that caused it. A verb can write
-// several records (a move writes two); repainting per write would rebuild the
-// list mid-verb, and a row rebuilt under a live click or a focused row is torn
-// down (jot s045: "open UI after the rebuild you caused").
-void Shell::queue_stones_repaint() {  // helper
-    if (m_repaint_queued) return;
-    m_repaint_queued = true;
-    Glib::signal_idle().connect_once([this]() {
-        m_repaint_queued = false;
-        repaint_stones();
-    });
-}
-
-// The list and the detail fields, from the model. Setting a field here is not a
-// user choice: m_painting keeps the field's own signal from writing it back.
-void Shell::repaint_stones() {  // helper
-    m_painting = true;
-    while (auto* c = m_stone_list.get_first_child()) m_stone_list.remove(*c);
-    Gtk::ListBoxRow* chosen = nullptr;
-    for (const auto& id : m_stones.ids()) {
-        const auto v = m_stones.get(id);
-        auto row = Gtk::make_managed<Gtk::ListBoxRow>();
-        row->set_name(id);   // the row carries its stone's id
-        auto label = Gtk::make_managed<Gtk::Label>(
-            v->name + "   ·   size " + std::to_string(v->size));
-        label->set_xalign(0.0f);
-        label->set_margin(6);
-        row->set_child(*label);
-        m_stone_list.append(*row);
-        if (id == m_sel) chosen = row;
-    }
-    if (chosen) m_stone_list.select_row(*chosen);
-    else        m_stone_list.unselect_all();
-
-    const auto v = m_sel.empty() ? std::nullopt : m_stones.get(m_sel);
-    m_stone_name.set_sensitive(v.has_value());
-    m_stone_size.set_sensitive(v.has_value());
-    // Never overwrite a field the user is typing in.
-    if (!m_stone_name.has_focus() || !v) m_stone_name.set_text(v ? v->name : std::string{});
-    if (!m_journal.in_gesture()) m_stone_size.set_value(v ? v->size : 1);
-    m_painting = false;
-
-    if (m_keys_to_list) {
-        m_keys_to_list = false;
-        if (chosen) chosen->grab_focus();
-        else        m_stone_list.grab_focus();
-    }
-}
-
-// Select a stone (and, with `keys`, give its row the keyboard) once the
-// repaint the last write queued has run.
-void Shell::select_stone(const std::string& id, bool keys) {  // helper
-    m_sel = id;
-    m_keys_to_list = m_keys_to_list || keys;
-    queue_stones_repaint();
-}
-
-// Undo / Redo say what they would do, and grey when there is nothing: the
-// actions (so buttons and menu items follow), the button tooltips, and the
-// menu's labels -- "Undo Delete “Jade”" names the step before you take it.
-void Shell::update_undo_ui() {  // helper
-    if (m_act_undo) m_act_undo->set_enabled(m_journal.can_undo());
-    if (m_act_redo) m_act_redo->set_enabled(m_journal.can_redo());
-    const std::string u = m_journal.undo_label(), r = m_journal.redo_label();
-    m_undo_button.set_tooltip_text(u.empty() ? "Nothing to undo" : "Undo " + u + "  (Ctrl+Z)");
-    m_redo_button.set_tooltip_text(r.empty() ? "Nothing to redo" : "Redo " + r + "  (Ctrl+Shift+Z)");
-    if (m_edit_menu) {
-        m_edit_menu->remove_all();
-        m_edit_menu->append(u.empty() ? "Undo" : "Undo " + u, "win.undo");
-        m_edit_menu->append(r.empty() ? "Redo" : "Redo " + r, "win.redo");
-    }
-}
-
-// Is the keyboard in something that types? Then Ctrl+Z is that box's own,
-// whether or not it had anything to undo.
-bool Shell::focus_is_text() const {  // helper
+bool Shell::focus_is_text() const {  // helper: the keyboard is in a text box (its own Ctrl+Z)
     for (const Gtk::Widget* w = get_focus(); w; w = w->get_parent())
         if (dynamic_cast<const Gtk::TextView*>(w) || dynamic_cast<const Gtk::Editable*>(w)) return true;
     return false;

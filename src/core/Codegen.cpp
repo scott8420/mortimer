@@ -57,9 +57,28 @@ std::string replace(std::string s, const std::string& from, const std::string& t
     return s;
 }
 
-// The setter lines for one property. A StringList `{item}` setter repeats.
+// The setter lines for one property. A StringList `{item}` setter repeats;
+// a `{menu}` setter builds a Gio::Menu from "Label=action" rows (s003).
 std::vector<std::string> setter_lines(const PropSpec& p, const Value& v, const std::string& obj) {
     std::vector<std::string> out;
+    if (p.kind == PropKind::StringList && p.setter.find("{menu}") != std::string::npos) {
+        out.push_back("{");
+        out.push_back("    auto menu = Gio::Menu::create();");
+        out.push_back("    auto section = Gio::Menu::create();");
+        for (const auto& item : std::get<StringList>(v)) {
+            const MenuEntry e = parse_menu_entry(item);
+            if (e.separator) {
+                out.push_back("    menu->append_section(section);");
+                out.push_back("    section = Gio::Menu::create();");
+            } else {
+                out.push_back("    section->append(" + cpp_string(e.label) + ", " + cpp_string(e.action) + ");");
+            }
+        }
+        out.push_back("    menu->append_section(section);");
+        out.push_back("    " + obj + replace(p.setter, "{menu}", "menu") + ";");
+        out.push_back("}");
+        return out;
+    }
     if (p.kind == PropKind::StringList && p.setter.find("{item}") != std::string::npos) {
         for (const auto& item : std::get<StringList>(v))
             out.push_back(obj + replace(p.setter, "{item}", cpp_string(item)) + ";");
@@ -237,6 +256,9 @@ std::vector<Hook> hooks_of(const Form& f) {
                            h.signal, h.required});
         }
     });
+    // s003: each action is a hook too (widget = the action's name, type "Action").
+    for (const auto& a : f.actions)
+        out.push_back({action_hook(a), "void", "", "", a.name, "Action", "activate", a.required});
     return out;
 }
 
@@ -266,6 +288,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
     h << header_banner(f, "The widgets and the hooks of " + f.name + ".") << "#pragma once\n"
       << "#include \"generated/Widgets.hpp\"\n\n"
       << "#include <" << rootw->header << ">\n"
+      << (f.actions.empty() ? "" : "#include <giomm/simpleactiongroup.h>\n")
       << "#include <sigc++/connection.h>\n"
       << "#include <vector>\n\n"
       << "namespace " << app.ns << "::ui {\n\n"
@@ -304,6 +327,8 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << "    void build_ui();     // construct: properties, then packing, top-down\n"
       << "    void bind_hooks();   // every ticked signal -> its hook (last, so no setter fires one)\n"
       << "    std::vector<sigc::connection> m_hooks;   // cut first in the destructor\n"
+      << (f.actions.empty() ? "" : rootw->type == "ApplicationWindow" ? "" :
+          "    Glib::RefPtr<Gio::SimpleActionGroup> m_actions;   // \"win.*\" (a plain Window has no action map)\n")
       << "};\n\n"
       << "}  // namespace " << app.ns << "::ui\n";
 
@@ -312,7 +337,11 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
     c << header_banner(f, "Construction, wiring, and the unhooked defaults of " + f.name + ".")
       << "#include \"generated/" << ui << ".hpp\"\n"
       << "#include \"generated/Hooks.hpp\"\n"
-      << "#include \"Registry.hpp\"\n\n"
+      << "#include \"Registry.hpp\"\n"
+      << (f.actions.empty() ? "" :
+          "\n#include <giomm/simpleaction.h>\n#include <gtkmm/shortcut.h>\n#include <gtkmm/shortcutaction.h>\n"
+          "#include <gtkmm/shortcutcontroller.h>\n#include <gtkmm/shortcuttrigger.h>\n")
+      << "\n"
       << "namespace " << app.ns << "::ui {\n\n"
       << ui << "::" << ui << "()";
     for (std::size_t i = 0; i < members.size(); ++i)
@@ -347,6 +376,34 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
               << (s->before ? ", false" : "") << "));\n";
         }
     });
+    if (!f.actions.empty()) {
+        // s003: the form's actions. Each is a Gio action "win.<name>" whose
+        // activate runs its hook; the keys go on a ShortcutController in the
+        // BUBBLE phase, so a focused text box keeps its own keys (an
+        // application accelerator would take them first -- docs/undo.md).
+        const bool appwin = rootw->type == "ApplicationWindow";
+        c << "\n    // ── actions ── \"win.<name>\": menus and buttons name them; the key is on the window\n";
+        if (!appwin)
+            c << "    m_actions = Gio::SimpleActionGroup::create();\n"
+              << "    insert_action_group(\"win\", m_actions);\n";
+        bool keys = false;
+        for (const auto& a : f.actions) keys = keys || !a.accel.empty();
+        if (keys) c << "    auto keys = Gtk::ShortcutController::create();\n";
+        for (const auto& a : f.actions) {
+            const std::string gio = gio_action_name(a.name);
+            c << "    {\n"
+              << "        auto a = Gio::SimpleAction::create(" << cpp_string(gio) << ");\n"
+              << "        m_hooks.push_back(a->signal_activate().connect(\n"
+              << "            [this](const Glib::VariantBase&) { " << action_hook(a) << "(); }));\n"
+              << "        " << (appwin ? "add_action(a);" : "m_actions->add_action(a);") << "\n";
+            if (!a.accel.empty())
+                c << "        keys->add_shortcut(Gtk::Shortcut::create(Gtk::ShortcutTrigger::parse_string("
+                  << cpp_string(a.accel) << "),\n"
+                  << "                                                 Gtk::NamedAction::create(" << cpp_string("win." + gio) << ")));\n";
+            c << "    }\n";
+        }
+        if (keys) c << "    add_controller(keys);\n";
+    }
     if (hooks.empty()) c << "    // nothing ticked yet\n";
     c << "}\n";
 

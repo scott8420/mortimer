@@ -43,7 +43,7 @@ AboutWindow::AboutWindow(Gtk::Window& parent) {
     page->append(*name);
 
     auto* tagline = Gtk::make_managed<widgets::Label>(
-        widgets::unregistered, "shell.about.tagline", "A runnable gtkmm-4 paradigm seed.");
+        widgets::unregistered, "shell.about.tagline", "Design the window. Mortimer writes the GTK.");
     tagline->add_css_class("dim-label");
     page->append(*tagline);
 

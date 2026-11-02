@@ -27,10 +27,12 @@ void Design::load(const Form& f) {
     Loading scope(*this);
     m_recs.clear();
     m_next = 1;
-    put(kForm, Rec{"", f.name, "", 0, {}, {}, {}});
+    Rec form{"", f.name, "", 0, {}, {}, {}, {}};
+    form.actions = f.actions;
+    put(kForm, form);
     std::function<void(const Node&, const Id&, double)> add = [&](const Node& n, const Id& parent, double pos) {
         const Id key = fresh_key();
-        put(key, Rec{n.type, n.id, parent, pos, n.props, n.pack, n.signals});
+        put(key, Rec{n.type, n.id, parent, pos, n.props, n.pack, n.signals, {}});
         double p = 1;
         for (const auto& c : n.children) add(c, key, p++);
     };
@@ -46,7 +48,9 @@ Form Design::to_form() const {
         for (const auto& c : children(key)) n.children.push_back(build(c));
         return n;
     };
-    return Form{form_name(), build(r)};
+    Form f{form_name(), build(r), {}};
+    if (const auto it = m_recs.find(kForm); it != m_recs.end()) f.actions = it->second.actions;
+    return f;
 }
 
 // ── reading ────────────────────────────────────────────────────────────────
@@ -337,6 +341,87 @@ bool rename_form(DesignJournal& j, Design& d, const std::string& name, std::stri
     });
 }
 
+std::string add_action(DesignJournal& j, Design& d, const std::string& name, std::string* why) {
+    auto r = d.get(Design::kForm);
+    if (!r) return {};
+    auto taken = [&](const std::string& n) {
+        for (const auto& a : r->actions) if (a.name == n) return true;
+        return false;
+    };
+    std::string n = name;
+    if (n.empty())
+        for (int i = 1; n.empty() || taken(n); ++i) n = "action" + std::to_string(i);
+    if (!is_identifier(n) || is_cpp_keyword(n)) { say(why, "\"" + n + "\" isn't a C++ name"); return {}; }
+    if (taken(n)) { say(why, "the form already has an action " + n); return {}; }
+    r->actions.push_back({n, "", false});
+    j.run("Add action " + curly(n), {Design::kForm}, [&] { d.put(Design::kForm, *r); });
+    return n;
+}
+
+bool remove_action(DesignJournal& j, Design& d, const std::string& name) {
+    auto r = d.get(Design::kForm);
+    if (!r) return false;
+    const auto n = r->actions.size();
+    std::erase_if(r->actions, [&](const ActionDef& a) { return a.name == name; });
+    if (r->actions.size() == n) return false;
+    // The menu rows that ran it go with it (else the form no longer validates), same step.
+    const std::string gone = "win." + gio_action_name(name);
+    std::vector<Design::Id> ids{Design::kForm};
+    std::map<Design::Id, Rec> menus;
+    for (const auto& k : d.all()) {
+        auto o = *d.get(k);
+        const auto m = o.props.find("menu");
+        if (m == o.props.end() || !std::holds_alternative<StringList>(m->second)) continue;
+        auto& rows = std::get<StringList>(m->second);
+        const auto before = rows.size();
+        std::erase_if(rows, [&](const std::string& row) {
+            const MenuEntry e = parse_menu_entry(row);
+            return !e.separator && e.action == gone;
+        });
+        if (rows.size() != before) { ids.push_back(k); menus[k] = o; }
+    }
+    return j.run("Delete action " + curly(name), ids, [&] {
+        d.put(Design::kForm, *r);
+        for (const auto& [k, o] : menus) d.put(k, o);
+    });
+}
+
+bool set_action(DesignJournal& j, Design& d, const std::string& name, const ActionDef& now, std::string* why) {
+    auto r = d.get(Design::kForm);
+    if (!r) return false;
+    auto it = std::find_if(r->actions.begin(), r->actions.end(), [&](const ActionDef& a) { return a.name == name; });
+    if (it == r->actions.end()) return false;
+    if (*it == now) return false;
+    if (now.name != name) {
+        if (!is_identifier(now.name) || is_cpp_keyword(now.name)) { say(why, "\"" + now.name + "\" isn't a C++ name"); return false; }
+        for (const auto& a : r->actions)
+            if (a.name == now.name) { say(why, "the form already has an action " + now.name); return false; }
+    }
+    *it = now;
+    // A rename carries the menu rows that name it ("Save=win.save" -> win.store).
+    std::vector<Design::Id> ids{Design::kForm};
+    const std::string from = "win." + gio_action_name(name), to = "win." + gio_action_name(now.name);
+    std::map<Design::Id, Rec> menus;
+    if (from != to)
+        for (const auto& k : d.all()) {
+            auto o = *d.get(k);
+            const auto m = o.props.find("menu");
+            if (m == o.props.end() || !std::holds_alternative<StringList>(m->second)) continue;
+            bool hit = false;
+            for (auto& row : std::get<StringList>(m->second)) {
+                const MenuEntry e = parse_menu_entry(row);
+                if (!e.separator && e.action == from) { row = e.label + "=" + to; hit = true; }
+            }
+            if (hit) { ids.push_back(k); menus[k] = o; }
+        }
+    const std::string label = now.name != name ? "Rename action " + curly(name)
+                              : now.accel != name ? "Key of " + curly(name) : "Action " + curly(name);
+    return j.run(label, ids, [&] {
+        d.put(Design::kForm, *r);
+        for (const auto& [k, o] : menus) d.put(k, o);
+    }, "action:" + name);
+}
+
 bool set_prop(DesignJournal& j, Design& d, const Design::Id& id, const std::string& prop,
               const std::optional<Value>& v) {
     auto r = d.get(id);
@@ -395,6 +480,61 @@ bool require(DesignJournal& j, Design& d, const Design::Id& id, const std::strin
                  [&] { d.put(id, *r); });
 }
 
+Zone zone_at(double y, int height, bool container, bool root) {
+    if (root) return Zone::Inside;
+    if (height <= 0) return Zone::After;   // an unrealised row divides into nonsense
+    if (container) {
+        if (y < height * 0.25) return Zone::Before;
+        if (y > height * 0.75) return Zone::After;
+        return Zone::Inside;
+    }
+    return y < height * 0.5 ? Zone::Before : Zone::After;
+}
+
+Landing landing(const Design& d, const std::string& type, const Design::Id& moving,
+                const Design::Id& target, Zone z) {
+    Landing out;
+    const auto t = d.get(target);
+    if (!t || target == Design::kForm) { out.why = "nowhere to drop"; return out; }
+    if (!moving.empty()) {
+        if (target == moving) { out.why = "that's where it is"; return out; }
+        if (d.is_under(target, moving)) { out.why = "a widget can't go inside itself"; return out; }
+        if (d.get(moving) && d.get(moving)->parent.empty()) { out.why = "the window is the form -- it doesn't move"; return out; }
+    }
+    Design::Id parent;
+    int index = -1;
+    if (z == Zone::Inside) {
+        parent = target;
+    } else {
+        if (t->parent.empty()) { out.why = "nothing goes beside the window"; return out; }
+        parent = t->parent;
+        auto sib = d.children(parent);
+        std::erase(sib, moving);
+        for (std::size_t i = 0; i < sib.size(); ++i)
+            if (sib[i] == target) index = static_cast<int>(i) + (z == Zone::After ? 1 : 0);
+    }
+    // Staying in the same parent only reorders: no packing question.
+    const bool same = !moving.empty() && d.get(moving) && d.get(moving)->parent == parent;
+    if (!same) {
+        if (auto no = can_hold(d, parent, type, nullptr, moving); !no.empty()) { out.why = no; return out; }
+    }
+    out.parent = parent;
+    out.index = index;
+    return out;
+}
+
+Landing landing_on(const Design& d, const std::string& type, const Design::Id& moving,
+                   const Design::Id& target) {
+    Landing in = landing(d, type, moving, target, Zone::Inside);
+    if (!in.parent.empty()) return in;
+    const auto t = d.get(target);
+    if (t && t->parent.empty()) return in;   // the window: into, or nothing
+    Landing after = landing(d, type, moving, target, Zone::After);
+    if (!after.parent.empty()) return after;
+    const WidgetSpec* w = t ? find_widget(t->type) : nullptr;
+    return (w && w->children != ChildKind::None) ? in : after;   // the more telling reason
+}
+
 Design::Id neighbour(const Design& d, const Design::Id& id) {
     const auto r = d.get(id);
     if (!r) return {};
@@ -417,10 +557,12 @@ Form fixture() {
     Node grid{"Grid", "grid", {}, {}, {}, {cell}};
     Node body{"Box", "body", {{"orientation", Value(S("vertical"))}}, {}, {},
               {ok, cancel, hint, side, pages, grid}};
-    Node bar{"HeaderBar", "bar", {}, {{"slot", Value(S("titlebar"))}}, {}, {}};
+    Node menu{"MenuButton", "menu", {{"menu", Value(StringList{"Save=win.save", "-", "Quit=app.quit"})}},
+              {{"slot", Value(S("end"))}}, {}, {}};
+    Node bar{"HeaderBar", "bar", {}, {{"slot", Value(S("titlebar"))}}, {}, {menu}};
     Node win{"ApplicationWindow", "win", {{"title", Value(S("Fixture"))}}, {},
              {{"close_request", false, ""}}, {bar, body}};
-    return Form{"Fixture", win};
+    return Form{"Fixture", win, {{"save", "<Control>s", false}}};
 }
 
 const std::vector<Verb>& verbs() {
@@ -442,6 +584,10 @@ const std::vector<Verb>& verbs() {
         {"tick",         [](DesignJournal& j, Design& d) { tick(j, d, d.find("cancel"), "clicked", true); }},
         {"untick",       [](DesignJournal& j, Design& d) { tick(j, d, d.find("ok"), "clicked", false); }},
         {"require",      [](DesignJournal& j, Design& d) { require(j, d, d.find("ok"), "clicked", true); }},
+        {"add_action",   [](DesignJournal& j, Design& d) { add_action(j, d, "refresh"); }},
+        {"remove_action",[](DesignJournal& j, Design& d) { remove_action(j, d, "save"); }},
+        {"rename_action",[](DesignJournal& j, Design& d) { set_action(j, d, "save", {"store", "<Control>s", false}); }},
+        {"key_action",   [](DesignJournal& j, Design& d) { set_action(j, d, "save", {"save", "<Control><Shift>s", true}); }},
     };
     return table;
 }

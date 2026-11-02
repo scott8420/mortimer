@@ -236,6 +236,50 @@ std::vector<HookReport> hook_reports(const std::string& app_dir) {
 
 // ── a new app ──────────────────────────────────────────────────────────────
 
+std::string project_of(const std::string& form_path) {
+    const fs::path fp = fs::absolute(fs::path(form_path)).lexically_normal();
+    if (fp.extension() != ".mort" || fp.parent_path().filename() != "forms") return {};
+    const fs::path app = fp.parent_path().parent_path();
+    if (!fs::exists(app / "mortimer.json")) return {};
+    try {
+        const Project pr = load_project(app.string());
+        const std::string stem = fp.stem().string();
+        for (const auto& f : pr.forms)
+            if (f == stem) return app.string();
+    } catch (const std::exception&) {
+    }
+    return {};
+}
+
+std::string add_form(const std::string& app_dir, const std::string& name) {
+    if (!is_identifier(name) || is_cpp_keyword(name))
+        throw std::runtime_error("\"" + name + "\" isn't a C++ class name");
+    Project pr = load_project(app_dir);
+    for (const auto& f : pr.forms)
+        if (f == name) throw std::runtime_error("the project already has a form " + name);
+    const fs::path path = fs::path(app_dir) / "forms" / (name + ".mort");
+    if (fs::exists(path)) throw std::runtime_error(path.string() + " already exists");
+    Form f;
+    f.name = name;
+    Node body{"Box", "body", {{"orientation", Value(std::string("vertical"))}, {"spacing", Value(std::int64_t{12})},
+                              {"margin", Value(std::int64_t{18})}}, {}, {}, {}};
+    f.root = {"Window", snake(name), {{"title", Value(name)}, {"default_width", Value(std::int64_t{480})},
+                                      {"default_height", Value(std::int64_t{320})}},
+              {}, {}, {body}};
+    save_form(f, path.string());
+    pr.forms.push_back(name);
+    save_project(pr, app_dir);
+    return path.string();
+}
+
+HookReport live_report(const std::string& app_dir, const Form& f) {
+    const fs::path root(app_dir);
+    const fs::path uh = root / "include" / (f.name + ".hpp");
+    const fs::path manifest = root / "generated" / (f.name + ".hooks.json");
+    return build_report(f, !app_dir.empty() && fs::exists(uh), app_dir.empty() ? "" : read_file(uh),
+                        app_dir.empty() ? "" : read_file(manifest));
+}
+
 Form starter_form(const AppInfo& app) {
     auto S = [](const char* s) { return Value(std::string(s)); };
     auto I = [](std::int64_t v) { return Value(v); };
@@ -243,7 +287,12 @@ Form starter_form(const AppInfo& app) {
 
     Node open{"Button", "open", {{"icon_name", S("document-open-symbolic")}, {"tooltip", S("Open")}},
               {{"slot", S("start")}}, {{"clicked", false, ""}}, {}};
-    Node menu{"MenuButton", "menu", {{"icon_name", S("open-menu-symbolic")}}, {{"slot", S("end")}}, {}, {}};
+    // s003: the menu's rows run the form's actions -- the key, the menu row and
+    // the hook are one fact (Form::actions).
+    Node menu{"MenuButton", "menu",
+              {{"icon_name", S("open-menu-symbolic")},
+               {"menu", Value(StringList{"Say Hello=win.hello", "-", "Quit=win.quit"})}},
+              {{"slot", S("end")}}, {}, {}};
     Node header{"HeaderBar", "header", {}, {{"slot", S("titlebar")}}, {}, {open, menu}};
 
     Node greeting{"Label", "greeting",
@@ -267,6 +316,7 @@ Form starter_form(const AppInfo& app) {
 
     Form f;
     f.name = "MainWindow";
+    f.actions = {{"hello", "<Control>h", false}, {"quit", "<Control>q", false}};
     f.root = {"ApplicationWindow", "main_window",
               {{"title", Value(app.name)}, {"default_width", I(800)}, {"default_height", I(560)}},
               {}, {}, {header, body}};

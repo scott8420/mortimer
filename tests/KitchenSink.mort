@@ -17,7 +17,8 @@
             "props": { "icon_name": "list-add-symbolic", "has_frame": false } },
           { "type": "Label", "id": "title", "pack": { "slot": "title" }, "props": { "label": "Title \"quoted\"\nnewline \\ back" } },
           { "type": "MenuButton", "id": "menu", "pack": { "slot": "end" },
-            "props": { "icon_name": "open-menu-symbolic", "label": "Menu" } }
+            "props": { "icon_name": "open-menu-symbolic", "label": "Menu",
+                       "menu": ["Refresh=win.refresh", "Save as…=win.save-as", "-", "Quit=app.quit"] } }
         ] },
       { "type": "Paned", "id": "split", "props": { "orientation": "horizontal", "position": 220, "wide_handle": true },
         "children": [
@@ -77,5 +78,9 @@
             ] }
         ] }
     ]
-  }
+  },
+  "actions": [
+    { "name": "refresh", "accel": "<Control>r" },
+    { "name": "save_as", "accel": "<Control><Shift>s" }
+  ]
 }

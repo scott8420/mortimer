@@ -8,6 +8,7 @@
 #include <gtkmm/label.h>
 #include <gtkmm/listbox.h>
 #include <gtkmm/menubutton.h>
+#include <gtkmm/paned.h>
 #include <gtkmm/scale.h>
 #include <gtkmm/scrolledwindow.h>
 #include <gtkmm/stack.h>
@@ -24,6 +25,7 @@ using Image          = Named<Gtk::Image>;
 using Label          = Named<Gtk::Label>;
 using ListBox        = Named<Gtk::ListBox>;
 using MenuButton     = Named<Gtk::MenuButton>;
+using Paned          = Named<Gtk::Paned>;
 using Scale          = Named<Gtk::Scale>;
 using ScrolledWindow = Named<Gtk::ScrolledWindow>;
 using Stack          = Named<Gtk::Stack>;

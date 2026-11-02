@@ -42,6 +42,7 @@ struct Rec {
     std::map<std::string, Value> props;
     std::map<std::string, Value> pack;
     std::vector<SignalHook>      signals;
+    std::vector<ActionDef>       actions;   // s003: on the kForm record only
     bool operator==(const Rec&) const = default;
 };
 
@@ -122,6 +123,15 @@ bool rename(DesignJournal& j, Design& d, const Design::Id& id, const std::string
             std::string* why = nullptr);
 // The form's class name ("MainWindow").
 bool rename_form(DesignJournal& j, Design& d, const std::string& name, std::string* why = nullptr);
+// s003 -- the form's actions (on the kForm record). add_action names it
+// "action1".. unless given a name; remove_action takes the menu rows that ran
+// it along (same step); set_action replaces one whole (rename, key,
+// required) -- a rename carries every menu row "win.<old>" with it, same step.
+std::string add_action(DesignJournal& j, Design& d, const std::string& name = {}, std::string* why = nullptr);
+bool remove_action(DesignJournal& j, Design& d, const std::string& name);
+bool set_action(DesignJournal& j, Design& d, const std::string& name, const ActionDef& now,
+                std::string* why = nullptr);
+
 // A property: a value, or nullopt to clear it back to GTK's default. Typing in
 // one field folds into one step (merge key "prop:<key>:<name>").
 bool set_prop(DesignJournal& j, Design& d, const Design::Id& id, const std::string& prop,
@@ -131,6 +141,28 @@ bool set_pack(DesignJournal& j, Design& d, const Design::Id& id, const std::stri
 // Signals: tick one (a hook), untick it, mark it required (pure virtual).
 bool tick(DesignJournal& j, Design& d, const Design::Id& id, const std::string& signal, bool on);
 bool require(DesignJournal& j, Design& d, const Design::Id& id, const std::string& signal, bool on);
+
+// ── drag and drop: where a drop on a tree row lands ────────────────────────
+// A container's row has three zones (top quarter before, middle half INTO,
+// bottom quarter after); a leaf two (halves); the root only INTO.
+// (docs/tree-and-dnd.md: Folio's 25/75 split.)
+enum class Zone { Before, Inside, After };
+Zone zone_at(double y, int height, bool container, bool root);
+
+struct Landing {
+    Design::Id  parent;      // "" = refused
+    int         index = -1;  // among parent's children, the moving one left out
+    std::string why;         // when refused
+};
+// `type` is what lands; `moving` its key for a move ("" for a new one from
+// the palette); `target` the row hovered; `z` the zone on it. Refuses a drop
+// into the moving widget's own subtree, onto itself, or where can_hold says no.
+Landing landing(const Design& d, const std::string& type, const Design::Id& moving,
+                const Design::Id& target, Zone z);
+// A drop on a widget on the CANVAS: into it if it can take the type, else
+// just after it in its parent.
+Landing landing_on(const Design& d, const std::string& type, const Design::Id& moving,
+                   const Design::Id& target);
 
 // Who takes the selection when `id` goes: next sibling, else previous, else parent.
 Design::Id neighbour(const Design& d, const Design::Id& id);

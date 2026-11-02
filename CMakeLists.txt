@@ -86,7 +86,8 @@ find_program(GLIB_COMPILE_RESOURCES glib-compile-resources REQUIRED)
 set(CAIRN_GRESOURCE_XML "${CMAKE_CURRENT_SOURCE_DIR}/resources/mortimer.gresource.xml")
 set(CAIRN_RESOURCES_C   "${CMAKE_CURRENT_BINARY_DIR}/mortimer-resources.c")
 file(GLOB CAIRN_RESOURCE_FILES
-     "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/scalable/apps/*.svg")
+     "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/scalable/apps/*.svg"
+     "${CMAKE_CURRENT_SOURCE_DIR}/resources/*.css")
 add_custom_command(
     OUTPUT  "${CAIRN_RESOURCES_C}"
     COMMAND "${GLIB_COMPILE_RESOURCES}"
@@ -117,6 +118,14 @@ add_executable(mortimer
     src/Shell_helpers.cpp
     src/AboutWindow.cpp
     src/ShortcutsDialog.cpp
+    # s002 -- the designer's panes: the live canvas (real widgets, hooks inert),
+    # palette + tree, the inspector, and the catalog<->GObject property bridge.
+    src/designer/Canvas.cpp
+    src/designer/Panes.cpp
+    src/designer/Inspector.cpp
+    src/designer/GProps.cpp
+    src/designer/HooksPane.cpp
+    src/designer/Dialogs.cpp
     src/Registry.cpp
     src/Log.cpp
 )

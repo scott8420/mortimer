@@ -7,6 +7,8 @@
 #include "Log.hpp"
 
 #include <gtkmm/icontheme.h>
+#include <gtkmm/cssprovider.h>
+#include <gtkmm/stylecontext.h>
 #include <gdkmm/display.h>
 
 // The RESOURCE-PIPELINE paradigm's build-side seam. The app logo ships in a
@@ -23,7 +25,7 @@ Glib::RefPtr<App> App::create() {
     return Glib::make_refptr_for_instance(new App());
 }
 
-App::App() : Gtk::Application("io.github.scott8420.Mortimer") {}
+App::App() : Gtk::Application("io.github.scott8420.Mortimer", Gio::Application::Flags::HANDLES_OPEN) {}
 
 // The SHORTCUT-REGISTRY paradigm's other consumer. Accelerators are an
 // application-scope concern (they survive window construction order), so they
@@ -65,11 +67,28 @@ void App::on_activate() {
         icons->add_resource_path("/io/github/scott8420/Mortimer/icons");
     }
 
-    m_shell = new Shell();       // lifetime owned by the application
-    add_window(*m_shell);
-    m_shell->build_ui();
-    m_shell->present();
+    // The app's own styles, out of the same bundle (resources/mortimer.css).
+    auto css = Gtk::CssProvider::create();
+    css->load_from_resource("/io/github/scott8420/Mortimer/mortimer.css");
+    if (auto display = Gdk::Display::get_default())
+        Gtk::StyleContext::add_provider_for_display(display, css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+
+    shell()->present();
     if (auto lg = log::get(log::Area::App)) lg->info("Mortimer activated");
+}
+
+Shell* App::shell() {
+    if (!m_shell) {
+        m_shell = new Shell();       // lifetime owned by the application
+        add_window(*m_shell);
+        m_shell->build_ui();
+    }
+    return m_shell;
+}
+
+void App::on_open(const type_vec_files& files, const Glib::ustring&) {
+    activate();                      // resources, styles, the window
+    if (!files.empty()) shell()->open_path(files.front()->get_path());
 }
 
 }  // namespace mortimer

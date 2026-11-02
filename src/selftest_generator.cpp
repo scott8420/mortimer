@@ -83,7 +83,8 @@ void selftest_generator(const Check& check) {
         for (const auto& w : core::catalog()) {
             unique = unique && types.insert(w.type).second;
             for (const auto& p : w.props)
-                setters = setters && (has(p.setter, "{v}") || has(p.setter, "{item}") || has(p.setter, "{list}"));
+                setters = setters && (has(p.setter, "{v}") || has(p.setter, "{item}") || has(p.setter, "{list}") ||
+                                      has(p.setter, "{menu}"));
             for (const auto& s : w.signals)
                 signals = signals && (s.ret == "void" || !s.ret_default.empty());
         }

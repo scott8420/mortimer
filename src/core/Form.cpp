@@ -138,6 +138,13 @@ Form form_from_json(const std::string& text) {
     f.name = j.value("name", "");
     if (!j.contains("root")) throw std::runtime_error("a form needs a \"root\" widget");
     f.root = node_from(j["root"], f.name.empty() ? "form" : f.name);
+    if (j.contains("actions")) {
+        if (!j["actions"].is_array()) throw std::runtime_error("actions must be a list");
+        for (const auto& a : j["actions"]) {
+            if (!a.is_object()) throw std::runtime_error("an action is {\"name\": ..., \"accel\": ...}");
+            f.actions.push_back({a.value("name", ""), a.value("accel", ""), a.value("required", false)});
+        }
+    }
     return f;
 }
 
@@ -146,6 +153,17 @@ std::string form_to_json(const Form& f) {
     j["mortimer"] = 1;
     j["name"] = f.name;
     j["root"] = node_to(f.root);
+    if (!f.actions.empty()) {
+        json a = json::array();
+        for (const auto& x : f.actions) {
+            json o;
+            o["name"] = x.name;
+            if (!x.accel.empty()) o["accel"] = x.accel;
+            if (x.required) o["required"] = true;
+            a.push_back(o);
+        }
+        j["actions"] = a;
+    }
     return j.dump(2) + "\n";
 }
 
@@ -209,6 +227,24 @@ std::string snake(const std::string& pascal) {
     return out;
 }
 
+std::string gio_action_name(const std::string& name) {
+    std::string s = name;
+    for (char& c : s) if (c == '_') c = '-';
+    return s;
+}
+
+std::string action_hook(const ActionDef& a) { return "on_action_" + a.name; }
+
+MenuEntry parse_menu_entry(const std::string& s) {
+    MenuEntry e;
+    if (s == "-" || s == "---") { e.separator = true; return e; }
+    const auto eq = s.rfind('=');
+    if (eq == std::string::npos) { e.label = s; return e; }
+    e.label = s.substr(0, eq);
+    e.action = s.substr(eq + 1);
+    return e;
+}
+
 std::string hook_name(const Node& n, const SignalHook& h) {
     return h.handler.empty() ? "on_" + n.id + "_" + h.signal : h.handler;
 }
@@ -236,6 +272,26 @@ std::vector<Issue> validate(const Form& f) {
     // First pass: ids, so a Ref can point forward.
     std::map<std::string, const Node*> ids;
     std::set<std::string> hooks;
+
+    // s003: actions -- names, keys, and their hooks join the hook namespace.
+    std::set<std::string> actions;
+    for (const auto& a : f.actions) {
+        const std::string where = "action " + (a.name.empty() ? std::string("?") : a.name);
+        if (!is_identifier(a.name) || is_cpp_keyword(a.name)) {
+            err(where, "an action's name must be a C++ identifier (save, save_as)");
+            continue;
+        }
+        if (!actions.insert(a.name).second) err(where, "action \"" + a.name + "\" is declared twice");
+        if (!hooks.insert(action_hook(a)).second) err(where, "two things make the hook " + action_hook(a) + "()");
+        if (!a.accel.empty()) {
+            // GTK parses the key at run time; refuse here what it never could.
+            const auto close = a.accel.rfind('>');
+            const std::string key = close == std::string::npos ? a.accel : a.accel.substr(close + 1);
+            if (key.empty() || std::count(a.accel.begin(), a.accel.end(), '<') !=
+                                   std::count(a.accel.begin(), a.accel.end(), '>'))
+                err(where, "key \"" + a.accel + "\" isn't GTK's syntax (\"<Control>s\", \"<Control><Shift>z\", \"F5\")");
+        }
+    }
     walk(f.root, [&](const Node& n, const Node*) {
         if (!is_identifier(n.id) || is_cpp_keyword(n.id))
             err(n.id.empty() ? "?" : n.id,
@@ -313,6 +369,23 @@ std::vector<Issue> validate(const Form& f) {
             const std::string hn = hook_name(n, h);
             if (!is_identifier(hn)) err(where, "handler \"" + hn + "\" isn't a C++ name");
             else if (!hooks.insert(hn).second) err(where, "two signals make the hook " + hn + "()");
+        }
+
+        // s003: a menu's rows -- "Label=win.action" must name an action of this form.
+        if (const auto it = n.props.find("menu"); it != n.props.end() && std::holds_alternative<StringList>(it->second)) {
+            for (const auto& item : std::get<StringList>(it->second)) {
+                const MenuEntry e = parse_menu_entry(item);
+                if (e.separator) continue;
+                if (e.label.empty()) err(where, "a menu row needs a label (\"" + item + "\")");
+                if (e.action.rfind("win.", 0) == 0) {
+                    bool found = false;
+                    for (const auto& a : f.actions) found = found || gio_action_name(a.name) == e.action.substr(4);
+                    if (!found) err(where, "menu row \"" + e.label + "\" names " + e.action +
+                                               " -- the form has no such action (add it to the form's actions)");
+                } else if (!e.action.empty() && e.action.rfind("app.", 0) != 0) {
+                    warn(where, "menu row \"" + e.label + "\": \"" + e.action + "\" is neither win.* nor app.*");
+                }
+            }
         }
 
         // children: does this container take them, and how many?

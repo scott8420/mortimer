@@ -64,6 +64,21 @@ std::vector<HookReport> hook_reports(const std::string& app_dir);
 // New workspace at <parent>/<bin>/ -- refuses if it exists. Returns the app dir.
 std::string create_workspace(const AppInfo& app, const std::string& parent);
 
+// ── s002: what the designer window needs ──────────────────────────────────
+// The app a form file belongs to: <app>/forms/<Stem>.mort with
+// <app>/mortimer.json beside forms/ and the stem in its forms list. "" if not.
+std::string project_of(const std::string& form_path);
+
+// A new form in the project: forms/<name>.mort (a Window with an empty Box),
+// listed in mortimer.json. Throws with a readable message if the name isn't a
+// class name or the form exists. Returns the form's path. Doesn't generate.
+std::string add_form(const std::string& app_dir, const std::string& name);
+
+// The hooks report for a form as it is NOW (in memory, unsaved), against the
+// user's header and the last manifest on disk -- what the window's hooks panel
+// shows live. Reads, writes nothing.
+HookReport live_report(const std::string& app_dir, const Form& f);
+
 // The starter form a new project gets: a window, a header bar, a little body.
 Form starter_form(const AppInfo& app);
 

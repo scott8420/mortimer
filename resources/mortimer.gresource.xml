@@ -14,4 +14,7 @@
   <gresource prefix="/io/github/scott8420/Mortimer/icons/scalable/apps">
     <file preprocess="xml-stripblanks" alias="mortimer-logo-symbolic.svg">icons/scalable/apps/mortimer-logo-symbolic.svg</file>
   </gresource>
+  <gresource prefix="/io/github/scott8420/Mortimer">
+    <file alias="mortimer.css">mortimer.css</file>
+  </gresource>
 </gresources>

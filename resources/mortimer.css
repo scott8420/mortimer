@@ -1,0 +1,85 @@
+/* Mortimer's own styles (compiled into the bundle; App loads them at
+   APPLICATION priority, so the theme's own rules still win where they
+   should). Colours that must work light AND dark use the theme's named
+   colours or alpha over currentColor -- never a fixed grey. */
+
+/* ── the canvas: a stage the designed window sits on ─────────────────────── */
+.mortimer-stage {
+  background-color: alpha(currentColor, 0.06);
+  padding: 32px;
+}
+/* The designed window: a card with the window's own background. */
+.mortimer-window {
+  background-color: @theme_bg_color;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px alpha(black, 0.25), 0 0 0 1px alpha(black, 0.12);
+}
+.mortimer-titlebar {
+  min-height: 46px;
+  padding: 0 12px;
+  border-bottom: 1px solid alpha(currentColor, 0.12);
+  border-radius: 12px 12px 0 0;
+}
+.mortimer-titlebar label { font-weight: bold; }
+/* An empty container still has to be something you can point at. */
+.mortimer-empty {
+  min-width: 48px;
+  min-height: 32px;
+  border: 1px dashed alpha(currentColor, 0.35);
+  border-radius: 6px;
+}
+/* A Label or Button with nothing to show: its name, dimmed, italic. */
+.mortimer-placeholder { font-style: italic; opacity: 0.55; }
+/* The selection on the canvas. A fixed accent: it has to read on any theme. */
+.mortimer-selected {
+  outline: 2px solid #3584e4;
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+/* ── the side panes ──────────────────────────────────────────────────────── */
+.mortimer-pane-title {
+  font-weight: bold;
+  font-size: smaller;
+  opacity: 0.7;
+  padding: 8px 10px 4px 10px;
+}
+.mortimer-palette button { padding: 3px 8px; min-height: 24px; }
+.mortimer-palette flowboxchild { padding: 0; }
+.mortimer-palette button label { font-weight: normal; }
+.mortimer-tree row { padding: 2px 4px; min-height: 26px; }
+.mortimer-tree .type { opacity: 0.55; font-size: smaller; }
+.mortimer-tree .expander { min-width: 16px; min-height: 16px; padding: 0; }
+
+/* ── the inspector ───────────────────────────────────────────────────────── */
+.mortimer-inspector { padding: 6px 12px 18px 12px; }
+.mortimer-inspector .section {
+  font-weight: bold;
+  margin-top: 14px;
+  margin-bottom: 2px;
+}
+.mortimer-inspector .prop { opacity: 0.6; }          /* unset: GTK's default */
+.mortimer-inspector .prop.set { opacity: 1; font-weight: bold; }
+.mortimer-inspector .hook { font-family: monospace; font-size: smaller; opacity: 0.6; }
+.mortimer-inspector .doc { opacity: 0.6; font-size: smaller; }
+.mortimer-inspector .why { color: @error_color; font-size: smaller; }
+
+/* ── the status line ─────────────────────────────────────────────────────── */
+.mortimer-status { padding: 4px 10px; font-size: smaller; border-top: 1px solid alpha(currentColor, 0.12); }
+.mortimer-status.warn  { color: @warning_color; }
+.mortimer-status.error { color: @error_color; }
+
+/* ── the hooks panel ─────────────────────────────────────────────────────── */
+.mortimer-hooks { border-top: 1px solid alpha(currentColor, 0.12); }
+.mortimer-hooks row { padding: 2px 0; }
+.mortimer-hooks .decl { font-family: monospace; font-size: smaller; }
+.mortimer-hooks .tag  { font-size: smaller; font-weight: bold; }
+.mortimer-hooks .tag.ok   { color: @success_color; }
+.mortimer-hooks .tag.warn { color: @warning_color; }
+.mortimer-hooks .tag.bad  { color: @error_color; }
+
+/* ── drag and drop feedback (classes on the row, no custom drawing) ───────── */
+.mortimer-tree row.mortimer-drop-before { box-shadow: inset 0 2px 0 0 #3584e4; }
+.mortimer-tree row.mortimer-drop-after  { box-shadow: inset 0 -2px 0 0 #3584e4; }
+.mortimer-tree row.mortimer-drop-inside { box-shadow: inset 0 0 0 2px #3584e4; border-radius: 6px; }
+.mortimer-drop-target { outline: 2px dashed #3584e4; outline-offset: -2px; }

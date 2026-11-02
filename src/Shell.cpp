@@ -1,52 +1,44 @@
 #include "Shell.hpp"
 #include "AboutWindow.hpp"      // complete type for ~unique_ptr<AboutWindow> in ~Shell()
-#include "ShortcutsDialog.hpp"  // ditto -- same singleton shape, same dtor requirement
+#include "ShortcutsDialog.hpp"  // ditto
 #include "Log.hpp"
+#include "core/Project.hpp"
 
-// Shell.cpp -- GLUE. The ctor and the ordered build_ui() pass live here; every
-// other method body lives in a category file (see the index in Shell.hpp).
+// Shell.cpp -- GLUE. The ctor and the ordered build_ui() pass; every other
+// method body lives in a category file (the index is Shell.hpp).
 
 namespace mortimer {
 
 Shell::Shell()
     : m_logo_button("shell.logo_button"),
+      m_open_button("shell.open_button"),
+      m_undo_button("shell.undo_button"),
+      m_redo_button("shell.redo_button"),
+      m_save_button("shell.save_button"),
       m_menu_button("shell.menu_button"),
-      m_body("shell.body", Gtk::Orientation::HORIZONTAL),
-      m_sidebar("shell.sidebar"),
-      m_stack("shell.stack"),
-      m_recents_page("shell.recents_page", Gtk::Orientation::VERTICAL),
-      m_recents_scroll("shell.recents_scroll"),
-      m_recents_list("shell.recents_list"),
-      m_undo_page("shell.undo.page", Gtk::Orientation::VERTICAL, 8),
-      m_stone_list("shell.undo.list"),
-      m_stone_name("shell.undo.name"),
-      m_stone_size("shell.undo.size", Gtk::Orientation::HORIZONTAL),
-      m_undo_button("shell.undo.undo"),
-      m_redo_button("shell.undo.redo"),
-      m_undo_said("shell.undo.said") {
+      m_title("shell.title"),
+      m_subtitle("shell.subtitle"),
+      m_root("shell.root", Gtk::Orientation::VERTICAL),
+      m_outer("shell.outer", Gtk::Orientation::HORIZONTAL),
+      m_left("shell.left", Gtk::Orientation::VERTICAL),
+      m_right("shell.right", Gtk::Orientation::HORIZONTAL),
+      m_center("shell.center", Gtk::Orientation::VERTICAL),
+      m_status("shell.status") {
     set_name("shell.window");
 }
 
 Shell::~Shell() = default;
 
-// The ordered pass Scott's Controller/MainWindow shape names: construct the
-// shell, build the pages, bind actions + accelerators, load persisted state,
-// paint. Each step is one call into a category file.
+// construct the frame -> the panes -> actions -> the model wiring -> keys ->
+// the first document (the starter form, so the window opens on something).
 void Shell::build_ui() {
-    build_shell();     // zone
-    build_pages();     // zone
+    build_header();    // zone
+    build_body();      // zone
     bind_actions();    // bindings
-
-    // Load persisted recents (the UI resolves the XDG path -- the seam -- and
-    // hands the core a plain string), then paint both surfaces.
-    m_recents_file = recents_file();
-    // m_recents filled by note_recent / load; load happens in bind_actions after
-    // the action group exists so a click can route. Paint whatever's there.
-    rebuild_recents_menu();
-    rebuild_recents_page();
-
-    if (auto lg = log::get(log::Area::Shell))
-        lg->info("ready -- {} widget(s) registered", 0);  // dump-registry shows the real count
+    bind_model();      // bindings
+    bind_keys();       // bindings
+    load_form(core::starter_form(core::derive_app("Untitled")), "");
+    if (auto lg = log::get(log::Area::Shell)) lg->info("designer ready");
 }
 
 }  // namespace mortimer

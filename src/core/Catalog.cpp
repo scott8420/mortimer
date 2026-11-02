@@ -194,8 +194,10 @@ std::vector<WidgetSpec> build() {
                  {s("icon_name", "set_from_icon_name({v})"), i("pixel_size", "set_pixel_size({v})")},
                  {}, {}, "An icon or picture."});
     c.push_back({"MenuButton", "Gtk::MenuButton", "gtkmm/menubutton.h", ChildKind::None, false,
-                 {s("icon_name", "set_icon_name({v})"), s("label", "set_label({v})")},
-                 {}, {}, "A button that drops down a menu (the menu editor comes later)."});
+                 {s("icon_name", "set_icon_name({v})"), s("label", "set_label({v})"),
+                  list("menu", "set_menu_model({menu})",
+                       "Rows \"Label=win.action\" (an action of this form) or \"Label=app.quit\"; \"-\" starts a new section.")},
+                 {}, {"giomm/menu.h"}, "A button that drops down a menu: its rows run the form's actions."});
     return c;
 }
 

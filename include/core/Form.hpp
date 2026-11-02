@@ -45,10 +45,34 @@ struct Node {
     std::vector<Node> children;
 };
 
+// s003 -- an ACTION the window offers: a Gio action "win.<gio name>" (the
+// name with '_' as '-', GIO's spelling), a hook on_action_<name>() that runs
+// it, and optionally a key. Menus name it ("Save=win.save"); a Button can name
+// it too (action_name). One fact, three uses -- the key and the menu row can't
+// drift from the action, because there is only the one entry.
+struct ActionDef {
+    std::string name;            // C++ identifier: "save_as" -> win.save-as, on_action_save_as()
+    std::string accel;           // "<Control>s" (GTK syntax); "" = no key
+    bool        required = false;// the hook is pure virtual
+    bool operator==(const ActionDef&) const = default;
+};
+
 struct Form {
     std::string name;   // the class stem: "MainWindow" -> MainWindowUi + MainWindow
     Node        root;
+    std::vector<ActionDef> actions;   // s003: on disk only when there are any
 };
+
+// "save_as" -> "save-as" (GIO action names allow letters, digits, '-', '.').
+std::string gio_action_name(const std::string& name);
+// The hook an action becomes.
+std::string action_hook(const ActionDef& a);
+// A menu entry (MenuButton "menu" items): "Label=win.action", "-" between sections.
+struct MenuEntry {
+    bool        separator = false;
+    std::string label, action;   // action "" = a plain (insensitive) row
+};
+MenuEntry parse_menu_entry(const std::string& s);
 
 // ── JSON ───────────────────────────────────────────────────────────────────
 // load: throws std::runtime_error with a readable message on bad JSON / shape.

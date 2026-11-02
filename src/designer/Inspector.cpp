@@ -1,0 +1,425 @@
+#include "designer/Inspector.hpp"
+#include "designer/GProps.hpp"
+#include "core/Catalog.hpp"
+
+#include <gtkmm/button.h>
+#include <gtkmm/checkbutton.h>
+#include <gtkmm/dropdown.h>
+#include <gtkmm/entry.h>
+#include <gtkmm/eventcontrollerfocus.h>
+#include <gtkmm/eventcontrollerscroll.h>
+#include <gtkmm/window.h>
+#include <gtkmm/label.h>
+#include <gtkmm/spinbutton.h>
+#include <gtkmm/stringlist.h>
+#include <gtkmm/adjustment.h>
+#include <glibmm/markup.h>
+
+#include <cmath>
+#include <sstream>
+
+namespace mortimer::designer {
+
+namespace {
+
+using core::PropKind;
+using core::Value;
+
+std::string join(const core::StringList& l) {
+    std::string out;
+    for (const auto& s : l) out += (out.empty() ? "" : ", ") + s;
+    return out;
+}
+core::StringList split(const std::string& s) {
+    core::StringList out;
+    std::stringstream ss(s);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        const auto a = item.find_first_not_of(" \t");
+        const auto b = item.find_last_not_of(" \t");
+        if (a != std::string::npos) out.push_back(item.substr(a, b - a + 1));
+    }
+    return out;
+}
+double dbl(const Value& v) {
+    if (std::holds_alternative<double>(v)) return std::get<double>(v);
+    if (std::holds_alternative<std::int64_t>(v)) return static_cast<double>(std::get<std::int64_t>(v));
+    if (std::holds_alternative<bool>(v)) return std::get<bool>(v) ? 1 : 0;
+    return 0;
+}
+
+// What a packing key is, given the parent's kind.
+core::PropSpec pack_spec(core::ChildKind k, const std::string& key) {
+    core::PropSpec p;
+    p.name = key;
+    if (key == "column" || key == "row" || key == "width" || key == "height") p.kind = PropKind::Int;
+    else if (key == "resize" || key == "shrink") p.kind = PropKind::Bool;
+    else if (key == "slot") {
+        p.kind = PropKind::Enum;
+        if (k == core::ChildKind::Window)    p.values = {{"", ""}, {"titlebar", ""}};
+        if (k == core::ChildKind::Paned)     p.values = {{"start", ""}, {"end", ""}};
+        if (k == core::ChildKind::HeaderBar) p.values = {{"start", ""}, {"end", ""}, {"title", ""}};
+    } else p.kind = PropKind::String;
+    return p;
+}
+std::optional<Value> pack_default(const std::string& key) {
+    if (key == "width" || key == "height") return Value(std::int64_t{1});
+    if (key == "column" || key == "row")   return Value(std::int64_t{0});
+    if (key == "resize") return Value(true);
+    if (key == "shrink") return Value(false);
+    if (key == "slot")   return Value(std::string());
+    return std::nullopt;
+}
+
+}  // namespace
+
+// A wheel over a spin button changes its value -- in a scrolling inspector
+// that means scrolling past a row edits it (found driving s002: margin went to
+// -1). Until the editor has the keyboard, the wheel scrolls the pane instead.
+void Inspector::no_wheel_unless_focused(Gtk::Widget& w) {
+    auto wheel = Gtk::EventControllerScroll::create();
+    wheel->set_flags(Gtk::EventControllerScroll::Flags::VERTICAL);
+    wheel->set_propagation_phase(Gtk::PropagationPhase::CAPTURE);
+    wheel->signal_scroll().connect([this, &w](double, double dy) {
+        auto* win = dynamic_cast<Gtk::Window*>(w.get_root());
+        const Gtk::Widget* f = win ? win->get_focus() : nullptr;
+        if (f && (f == &w || f->is_ancestor(w))) return false;   // focused: the wheel is the editor's
+        auto adj = get_vadjustment();
+        adj->set_value(adj->get_value() + dy * 48);
+        return true;
+    }, false);
+    w.add_controller(wheel);
+}
+
+Inspector::Inspector(core::Design& d, core::DesignJournal& j)
+    : widgets::ScrolledWindow("designer.inspector"),
+      m_d(d), m_j(j),
+      m_page("designer.inspector.page", Gtk::Orientation::VERTICAL) {
+    m_page.add_css_class("mortimer-inspector");
+    set_child(m_page);
+    set_policy(Gtk::PolicyType::NEVER, Gtk::PolicyType::AUTOMATIC);
+    set_size_request(330, -1);
+}
+
+void Inspector::show(const std::string& sel) {
+    const auto r = m_d.get(sel);
+    std::string ptype;
+    if (r && !r->parent.empty())
+        if (auto p = m_d.get(r->parent)) ptype = p->type;
+    if (sel != m_key || !r || r->type != m_type || ptype != m_parent_type) {
+        m_key = sel;
+        m_type = r ? r->type : "";
+        m_parent_type = ptype;
+        rebuild();
+    }
+    refresh();
+}
+
+void Inspector::refresh() {
+    const auto r = m_d.get(m_key);
+    if (!r) return;
+    m_painting = true;
+    for (auto& row : m_rows) row.paint(*r);
+    m_painting = false;
+}
+
+void Inspector::rebuild() {
+    // Tearing down a focused Entry fires its focus-leave: that is not a user choice.
+    m_rebuilding = true;
+    while (auto* c = m_page.get_first_child()) m_page.remove(*c);
+    m_rebuilding = false;
+    m_rows.clear();
+    m_grid = nullptr;
+    m_line = 0;
+
+    const auto r = m_d.get(m_key);
+    if (!r) {
+        auto* l = Gtk::make_managed<Gtk::Label>("Nothing selected.\nPick a widget in the tree or on the canvas.");
+        l->add_css_class("dim-label");
+        l->set_margin_top(24);
+        m_page.append(*l);
+        return;
+    }
+    const core::WidgetSpec* w = core::find_widget(r->type);
+
+    // Who it is.
+    auto* head = Gtk::make_managed<Gtk::Label>();
+    head->set_markup("<b>" + Glib::Markup::escape_text(r->type) + "</b>");
+    head->set_xalign(0);
+    head->set_margin_top(8);
+    m_page.append(*head);
+    if (w && !w->doc.empty()) {
+        auto* doc = Gtk::make_managed<Gtk::Label>(w->doc);
+        doc->add_css_class("doc");
+        doc->set_wrap(true);
+        doc->set_xalign(0);
+        m_page.append(*doc);
+    }
+    const bool is_root = r->parent.empty();
+    section("Name", "The C++ name: member m_<name>, hooks on_<name>_<signal>.");
+    name_row(false);
+    if (is_root) {
+        section("Form", "The class this form becomes: <Name>Ui (generated) and <Name> (yours).");
+        name_row(true);
+    }
+    if (!w) return;
+
+    if (!w->props.empty()) {
+        section("Properties");
+        for (const auto& p : w->props) prop_row(r->type, p.name, false);
+    }
+    if (!is_root) {
+        const auto pr = m_d.get(r->parent);
+        const core::WidgetSpec* pw = pr ? core::find_widget(pr->type) : nullptr;
+        if (pw) {
+            const auto keys = core::packing_keys(pw->children);
+            if (!keys.empty()) {
+                section("Packing", "How it sits in its " + pr->type + ".");
+                for (const auto& k : keys) prop_row(pr->type, k, true);
+            }
+        }
+    }
+    section("Common");
+    for (const auto& p : core::common_props()) prop_row(r->type, p.name, false);
+
+    if (!w->signals.empty()) {
+        section("Signals", "Tick one to get a hook to override; Required makes it pure virtual.");
+        for (const auto& s : w->signals) signal_row(r->type, s.name);
+    }
+}
+
+void Inspector::section(const std::string& title, const std::string& doc) {
+    auto* l = Gtk::make_managed<Gtk::Label>(title);
+    l->add_css_class("section");
+    l->set_xalign(0);
+    m_page.append(*l);
+    if (!doc.empty()) {
+        auto* d = Gtk::make_managed<Gtk::Label>(doc);
+        d->add_css_class("doc");
+        d->set_wrap(true);
+        d->set_xalign(0);
+        m_page.append(*d);
+    }
+    m_grid = Gtk::make_managed<Gtk::Grid>();
+    m_grid->set_column_spacing(8);
+    m_grid->set_row_spacing(4);
+    m_grid->set_margin_top(4);
+    m_page.append(*m_grid);
+    m_line = 0;
+}
+
+void Inspector::commit_prop(const std::string& prop, bool pack, const std::optional<Value>& v) {
+    if (m_painting || m_rebuilding) return;
+    if (pack) core::design::set_pack(m_j, m_d, m_key, prop, v);
+    else      core::design::set_prop(m_j, m_d, m_key, prop, v);
+}
+
+void Inspector::name_row(bool form) {
+    auto* e = Gtk::make_managed<Gtk::Entry>();
+    e->set_hexpand(true);
+    e->set_name(form ? "designer.inspector.form_name" : "designer.inspector.name");
+    auto* why = Gtk::make_managed<Gtk::Label>();
+    why->add_css_class("why");
+    why->set_xalign(0);
+    why->set_wrap(true);
+    why->set_visible(false);
+    m_grid->attach(*e, 0, m_line++, 3, 1);
+    m_grid->attach(*why, 0, m_line++, 3, 1);
+    // Bound to THIS row's widget: by the time a focus-leave arrives the
+    // selection may already have moved on (s002: "sidebar is taken").
+    auto commit = [this, e, why, form, key = m_key] {
+        if (m_painting || m_rebuilding) return;
+        const std::string text = e->get_text();
+        const auto r = m_d.get(key);
+        if (!r || text == (form ? m_d.form_name() : r->name)) return;
+        std::string err;
+        const bool ok = form ? core::design::rename_form(m_j, m_d, text, &err)
+                             : core::design::rename(m_j, m_d, key, text, &err);
+        why->set_text(err);
+        why->set_visible(!ok && !err.empty());
+        if (!ok && !err.empty()) m_said.emit(err);
+    };
+    e->signal_activate().connect(commit);
+    auto focus = Gtk::EventControllerFocus::create();
+    focus->signal_leave().connect(commit);
+    e->add_controller(focus);
+    m_rows.push_back({[this, e, why, form](const core::Rec& r) {
+        // Not while it's being typed in: the text there is the user's, not yet a step.
+        if (e->has_focus()) return;
+        const std::string want = form ? m_d.form_name() : r.name;
+        if (e->get_text().raw() != want) e->set_text(want);
+        why->set_visible(false);
+    }});
+}
+
+void Inspector::prop_row(const std::string& type, const std::string& prop, bool pack) {
+    core::PropSpec spec;
+    std::optional<Value> dflt;
+    if (pack) {
+        const core::WidgetSpec* pw = core::find_widget(type);
+        spec = pack_spec(pw ? pw->children : core::ChildKind::None, prop);
+        dflt = pack_default(prop);
+    } else {
+        const core::WidgetSpec* w = core::find_widget(type);
+        const core::PropSpec* ps = w ? core::find_prop(*w, prop) : nullptr;
+        if (!ps) return;
+        spec = *ps;
+        dflt = gprops::default_of(type, prop);
+        if (!dflt && !spec.def.empty()) {
+            if (spec.kind == PropKind::Double) dflt = Value(std::stod(spec.def));
+            else if (spec.kind == PropKind::Int) dflt = Value(static_cast<std::int64_t>(std::stoll(spec.def)));
+        }
+    }
+
+    auto* label = Gtk::make_managed<Gtk::Label>(prop);
+    label->add_css_class("prop");
+    label->set_xalign(0);
+    if (!spec.doc.empty()) label->set_tooltip_text(spec.doc);
+    auto* reset = Gtk::make_managed<Gtk::Button>();
+    reset->set_icon_name("edit-clear-symbolic");
+    reset->set_has_frame(false);
+    reset->set_tooltip_text("Unset: back to GTK's default");
+    reset->set_focusable(false);
+    reset->signal_clicked().connect([this, prop, pack] { commit_prop(prop, pack, std::nullopt); });
+
+    Gtk::Widget* editor = nullptr;
+    std::function<void(const std::optional<Value>&)> show;   // paint the editor's value
+
+    switch (spec.kind) {
+        case PropKind::Bool: {
+            auto* c = Gtk::make_managed<Gtk::CheckButton>();
+            c->signal_toggled().connect([this, c, prop, pack] { commit_prop(prop, pack, Value(c->get_active())); });
+            show = [c](const std::optional<Value>& v) { c->set_active(v && std::holds_alternative<bool>(*v) && std::get<bool>(*v)); };
+            editor = c;
+            break;
+        }
+        case PropKind::Int:
+        case PropKind::Double: {
+            const bool is_int = spec.kind == PropKind::Int;
+            // Sizes that can't go below zero don't offer -1 (GTK's "unset" for the others).
+            const bool natural = prop.starts_with("margin") || prop.ends_with("spacing") || prop == "digits" ||
+                                 prop == "max_length" || prop == "width" || prop == "height" ||
+                                 prop == "column" || prop == "row";
+            const double lo = is_int ? (natural ? 0 : -1) : -1e6;
+            auto adj = Gtk::Adjustment::create(0, lo, is_int ? 100000 : 1e6, is_int ? 1 : 0.05, is_int ? 10 : 1);
+            auto* s = Gtk::make_managed<Gtk::SpinButton>(adj, 1, is_int ? 0 : 2);
+            s->set_hexpand(true);
+            no_wheel_unless_focused(*s);
+            s->signal_value_changed().connect([this, s, prop, pack, is_int] {
+                commit_prop(prop, pack, is_int ? Value(static_cast<std::int64_t>(std::llround(s->get_value())))
+                                               : Value(s->get_value()));
+            });
+            show = [s](const std::optional<Value>& v) { s->set_value(v ? dbl(*v) : 0); };
+            editor = s;
+            break;
+        }
+        case PropKind::String:
+        case PropKind::StringList: {
+            const bool list = spec.kind == PropKind::StringList;
+            auto* e = Gtk::make_managed<Gtk::Entry>();
+            e->set_hexpand(true);
+            if (list) e->set_placeholder_text("a, b, c");
+            e->signal_changed().connect([this, e, prop, pack, list] {
+                const std::string t = e->get_text();
+                if (t.empty()) commit_prop(prop, pack, std::nullopt);
+                else if (list) commit_prop(prop, pack, Value(split(t)));
+                else commit_prop(prop, pack, Value(t));
+            });
+            show = [e, list](const std::optional<Value>& v) {
+                std::string want;
+                if (v && std::holds_alternative<std::string>(*v)) want = std::get<std::string>(*v);
+                if (v && list && std::holds_alternative<core::StringList>(*v)) want = join(std::get<core::StringList>(*v));
+                if (e->get_text().raw() != want) e->set_text(want);
+            };
+            editor = e;
+            break;
+        }
+        case PropKind::Enum:
+        case PropKind::Ref: {
+            std::vector<std::string> values;
+            if (spec.kind == PropKind::Enum) {
+                for (const auto& [json, cpp] : spec.values) values.push_back(json);
+            } else {
+                values.push_back("");   // (none)
+                for (const auto& k : m_d.all())
+                    if (const auto o = m_d.get(k); o && o->type == spec.ref_type) values.push_back(o->name);
+            }
+            std::vector<Glib::ustring> shown;
+            for (const auto& v : values)
+                shown.push_back(v.empty() ? (spec.kind == PropKind::Ref ? "(none)" : "(child)") : v);
+            auto* dd = Gtk::make_managed<Gtk::DropDown>(Gtk::StringList::create(shown));
+            dd->set_hexpand(true);
+            no_wheel_unless_focused(*dd);
+            dd->property_selected().signal_changed().connect([this, dd, values, prop, pack, ref = spec.kind == PropKind::Ref] {
+                const auto i = dd->get_selected();
+                if (i >= values.size()) return;
+                if (ref && values[i].empty()) commit_prop(prop, pack, std::nullopt);
+                else commit_prop(prop, pack, Value(values[i]));
+            });
+            show = [dd, values](const std::optional<Value>& v) {
+                const std::string want = v && std::holds_alternative<std::string>(*v) ? std::get<std::string>(*v) : "";
+                for (std::size_t i = 0; i < values.size(); ++i)
+                    if (values[i] == want) { dd->set_selected(static_cast<guint>(i)); return; }
+                dd->set_selected(GTK_INVALID_LIST_POSITION);
+            };
+            editor = dd;
+            break;
+        }
+    }
+    if (!editor) return;
+    editor->set_name("designer.inspector." + std::string(pack ? "pack." : "prop.") + prop);
+    m_grid->attach(*label, 0, m_line);
+    m_grid->attach(*editor, 1, m_line);
+    m_grid->attach(*reset, 2, m_line);
+    ++m_line;
+
+    m_rows.push_back({[label, reset, show, prop, pack, dflt](const core::Rec& r) {
+        const auto& m = pack ? r.pack : r.props;
+        const auto it = m.find(prop);
+        const bool set = it != m.end();
+        if (set) label->add_css_class("set");
+        else     label->remove_css_class("set");
+        reset->set_opacity(set ? 1.0 : 0.0);
+        reset->set_sensitive(set);
+        show(set ? std::optional<Value>(it->second) : dflt);
+    }});
+}
+
+void Inspector::signal_row(const std::string& type, const std::string& signal) {
+    const core::WidgetSpec* w = core::find_widget(type);
+    const core::SignalSpec* ss = w ? core::find_signal(*w, signal) : nullptr;
+    if (!ss) return;
+    auto* hook = Gtk::make_managed<Gtk::CheckButton>(signal);
+    hook->set_tooltip_text(ss->doc);
+    hook->set_name("designer.inspector.signal." + signal);
+    auto* req = Gtk::make_managed<Gtk::CheckButton>("required");
+    req->set_tooltip_text("Pure virtual: your class won't compile until you write the hook.");
+    auto* name = Gtk::make_managed<Gtk::Label>();
+    name->add_css_class("hook");
+    name->set_xalign(0);
+    name->set_selectable(true);
+    name->set_ellipsize(Pango::EllipsizeMode::END);
+    m_grid->attach(*hook, 0, m_line);
+    m_grid->attach(*req, 1, m_line++);
+    m_grid->attach(*name, 0, m_line++, 3, 1);
+    hook->signal_toggled().connect([this, hook, signal] {
+        if (!m_painting) core::design::tick(m_j, m_d, m_key, signal, hook->get_active());
+    });
+    req->signal_toggled().connect([this, req, signal] {
+        if (!m_painting) core::design::require(m_j, m_d, m_key, signal, req->get_active());
+    });
+    m_rows.push_back({[this, hook, req, name, signal, ss](const core::Rec& r) {
+        const core::SignalHook* h = nullptr;
+        for (const auto& s : r.signals)
+            if (s.signal == signal) h = &s;
+        hook->set_active(h != nullptr);
+        req->set_active(h && h->required);
+        core::Node n{r.type, r.name, {}, {}, {}, {}};
+        const core::SignalHook probe = h ? *h : core::SignalHook{signal, false, ""};
+        name->set_text(ss->ret + " " + core::hook_name(n, probe) + "(" + ss->params + ")");
+        name->set_opacity(h ? 1.0 : 0.5);
+        (void)this;
+    }});
+}
+
+}  // namespace mortimer::designer

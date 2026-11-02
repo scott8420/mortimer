@@ -3,12 +3,13 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 
 #include <array>
+#include <cstdlib>
 #include <string>
 
 namespace mortimer::log {
 
 namespace {
-constexpr int kAreaCount = 5;
+constexpr int kAreaCount = 7;
 
 const char* area_name(Area a) {
     switch (a) {
@@ -17,6 +18,8 @@ const char* area_name(Area a) {
         case Area::Registry: return "registry";
         case Area::Recents:  return "recents";
         case Area::Io:       return "io";
+        case Area::Design:   return "design";
+        case Area::Canvas:   return "canvas";
     }
     return "?";
 }
@@ -35,6 +38,14 @@ void init() {
         auto lg = std::make_shared<spdlog::logger>(area_name(area), sink);
         lg->set_level(spdlog::level::info);   // default INFO; raise one area to TRACE to debug
         a[static_cast<std::size_t>(i)] = lg;
+    }
+    // MORTIMER_DEBUG=level[:area]  e.g. "debug", "trace:canvas" (as the apps it makes do).
+    if (const char* env = std::getenv("MORTIMER_DEBUG")) {
+        std::string spec = env, area;
+        if (const auto c = spec.find(':'); c != std::string::npos) { area = spec.substr(c + 1); spec.resize(c); }
+        const auto lvl = spdlog::level::from_str(spec);
+        for (int i = 0; i < kAreaCount; ++i)
+            if (area.empty() || area == area_name(static_cast<Area>(i))) a[static_cast<std::size_t>(i)]->set_level(lvl);
     }
 }
 

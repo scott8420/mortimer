@@ -1,48 +1,47 @@
 #pragma once
 #include "widgets/Widgets.hpp"
-#include "core/Stones.hpp"   // s046: the undo stone's demo model + journal
+#include "core/Design.hpp"
+#include "designer/Canvas.hpp"
+#include "designer/Dialogs.hpp"
+#include "designer/HooksPane.hpp"
+#include "designer/Inspector.hpp"
+#include "designer/Panes.hpp"
 
 #include <gtkmm/applicationwindow.h>
 #include <giomm/menu.h>
 #include <giomm/simpleaction.h>
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Shell -- the app window, AND the split-class exemplar.
+// Shell -- Mortimer's window: the designer (s002), and still the split-class
+// exemplar. The header is the index: every method's `// category:` tag names
+// the file its body lives in.
 //
-// This class is split across multiple TUs by CATEGORY OF CODE, not by feature
-// (CANON: "vocabulary first, file layout second" + "the header is the index").
-// The split costs ~nothing while the parts are small; retrofitting it after a
-// class grows to thousands of lines is a multi-session migration, so the
-// structure is installed on day one. The header below IS the index -- every
-// method carries a trailing `// category: ...` tag naming the file its body
-// lives in. Read the tag, open that file.
+//   palette | tree  ||  live canvas  ||  inspector          (status line below)
+//
+// The window owns ONE document: a Design (core/Design.hpp) and the journal over
+// it. Nothing in the window writes the design except through core::design::
+// verbs -- the panes emit what the user did, handlers call verbs, the design's
+// change queues ONE repaint of every pane at idle. Undo puts records back and
+// the same repaint follows; there is no second path to the screen.
 //
 // Vocabulary
-// ----------
-//   Zones    -- construction of named regions: the window frame, header,
-//               sidebar+stack, the pattern pages, the menu model.
-//               File: src/Shell_zones.cpp
-//   Bindings -- what's wired to what: Gio actions, the recents action group,
-//               accelerators.  File: src/Shell_bindings.cpp
-//   Handlers -- slot bodies (on_*): what a user action actually does.
-//               File: src/Shell_handlers.cpp
-//   Helpers  -- reusable sync/orchestration called from zones/bindings/handlers.
-//               File: src/Shell_helpers.cpp
-//   Glue     -- what stays in Shell.cpp: the ctor + build_ui() (the ordered
-//               construct -> name/register -> bind pass).
+//   Zones    -- the frame, header, the panes, the menu.       src/Shell_zones.cpp
+//   Bindings -- actions, keys, the model<->journal<->UI wiring. src/Shell_bindings.cpp
+//   Handlers -- what a user action does (one verb, then where the selection goes).
+//                                                             src/Shell_handlers.cpp
+//   Helpers  -- repaint, files, title, status, recents.       src/Shell_helpers.cpp
+//   Glue     -- ctor + build_ui().                            src/Shell.cpp
 //
 // Finding things
-// --------------
-//   "Where is the window built?"        -> Shell_zones.cpp    (build_shell)
-//   "Where are actions registered?"     -> Shell_bindings.cpp (bind_actions)
-//   "What does 'Dump registry' do?"     -> Shell_handlers.cpp (on_dump_registry)
-//   "Where does the recents list sync?" -> Shell_helpers.cpp  (note_recent / rebuild_*)
-//   "Where does Ctrl+Z go?"             -> Shell_bindings.cpp (the window's undo keys)
-//                                          + Shell_handlers.cpp (on_undo / on_redo)
+//   "Where does a palette click go?"  -> Shell_handlers.cpp (on_add)
+//   "Where does Ctrl+Z go?"           -> Shell_bindings.cpp (the window's keys) + on_undo
+//   "Where is the .mort written?"     -> Shell_helpers.cpp  (save_to)
+//   "Who repaints what?"              -> Shell_helpers.cpp  (repaint)
 // ─────────────────────────────────────────────────────────────────────────────
 namespace mortimer {
 
@@ -55,87 +54,111 @@ public:
     ~Shell() override;
 
     void build_ui();                             // category: glue
+    void open_path(const std::string& path);     // category: handler: open a .mort (App's on_open)
 
 private:
     // ── zones ──────────────────────────────────────────────────────────────
-    void build_shell();                          // category: zone: window + sidebar + stack
-    void build_pages();                          // category: zone: the pattern pages
+    void build_header();                         // category: zone: titlebar
+    void build_body();                           // category: zone: the panes + status line
     Glib::RefPtr<Gio::Menu> build_menu();        // category: zone: hamburger model
 
     // ── bindings ───────────────────────────────────────────────────────────
-    void bind_actions();                         // category: bindings: actions + recents group
+    void bind_actions();                         // category: bindings: win.* + recents group
+    void bind_model();                           // category: bindings: design <-> journal <-> panes
+    void bind_keys();                            // category: bindings: Ctrl+Z, Delete, Alt+arrows
 
     // ── handlers ───────────────────────────────────────────────────────────
-    void on_pick_folder();                       // category: handler: folder chooser -> remember it
-    void on_recent_open(const std::string& p);   // category: handler: open a recent (parameterised)
-    void on_recent_clear();                      // category: handler: empty the recents list
-    void on_dump_registry();                     // category: handler: print the live widget tree
-    void on_about();                             // category: handler: open the About window (dialog-lifetime exemplar)
-    void on_shortcuts();   // handler: open the keyboard reference (renders from core::shortcut_registry)
-    // s046 -- the undo stone. Every verb on the Undo page goes through the
-    // journal (core/Undo.hpp); nothing on it writes the model any other way.
-    void on_undo();                              // category: handler: Ctrl+Z / menu / button
-    void on_redo();                              // category: handler: Ctrl+Shift+Z, Ctrl+Y / menu / button
-    void on_stone_add();                         // category: handler: a new stone below the selection
-    void on_stone_delete();                      // category: handler: delete; the neighbour takes the selection
-    void on_stone_up();                          // category: handler: swap with the one above
-    void on_stone_down();                        // category: handler: swap with the one below
-    void on_stone_rename();                      // category: handler: the name field, on Enter / leaving it
-    void on_stone_size();                        // category: handler: the slider (keys merge; a drag is one step)
+    void on_new();                               // category: handler: a fresh starter form
+    void on_open();                              // category: handler: file dialog -> open_path
+    void on_save();                              // category: handler: to its file, or Save As
+    void on_save_as();                           // category: handler: file dialog -> save_to
+    void on_new_project();                       // category: handler: ask -> create_workspace -> open its form
+    void on_open_project();                      // category: handler: folder -> its main form
+    void on_add_form();                          // category: handler: ask a name -> add_form -> open it
+    void on_open_form(const std::string& stem);  // category: handler: another form of this project
+    void on_undo();                              // category: handler
+    void on_redo();                              // category: handler
+    void on_add(const std::string& type);        // category: handler: palette -> design::add
+    void on_delete();                            // category: handler: design::remove; neighbour selected
+    void on_move_up();                           // category: handler
+    void on_move_down();                         // category: handler
+    void on_select(const std::string& key);      // category: handler: tree / canvas picked one
+    void on_drop(const std::string& payload, const std::string& parent, int index);   // category: handler: a drag landed
+    void on_recent_open(const std::string& p);   // category: handler
+    void on_recent_clear();                      // category: handler
+    void on_dump_registry();                     // category: handler
+    void on_about();                             // category: handler
+    void on_shortcuts();                         // category: handler
+    bool on_close();                             // category: handler: unsaved changes?
 
     // ── helpers ────────────────────────────────────────────────────────────
-    void note_recent(const std::string& path);   // category: helper: push onto the list + persist
-    void rebuild_recents_menu();                  // category: helper: repaint the submenu
-    void rebuild_recents_page();                  // category: helper: repaint the live list page
-    std::string recents_file() const;             // category: helper: the XDG path (UI-side resolution)
-    void build_undo_page();                       // category: zone: the Undo page (s046)
-    void queue_stones_repaint();                  // category: helper: one repaint per idle, after the writes
-    void repaint_stones();                        // category: helper: the list + the detail fields from the model
-    void select_stone(const std::string& id, bool keys);   // category: helper: select (+ keyboard) after a repaint
-    void update_undo_ui();                        // category: helper: Undo / Redo say what they would do, grey when nothing
-    bool focus_is_text() const;                   // category: helper: the keyboard is in a text box (its own Ctrl+Z)
+    void load_form(const core::Form& f, const std::string& path);   // category: helper: a new document
+    void confirm_discard(std::function<void()> then);   // category: helper: unsaved? ask, then go on
+    void generate();                             // category: helper: the project, after a save
+    void rebuild_forms_menu();                   // category: helper: the project's forms
+    bool save_to(const std::string& path);       // category: helper: write the .mort
+    void queue_repaint();                        // category: helper: one repaint per idle
+    void repaint();                              // category: helper: every pane from the model
+    void select(const std::string& key);         // category: helper: move the selection (not a step)
+    void update_undo_ui();                       // category: helper: labels + greying
+    void update_title();                         // category: helper: name, file, dirty dot
+    bool dirty() const;                          // category: helper
+    void say(const std::string& text, int level = 0);   // category: helper: status line (0 info, 1 warn, 2 error)
+    void say_validation();                       // category: helper: the form's problems, or "ok"
+    void note_recent(const std::string& path);   // category: helper
+    void rebuild_recents_menu();                 // category: helper
+    std::string recents_file() const;            // category: helper
+    bool focus_is_text() const;                  // category: helper
 
-    // Titlebar: brand logo (start) + hamburger (end).
-    widgets::Button     m_logo_button;   // frameless brand mark; opens About
+    // Titlebar.
+    widgets::Button     m_logo_button;
+    widgets::Button     m_open_button;
+    widgets::Button     m_undo_button;
+    widgets::Button     m_redo_button;
+    widgets::Button     m_save_button;
     widgets::MenuButton m_menu_button;
+    widgets::Label      m_title;
+    widgets::Label      m_subtitle;
 
-    // Body: sidebar | stack (each pattern is a stack page).
-    widgets::Box          m_body;      // horizontal
-    widgets::StackSidebar m_sidebar;
-    widgets::Stack        m_stack;
+    // The document. Declaration order matters: the design before the journal
+    // that holds a reference to it, both before the inspector that holds both.
+    core::Design        m_design;
+    core::DesignJournal m_journal{m_design};
+    std::string         m_sel;                 // the selected widget's key
+    std::string         m_path;                // "" = never saved
+    std::string         m_app_dir;             // the project the form is in; "" = a loose form
+    std::string         m_saved;               // form JSON as last saved / loaded
+    bool                m_repaint_queued = false;
+    bool                m_keys_to_tree = false;    // the next repaint gives the tree the keyboard
+    bool                m_said_recently = false;   // a refusal is on the status line: keep it one repaint
 
-    // The recents "live page": a label + a scrolling list rebuilt on change.
-    widgets::Box            m_recents_page;   // vertical
-    widgets::ScrolledWindow m_recents_scroll;
-    widgets::ListBox        m_recents_list;
+    // Body.
+    widgets::Box        m_root;                // vertical: panes, status
+    widgets::Paned      m_outer;               // left | (canvas | inspector)
+    widgets::Paned      m_left;                // palette / tree
+    widgets::Paned      m_right;               // (canvas / hooks) | inspector
+    widgets::Paned      m_center;              // canvas over the hooks panel
+    designer::Palette   m_palette;
+    designer::TreePane  m_tree;
+    designer::Canvas    m_canvas;
+    designer::HooksPane m_hooks;
+    designer::Inspector m_inspector{m_design, m_journal};
+    widgets::Label      m_status;
 
-    // Recents state (core data; UI holds it + resolves the path -- the seam).
+    // Menus + actions.
     std::vector<std::string>        m_recents;
     std::string                     m_recents_file;
-    Glib::RefPtr<Gio::Menu>         m_recents_menu;   // live submenu, rebuilt in place
-    Glib::RefPtr<Gio::SimpleAction> m_recents_clear;  // held to toggle enabled state
+    Glib::RefPtr<Gio::Menu>         m_recents_menu;
+    Glib::RefPtr<Gio::SimpleAction> m_recents_clear;
+    Glib::RefPtr<Gio::Menu>         m_edit_menu;
+    Glib::RefPtr<Gio::Menu>         m_forms_menu;     // this project's forms, rebuilt on load
+    Glib::RefPtr<Gio::SimpleAction> m_act_add_form;
+    Glib::RefPtr<Gio::SimpleAction> m_act_undo, m_act_redo, m_act_delete, m_act_up, m_act_down;
 
-    // s046 -- the undo stone. Declaration order matters: the store before the
-    // journal that holds a reference to it.
-    core::Stones       m_stones;
-    core::StoneJournal m_journal{m_stones};
-    std::string        m_sel;                  // the selected stone's id ("" = none)
-    bool               m_painting = false;     // a repaint sets fields: not a user choice
-    bool               m_repaint_queued = false;
-    bool               m_keys_to_list = false; // after the repaint, give the list the keyboard
-    widgets::Box       m_undo_page;
-    widgets::ListBox   m_stone_list;
-    widgets::Entry     m_stone_name;
-    widgets::Scale     m_stone_size;
-    widgets::Button    m_undo_button;
-    widgets::Button    m_redo_button;
-    widgets::Label     m_undo_said;            // "Undid: Delete “Jade”"
-    Glib::RefPtr<Gio::Menu>         m_edit_menu;   // Undo / Redo items, re-labelled live
-    Glib::RefPtr<Gio::SimpleAction> m_act_undo, m_act_redo;
-
-    // The About window: a hide-on-close singleton, built lazily on first open.
-    std::unique_ptr<AboutWindow>    m_about;
-    std::unique_ptr<ShortcutsDialog> m_shortcuts;   // shortcut registry's GTK consumer (same lifetime stone)
+    std::unique_ptr<AboutWindow>     m_about;
+    std::unique_ptr<ShortcutsDialog> m_shortcuts;
+    std::unique_ptr<designer::NewProjectDialog> m_new_project;
+    std::unique_ptr<designer::NameDialog>       m_name_dialog;
 };
 
 }  // namespace mortimer

@@ -111,22 +111,33 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
         {"Diagnostics", "win.dump-registry", {"<Ctrl>d"}, "",
          "Dump the widget registry to the log"},
 
-        // ── Edit (s046) ───────────────────────────────────────────────────────
-        // Doc-only ON PURPOSE: an accelerator would take Ctrl+Z from every text
-        // box. The window hears these instead (Shell_bindings.cpp).
+        // ── Edit ──────────────────────────────────────────────────────────────
+        // Doc-only ON PURPOSE: an accelerator would take these keys from every
+        // text box in the inspector. The window hears them instead
+        // (Shell_bindings.cpp, bind_keys).
         {"Edit", "", {}, "Ctrl+Z", "Undo -- anywhere but a text box (which keeps its own)"},
         {"Edit", "", {}, "Ctrl+Shift+Z  /  Ctrl+Y", "Redo"},
+        {"Edit", "", {}, "Delete", "Delete the selected widget (and what it holds)"},
+        {"Edit", "", {}, "Alt+\u2191  /  Alt+\u2193", "Move the selected widget up / down among its siblings"},
+
+        // ── File ──────────────────────────────────────────────────────────────
+        {"File", "win.new",     {"<Ctrl>n"}, "", "New scratch form (not in a project)"},
+        {"File", "win.open",    {"<Ctrl>o"}, "", "Open a form"},
+        {"File", "win.save",    {"<Ctrl>s"}, "", "Save"},
+        {"File", "win.save-as", {"<Ctrl><Shift>s"}, "", "Save as"},
+        {"File", "win.new-project", {"<Ctrl><Shift>n"}, "", "New project (a whole app workspace)"},
 
         // ── General ───────────────────────────────────────────────────────────
-        {"General", "win.pick-folder",   {"<Ctrl>o"}, "", "Pick a folder"},
         {"General", "win.shortcuts",     {"<Ctrl>question", "<Ctrl>slash"}, "",
          "Keyboard shortcuts (this window)"},
         {"General", "win.about",         {"F1"}, "", "About Mortimer"},
         {"General", "win.quit",          {"<Ctrl>q"}, "", "Quit"},
 
         // ── Mouse ─────────────────────────────────────────────────────────────
-        // Doc-only: a gesture is not a GAction, but the reader still needs it.
-        {"Mouse", "", {}, "Click a recent", "Open that folder"},
+        {"Mouse", "", {}, "Click on the canvas", "Select the widget under the pointer (it never sees the click)"},
+        {"Mouse", "", {}, "Click in the palette", "Add that widget into the selection, or just after it"},
+        {"Mouse", "", {}, "Drag from the palette", "Drop on a tree row (top / middle / bottom = before / into / after) or on the canvas"},
+        {"Mouse", "", {}, "Drag a tree row", "Reorder, or reparent into another container"},
 
     };
     return kReg;

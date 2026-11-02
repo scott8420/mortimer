@@ -9,6 +9,7 @@
 // packing a container chooses.
 #include "core/Design.hpp"
 #include "core/Catalog.hpp"
+#include "core/Project.hpp"
 
 #include <filesystem>
 #include <functional>
@@ -233,5 +234,111 @@ void selftest_design(const Check& check_) {
         core::design::tick(f.j, f.d, c, "clicked", false);
         check("design untick: gone", f.d.get(c)->signals.empty());
         check("design signals: three steps", f.j.size() == 3);
+    }
+
+    // ── s003: actions -- rename and delete carry the menu rows ──────────────
+    {
+        Fix f;
+        const auto menu = f.d.find("menu");
+        auto rows = [&] { return std::get<core::StringList>(f.d.get(menu)->props.at("menu")); };
+        core::design::set_action(f.j, f.d, "save", {"store", "<Control>s", false});
+        check("action rename: the menu row follows", rows().front() == "Save=win.store", rows().front());
+        check("action rename: one step", f.j.size() == 1);
+        f.j.undo();
+        check("action rename+undo: row back", rows().front() == "Save=win.save");
+        core::design::remove_action(f.j, f.d, "save");
+        check("action delete: its row goes too", rows().size() == 2 && rows().front() == "-");
+        f.j.undo();
+        check("action delete+undo: row back in place", rows().front() == "Save=win.save" && rows().size() == 3);
+        std::string why;
+        check("action: a duplicate is refused", core::design::add_action(f.j, f.d, "save", &why).empty() &&
+                                                why.find("already") != std::string::npos, why);
+        check("action: auto-named", core::design::add_action(f.j, f.d) == "action1");
+        check("gio name: save_as -> save-as", core::gio_action_name("save_as") == "save-as");
+        auto bad = f.d.to_form();
+        bad.actions.push_back({"x", "<Control", false});
+        check("validate: a broken key is refused", !first_error(bad).empty(), first_error(bad));
+    }
+
+    // ── s002 m4: where a drop lands ─────────────────────────────────────────
+    {
+        using core::design::Zone;
+        namespace dz = core::design;
+        check("zone: container quarters", dz::zone_at(2, 40, true, false) == Zone::Before &&
+                                          dz::zone_at(20, 40, true, false) == Zone::Inside &&
+                                          dz::zone_at(38, 40, true, false) == Zone::After);
+        check("zone: leaf halves", dz::zone_at(10, 40, false, false) == Zone::Before &&
+                                   dz::zone_at(30, 40, false, false) == Zone::After);
+        check("zone: root is only inside; zero height is after",
+              dz::zone_at(1, 40, true, true) == Zone::Inside && dz::zone_at(1, 0, true, false) == Zone::After);
+        Fix f;
+        const auto ok = f.d.find("ok"), cancel = f.d.find("cancel"), body = f.d.find("body"),
+                   grid = f.d.find("grid"), hint = f.d.find("hint"), pages = f.d.find("pages");
+        auto l = dz::landing(f.d, "Button", cancel, ok, Zone::Before);
+        check("landing: cancel before ok -> body, 0", l.parent == body && l.index == 0, l.why);
+        l = dz::landing(f.d, "Button", ok, hint, Zone::After);
+        check("landing: ok after hint -> index counted without ok", l.parent == body && l.index == 2,
+              std::to_string(l.index));
+        l = dz::landing(f.d, "Box", body, grid, Zone::Inside);
+        check("landing: a Box into its own child -> refused", l.parent.empty() && l.why.find("itself") != std::string::npos, l.why);
+        l = dz::landing(f.d, "Button", ok, ok, Zone::Inside);
+        check("landing: onto itself -> refused", l.parent.empty());
+        l = dz::landing(f.d, "Button", "", hint, Zone::Inside);
+        check("landing: into a Label -> refused (says why)", l.parent.empty() && l.why.find("cannot hold") != std::string::npos, l.why);
+        l = dz::landing(f.d, "Label", ok, pages, Zone::Inside);
+        check("landing: into a Stack -> allowed", l.parent == pages);
+        l = dz::landing(f.d, "Label", "", f.d.root(), Zone::Inside);
+        check("landing: a third thing in the window -> refused", l.parent.empty());
+        l = dz::landing_on(f.d, "Button", "", hint);
+        check("landing_on: a Label -> just after it", l.parent == body && l.index == 3, std::to_string(l.index));
+        l = dz::landing_on(f.d, "Entry", "", grid);
+        check("landing_on: a Grid -> into it", l.parent == grid);
+        // ...and the verb takes the landing as given.
+        const auto r = dz::landing(f.d, "Button", cancel, ok, Zone::Before);
+        dz::move(f.j, f.d, cancel, r.parent, r.index);
+        check("landing -> move: cancel now first", f.d.children(body).front() == cancel);
+    }
+
+    // ── s002 m3: the window's project awareness ─────────────────────────────
+    {
+        const fs::path tmp = fs::temp_directory_path() / "mortimer_design_selftest";
+        fs::remove_all(tmp);
+        fs::create_directories(tmp);
+        std::string app;
+        try {
+            app = core::create_workspace(core::derive_app("Probe"), tmp.string());
+        } catch (const std::exception& e) {
+            check("project: workspace", false, e.what());
+        }
+        if (!app.empty()) {
+            const auto main = (fs::path(app) / "forms" / "MainWindow.mort").string();
+            check("project_of: a project's form -> its app", core::project_of(main) == app,
+                  core::project_of(main));
+            check("project_of: a loose form -> \"\"",
+                  core::project_of((fs::path(MORTIMER_SOURCE_DIR) / "tests" / "KitchenSink.mort").string()).empty());
+            std::string made, err;
+            try { made = core::add_form(app, "Prefs"); } catch (const std::exception& e) { err = e.what(); }
+            check("add_form: writes forms/Prefs.mort", !made.empty() && fs::exists(made), err);
+            check("add_form: listed in mortimer.json", core::project_of(made) == app);
+            bool dup = false, bad = false;
+            try { core::add_form(app, "Prefs"); } catch (const std::exception&) { dup = true; }
+            try { core::add_form(app, "class"); } catch (const std::exception&) { bad = true; }
+            check("add_form: refuses a duplicate and a keyword", dup && bad);
+            const auto gen = core::generate_project(app);
+            check("add_form: the new form generates", gen.ok() &&
+                  fs::exists(fs::path(app) / "generated" / "PrefsUi.hpp") &&
+                  fs::exists(fs::path(app) / "include" / "Prefs.hpp"));
+            // Live report: a signal ticked in the window, not yet saved, shows unhooked.
+            Fix f(core::load_form(made));
+            core::design::tick(f.j, f.d, f.d.root(), "close_request", true);
+            const auto rep = core::live_report(app, f.d.to_form());
+            check("live_report: an unsaved tick shows, unhooked",
+                  rep.header_found && rep.hooks.size() == 1 && !rep.hooks[0].hooked && rep.unhooked_count() == 1);
+            core::design::require(f.j, f.d, f.d.root(), "close_request", true);
+            check("live_report: required + unwritten -> missing",
+                  core::live_report(app, f.d.to_form()).missing.size() == 1);
+            check("live_report: no project -> no header", !core::live_report("", f.d.to_form()).header_found);
+        }
+        fs::remove_all(tmp);
     }
 }
