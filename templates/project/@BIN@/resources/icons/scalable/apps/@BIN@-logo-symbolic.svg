@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <!-- A placeholder mark: a window with a title bar. currentColor throughout so
+       GTK's symbolic pipeline recolours it to the theme foreground. Replace it
+       with @APP@'s own. -->
+  <path fill="currentColor" fill-rule="evenodd"
+        d="M3 1.5h10A1.5 1.5 0 0 1 14.5 3v10a1.5 1.5 0 0 1-1.5 1.5H3A1.5 1.5 0 0 1 1.5 13V3A1.5 1.5 0 0 1 3 1.5zM3 5v8h10V5z"/>
+</svg>

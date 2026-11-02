@@ -1,0 +1,81 @@
+{
+  "mortimer": 1,
+  "name": "KitchenSink",
+  "root": {
+    "type": "Window", "id": "kitchen_sink",
+    "props": { "title": "Every widget", "default_width": 900, "default_height": 640, "resizable": true,
+               "hexpand": true, "vexpand": true, "halign": "fill", "valign": "fill", "margin": 0,
+               "margin_start": 0, "margin_end": 0, "margin_top": 0, "margin_bottom": 0,
+               "width_request": 400, "height_request": 300, "sensitive": true,
+               "tooltip": "the root", "css_classes": ["background"] },
+    "signals": [ { "signal": "close_request" } ],
+    "children": [
+      { "type": "HeaderBar", "id": "header", "pack": { "slot": "titlebar" },
+        "props": { "show_title_buttons": true },
+        "children": [
+          { "type": "Button", "id": "start_btn", "pack": { "slot": "start" },
+            "props": { "icon_name": "list-add-symbolic", "has_frame": false } },
+          { "type": "Label", "id": "title", "pack": { "slot": "title" }, "props": { "label": "Title \"quoted\"\nnewline \\ back" } },
+          { "type": "MenuButton", "id": "menu", "pack": { "slot": "end" },
+            "props": { "icon_name": "open-menu-symbolic", "label": "Menu" } }
+        ] },
+      { "type": "Paned", "id": "split", "props": { "orientation": "horizontal", "position": 220, "wide_handle": true },
+        "children": [
+          { "type": "StackSidebar", "id": "sidebar", "pack": { "slot": "start", "resize": false, "shrink": false },
+            "props": { "stack": "pages" } },
+          { "type": "Stack", "id": "pages", "pack": { "slot": "end", "resize": true, "shrink": true },
+            "props": { "transition": "crossfade" },
+            "signals": [ "visible_child_changed" ],
+            "children": [
+              { "type": "Grid", "id": "form_grid", "pack": { "name": "inputs", "title": "Inputs", "icon_name": "document-edit-symbolic" },
+                "props": { "row_spacing": 6, "column_spacing": 12, "row_homogeneous": false, "column_homogeneous": false, "margin": 12 },
+                "children": [
+                  { "type": "Label", "id": "name_lbl", "pack": { "column": 0, "row": 0 },
+                    "props": { "label": "Név — ünïcode", "xalign": 1, "use_markup": false, "wrap": false, "selectable": true } },
+                  { "type": "Entry", "id": "name", "pack": { "column": 1, "row": 0, "width": 2, "height": 1 },
+                    "props": { "text": "", "placeholder": "Your name", "visibility": true, "max_length": 40 },
+                    "signals": [ "activate", { "signal": "changed", "handler": "on_name_edited" } ] },
+                  { "type": "CheckButton", "id": "agree", "pack": { "column": 0, "row": 1 },
+                    "props": { "label": "Agree", "active": true }, "signals": [ "toggled" ] },
+                  { "type": "Switch", "id": "power", "pack": { "column": 1, "row": 1 },
+                    "props": { "active": false }, "signals": [ "active_changed" ] },
+                  { "type": "Scale", "id": "volume", "pack": { "column": 0, "row": 2, "width": 3 },
+                    "props": { "orientation": "horizontal", "lower": 0, "upper": 11, "step": 0.5, "page": 2,
+                               "value": 7.25, "digits": 2, "draw_value": true },
+                    "signals": [ "value_changed" ] },
+                  { "type": "SpinButton", "id": "count", "pack": { "column": 0, "row": 3 },
+                    "props": { "lower": -5, "upper": 5, "step": 1, "page": 1, "value": 2, "digits": 0 },
+                    "signals": [ { "signal": "value_changed", "required": true } ] },
+                  { "type": "DropDown", "id": "flavour", "pack": { "column": 1, "row": 3 },
+                    "props": { "items": ["Vanilla", "Chocolate", "Strawberry"], "selected": 1 },
+                    "signals": [ "selected_changed" ] },
+                  { "type": "Image", "id": "pic", "pack": { "column": 2, "row": 3 },
+                    "props": { "icon_name": "face-smile-symbolic", "pixel_size": 48, "visible": true } }
+                ] },
+              { "type": "ScrolledWindow", "id": "scroller", "pack": { "name": "list", "title": "List" },
+                "props": { "hscrollbar": "never", "vscrollbar": "automatic", "has_frame": true,
+                           "propagate_natural_width": false, "propagate_natural_height": false },
+                "children": [
+                  { "type": "ListBox", "id": "rows", "props": { "selection_mode": "single" },
+                    "signals": [ "row_activated", "row_selected" ],
+                    "children": [
+                      { "type": "Label", "id": "row_a", "props": { "label": "Alpha" } },
+                      { "type": "Box", "id": "row_b", "props": { "orientation": "horizontal", "spacing": 6, "homogeneous": false },
+                        "children": [
+                          { "type": "Image", "id": "row_b_icon", "props": { "icon_name": "starred-symbolic" } },
+                          { "type": "Label", "id": "row_b_text", "props": { "label": "Bravo" } }
+                        ] }
+                    ] }
+                ] },
+              { "type": "Box", "id": "buttons", "pack": { "name": "buttons", "title": "Buttons" },
+                "props": { "orientation": "vertical", "spacing": 8 },
+                "children": [
+                  { "type": "Button", "id": "go", "props": { "label": "Go", "css_classes": ["suggested-action"] },
+                    "signals": [ "clicked" ] },
+                  { "type": "Button", "id": "act", "props": { "label": "Quit action", "action_name": "app.quit" } }
+                ] }
+            ] }
+        ] }
+    ]
+  }
+}

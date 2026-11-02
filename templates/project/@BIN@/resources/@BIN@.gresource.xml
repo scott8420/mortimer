@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- @APP@'s resource bundle: compiled into the binary, nothing on the user's
+     disk. The prefix ends in scalable/apps/ because GTK's icon lookup insists
+     on that tail; App passes only @APP_ID_PATH@/icons and GTK appends the rest.
+     The prefix mirrors the app id - they move together.
+     (docs/resources-and-dialog-lifetime.md) -->
+<gresources>
+  <gresource prefix="@APP_ID_PATH@/icons/scalable/apps">
+    <file preprocess="xml-stripblanks" alias="@BIN@-logo-symbolic.svg">icons/scalable/apps/@BIN@-logo-symbolic.svg</file>
+  </gresource>
+</gresources>

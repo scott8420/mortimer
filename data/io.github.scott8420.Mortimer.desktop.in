@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Mortimer
+Comment=Design GTK 4 windows; get gtkmm code with hooks you override
+Exec=@BINDIR@/mortimer
+Icon=io.github.scott8420.Mortimer
+Terminal=false
+StartupNotify=true
+Categories=GTK;Development;GUIDesigner;

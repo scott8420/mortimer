@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=@APP@
+Comment=Made with Mortimer
+Exec=@BINDIR@/@BIN@
+Icon=@APP_ID@
+Terminal=false
+StartupNotify=true
+Categories=GTK;Utility;

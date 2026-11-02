@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <!-- Mortimer: bricks laid in courses, the gaps between them the mortar -
+       what the generated half is to your code. currentColor throughout so
+       GTK's symbolic pipeline recolours it to the theme foreground. -->
+  <g fill="currentColor">
+    <rect x="1"    y="2"    width="6.5" height="3.2" rx="0.6"/>
+    <rect x="8.5"  y="2"    width="6.5" height="3.2" rx="0.6"/>
+    <rect x="1"    y="6.4"  width="2.7" height="3.2" rx="0.6"/>
+    <rect x="4.7"  y="6.4"  width="6.6" height="3.2" rx="0.6"/>
+    <rect x="12.3" y="6.4"  width="2.7" height="3.2" rx="0.6"/>
+    <rect x="1"    y="10.8" width="6.5" height="3.2" rx="0.6"/>
+    <rect x="8.5"  y="10.8" width="6.5" height="3.2" rx="0.6"/>
+  </g>
+</svg>

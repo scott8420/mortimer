@@ -1,0 +1,58 @@
+#include "Log.hpp"
+
+#include <spdlog/sinks/stdout_color_sinks.h>
+
+#include <array>
+#include <cstdlib>
+#include <string>
+
+namespace @NS@::log {
+
+namespace {
+constexpr int kAreaCount = 4;
+
+const char* area_name(Area a) {
+    switch (a) {
+        case Area::App:      return "app";
+        case Area::Ui:       return "ui";
+        case Area::Registry: return "registry";
+        case Area::Io:       return "io";
+    }
+    return "?";
+}
+
+std::array<std::shared_ptr<spdlog::logger>, kAreaCount>& loggers() {
+    static std::array<std::shared_ptr<spdlog::logger>, kAreaCount> a{};
+    return a;
+}
+}  // namespace
+
+void init() {
+    auto sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+    auto& a = loggers();
+    for (int i = 0; i < kAreaCount; ++i) {
+        auto lg = std::make_shared<spdlog::logger>(area_name(static_cast<Area>(i)), sink);
+        lg->set_level(spdlog::level::info);
+        a[static_cast<std::size_t>(i)] = lg;
+    }
+    // @BIN_UPPER@_DEBUG=<level>[:<area>]  e.g. "debug", "trace:ui"
+    if (const char* env = std::getenv("@BIN_UPPER@_DEBUG")) {
+        const std::string v(env);
+        const auto colon = v.find(':');
+        const auto level = spdlog::level::from_str(v.substr(0, colon));
+        const std::string area = colon == std::string::npos ? "" : v.substr(colon + 1);
+        for (int i = 0; i < kAreaCount; ++i)
+            if (area.empty() || area == "all" || area == area_name(static_cast<Area>(i)))
+                a[static_cast<std::size_t>(i)]->set_level(level);
+    }
+}
+
+std::shared_ptr<spdlog::logger> get(Area area) {
+    return loggers()[static_cast<std::size_t>(area)];
+}
+
+void set_level(Area area, spdlog::level::level_enum level) {
+    if (auto lg = get(area)) lg->set_level(level);
+}
+
+}  // namespace @NS@::log
