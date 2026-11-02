@@ -6,6 +6,7 @@
 #include <gtkmm/checkbutton.h>
 #include <gtkmm/dropdown.h>
 #include <gtkmm/entry.h>
+#include <gtkmm/image.h>
 #include <gtkmm/eventcontrollerfocus.h>
 #include <gtkmm/eventcontrollerscroll.h>
 #include <gtkmm/window.h>
@@ -106,7 +107,13 @@ void Inspector::show(const std::string& sel) {
     std::string ptype;
     if (r && !r->parent.empty())
         if (auto p = m_d.get(r->parent)) ptype = p->type;
-    if (sel != m_key || !r || r->type != m_type || ptype != m_parent_type) {
+    // The action pickers' choices and the Actions rows are built from the
+    // form's action NAMES: a name added / removed / renamed rebuilds.
+    std::string sig;
+    if (const auto f = m_d.get(core::Design::kForm))
+        for (const auto& a : f->actions) sig += a.name + ",";
+    if (sel != m_key || !r || r->type != m_type || ptype != m_parent_type || sig != m_actions_sig) {
+        m_actions_sig = sig;
         m_key = sel;
         m_type = r ? r->type : "";
         m_parent_type = ptype;
@@ -161,6 +168,9 @@ void Inspector::rebuild() {
     if (is_root) {
         section("Form", "The class this form becomes: <Name>Ui (generated) and <Name> (yours).");
         name_row(true);
+        section("Actions", "win.<name>: a menu row or a button runs it, the key runs it, and the hook "
+                           "on_action_<name>() is what it does.");
+        actions_rows();
     }
     if (!w) return;
 
@@ -282,6 +292,13 @@ void Inspector::prop_row(const std::string& type, const std::string& prop, bool 
     reset->set_focusable(false);
     reset->signal_clicked().connect([this, prop, pack] { commit_prop(prop, pack, std::nullopt); });
 
+    // s003: two properties get their own editors.
+    if (!pack && prop == "menu") { menu_rows(label, reset); return; }
+    if (!pack && prop == "action_name") {   // pick one of the form's actions (or app.quit)
+        spec.kind = PropKind::Ref;
+        spec.ref_type = "@action";
+    }
+
     Gtk::Widget* editor = nullptr;
     std::function<void(const std::optional<Value>&)> show;   // paint the editor's value
 
@@ -341,8 +358,20 @@ void Inspector::prop_row(const std::string& type, const std::string& prop, bool 
                 for (const auto& [json, cpp] : spec.values) values.push_back(json);
             } else {
                 values.push_back("");   // (none)
-                for (const auto& k : m_d.all())
-                    if (const auto o = m_d.get(k); o && o->type == spec.ref_type) values.push_back(o->name);
+                if (spec.ref_type == "@action") {
+                    if (const auto f = m_d.get(core::Design::kForm))
+                        for (const auto& a : f->actions) values.push_back("win." + core::gio_action_name(a.name));
+                    values.push_back("app.quit");
+                    // A value typed by hand elsewhere stays choosable.
+                    if (const auto r = m_d.get(m_key))
+                        if (const auto it = r->props.find(prop); it != r->props.end() &&
+                            std::holds_alternative<std::string>(it->second) &&
+                            std::find(values.begin(), values.end(), std::get<std::string>(it->second)) == values.end())
+                            values.push_back(std::get<std::string>(it->second));
+                } else {
+                    for (const auto& k : m_d.all())
+                        if (const auto o = m_d.get(k); o && o->type == spec.ref_type) values.push_back(o->name);
+                }
             }
             std::vector<Glib::ustring> shown;
             for (const auto& v : values)
@@ -382,6 +411,203 @@ void Inspector::prop_row(const std::string& type, const std::string& prop, bool 
         reset->set_opacity(set ? 1.0 : 0.0);
         reset->set_sensitive(set);
         show(set ? std::optional<Value>(it->second) : dflt);
+    }});
+}
+
+// ── s003: the form's actions ────────────────────────────────────────────────
+// One row per action: name (commits on Enter / leaving it -- a rename carries
+// the menu rows that name it), key, required, delete. Every edit a verb.
+void Inspector::actions_rows() {
+    const auto f = m_d.get(core::Design::kForm);
+    if (!f) return;
+    for (const auto& a0 : f->actions) {
+        const std::string name = a0.name;
+        auto* e = Gtk::make_managed<Gtk::Entry>();
+        e->set_hexpand(true);
+        e->set_tooltip_text("on_action_" + name + "()  ·  win." + core::gio_action_name(name));
+        auto* key = Gtk::make_managed<Gtk::Entry>();
+        key->set_placeholder_text("<Control>s");
+        key->set_width_chars(10);
+        key->set_tooltip_text("The key, in GTK's spelling: <Control>s, <Control><Shift>z, F5. Empty = none.");
+        auto* req = Gtk::make_managed<Gtk::CheckButton>();
+        req->set_tooltip_text("Required: the hook is pure virtual");
+        auto* del = Gtk::make_managed<Gtk::Button>();
+        del->set_icon_name("user-trash-symbolic");
+        del->set_has_frame(false);
+        del->set_tooltip_text("Delete the action (and the menu rows that run it)");
+        m_grid->attach(*e, 0, m_line);
+        m_grid->attach(*key, 1, m_line);
+        auto* tail = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL);
+        tail->append(*req);
+        tail->append(*del);
+        m_grid->attach(*tail, 2, m_line++);
+
+        auto current = [this, name]() -> std::optional<core::ActionDef> {
+            if (const auto f = m_d.get(core::Design::kForm))
+                for (const auto& a : f->actions) if (a.name == name) return a;
+            return std::nullopt;
+        };
+        auto rename = [this, e, name, current] {
+            if (m_painting || m_rebuilding) return;
+            auto a = current();
+            if (!a || e->get_text().raw() == name) return;
+            a->name = e->get_text();
+            std::string why;
+            if (!core::design::set_action(m_j, m_d, name, *a, &why) && !why.empty()) m_said.emit(why);
+        };
+        e->signal_activate().connect(rename);
+        auto focus = Gtk::EventControllerFocus::create();
+        focus->signal_leave().connect(rename);
+        e->add_controller(focus);
+        key->signal_changed().connect([this, key, name, current] {
+            if (m_painting || m_rebuilding) return;
+            if (auto a = current()) { a->accel = key->get_text(); core::design::set_action(m_j, m_d, name, *a); }
+        });
+        req->signal_toggled().connect([this, req, name, current] {
+            if (m_painting || m_rebuilding) return;
+            if (auto a = current()) { a->required = req->get_active(); core::design::set_action(m_j, m_d, name, *a); }
+        });
+        del->signal_clicked().connect([this, name] { core::design::remove_action(m_j, m_d, name); });
+        m_rows.push_back({[e, key, req, current](const core::Rec&) {
+            const auto a = current();
+            if (!a) return;
+            if (!e->has_focus() && e->get_text().raw() != a->name) e->set_text(a->name);
+            if (key->get_text().raw() != a->accel) key->set_text(a->accel);
+            req->set_active(a->required);
+        }});
+    }
+    auto* add = Gtk::make_managed<Gtk::Button>();
+    auto* add_in = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 6);
+    add_in->append(*Gtk::make_managed<Gtk::Image>(Glib::ustring("list-add-symbolic")));
+    add_in->append(*Gtk::make_managed<Gtk::Label>("Add action"));
+    add->set_child(*add_in);
+    add->set_halign(Gtk::Align::START);
+    add->signal_clicked().connect([this] { core::design::add_action(m_j, m_d); });
+    m_grid->attach(*add, 0, m_line++, 3, 1);
+}
+
+// ── s003: a MenuButton's menu ───────────────────────────────────────────────
+// Rows: a label and what it runs (one of the form's actions, app.quit, or
+// nothing); a separator starts a new section. Up / down / delete per row.
+// The whole list is the property's value: each edit writes it back through
+// set_prop (typing in a label merges into one step).
+void Inspector::menu_rows(Gtk::Label* label, Gtk::Button* reset) {
+    m_grid->attach(*label, 0, m_line);
+    m_grid->attach(*reset, 2, m_line++);
+    auto* box = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 4);
+    m_grid->attach(*box, 0, m_line++, 3, 1);
+
+    std::vector<std::string> targets{""};
+    if (const auto f = m_d.get(core::Design::kForm))
+        for (const auto& a : f->actions) targets.push_back("win." + core::gio_action_name(a.name));
+    targets.push_back("app.quit");
+
+    auto rows_now = [this]() -> core::StringList {
+        if (const auto r = m_d.get(m_key))
+            if (const auto it = r->props.find("menu"); it != r->props.end() && std::holds_alternative<core::StringList>(it->second))
+                return std::get<core::StringList>(it->second);
+        return {};
+    };
+    auto write = [this](const core::StringList& l) {
+        commit_prop("menu", false, l.empty() ? std::nullopt : std::optional<core::Value>(core::Value(l)));
+    };
+    // Build the row widgets for a given shape; repainted in place while the
+    // shape (count + which rows are separators) stays the same.
+    auto shape_of = [](const core::StringList& l) {
+        std::string s;
+        for (const auto& r : l) s += core::parse_menu_entry(r).separator ? '-' : 'r';
+        return s;
+    };
+    auto built = std::make_shared<std::string>("?");
+    auto fill = std::make_shared<std::function<void(const core::StringList&)>>();
+    *fill = [this, box, targets, rows_now, write, shape_of, built, fill](const core::StringList& l) {
+        *built = shape_of(l);
+        m_rebuilding = true;
+        while (auto* c = box->get_first_child()) box->remove(*c);
+        m_rebuilding = false;
+        for (std::size_t i = 0; i < l.size(); ++i) {
+            const auto e = core::parse_menu_entry(l[i]);
+            auto* line = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 4);
+            if (e.separator) {
+                auto* sep = Gtk::make_managed<Gtk::Label>("── section ──");
+                sep->add_css_class("dim-label");
+                sep->set_hexpand(true);
+                line->append(*sep);
+            } else {
+                auto* text = Gtk::make_managed<Gtk::Entry>();
+                text->set_text(e.label);
+                text->set_hexpand(true);
+                text->set_width_chars(8);
+                text->signal_changed().connect([this, text, i, rows_now, write] {
+                    if (m_painting || m_rebuilding) return;
+                    auto l = rows_now();
+                    if (i >= l.size()) return;
+                    const auto old = core::parse_menu_entry(l[i]);
+                    l[i] = text->get_text() + (old.action.empty() ? "" : "=" + old.action);
+                    write(l);
+                });
+                std::vector<Glib::ustring> shown;
+                std::vector<std::string> vals = targets;
+                if (std::find(vals.begin(), vals.end(), e.action) == vals.end()) vals.push_back(e.action);
+                for (const auto& v : vals) shown.push_back(v.empty() ? "(nothing)" : v);
+                auto* dd = Gtk::make_managed<Gtk::DropDown>(Gtk::StringList::create(shown));
+                for (std::size_t k = 0; k < vals.size(); ++k)
+                    if (vals[k] == e.action) dd->set_selected(static_cast<guint>(k));
+                no_wheel_unless_focused(*dd);
+                dd->property_selected().signal_changed().connect([this, dd, vals, i, rows_now, write] {
+                    if (m_painting || m_rebuilding) return;
+                    auto l = rows_now();
+                    if (i >= l.size() || dd->get_selected() >= vals.size()) return;
+                    const auto old = core::parse_menu_entry(l[i]);
+                    const auto& v = vals[dd->get_selected()];
+                    l[i] = old.label + (v.empty() ? "" : "=" + v);
+                    write(l);
+                });
+                line->append(*text);
+                line->append(*dd);
+            }
+            auto tool = [&](const char* icon, const char* tip, std::function<void(core::StringList&)> op) {
+                auto* b = Gtk::make_managed<Gtk::Button>();
+                b->set_icon_name(icon);
+                b->set_has_frame(false);
+                b->set_tooltip_text(tip);
+                b->signal_clicked().connect([rows_now, write, op] { auto l = rows_now(); op(l); write(l); });
+                line->append(*b);
+            };
+            tool("go-up-symbolic", "Move up", [i](core::StringList& l) { if (i > 0 && i < l.size()) std::swap(l[i], l[i - 1]); });
+            tool("go-down-symbolic", "Move down", [i](core::StringList& l) { if (i + 1 < l.size()) std::swap(l[i], l[i + 1]); });
+            tool("list-remove-symbolic", "Delete the row", [i](core::StringList& l) { if (i < l.size()) l.erase(l.begin() + static_cast<long>(i)); });
+            box->append(*line);
+        }
+        auto* adds = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 6);
+        auto* row = Gtk::make_managed<Gtk::Button>("Add row");
+        row->signal_clicked().connect([rows_now, write] { auto l = rows_now(); l.push_back("Item"); write(l); });
+        auto* sec = Gtk::make_managed<Gtk::Button>("Add section break");
+        sec->signal_clicked().connect([rows_now, write] { auto l = rows_now(); l.push_back("-"); write(l); });
+        adds->append(*row);
+        adds->append(*sec);
+        box->append(*adds);
+    };
+    m_rows.push_back({[box, built, fill, shape_of, label, reset](const core::Rec& r) {
+        const bool set = r.props.count("menu") > 0;
+        if (set) label->add_css_class("set");
+        else     label->remove_css_class("set");
+        reset->set_opacity(set ? 1.0 : 0.0);
+        reset->set_sensitive(set);
+        core::StringList l;
+        if (const auto it = r.props.find("menu"); it != r.props.end() && std::holds_alternative<core::StringList>(it->second))
+            l = std::get<core::StringList>(it->second);
+        if (shape_of(l) != *built) { (*fill)(l); return; }   // rows came or went: rebuild the list
+        // Same shape: refresh labels in place (never under the cursor).
+        int i = 0;
+        for (auto* line = box->get_first_child(); line && i < static_cast<int>(l.size()); line = line->get_next_sibling(), ++i) {
+            const auto e = core::parse_menu_entry(l[static_cast<std::size_t>(i)]);
+            if (e.separator) continue;
+            if (auto* text = dynamic_cast<Gtk::Entry*>(line->get_first_child()); text && !text->has_focus() &&
+                text->get_text().raw() != e.label)
+                text->set_text(e.label);
+        }
+        (void)box;
     }});
 }
 

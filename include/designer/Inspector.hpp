@@ -16,7 +16,9 @@
 #include "core/Design.hpp"
 #include "widgets/Widgets.hpp"
 
+#include <gtkmm/button.h>
 #include <gtkmm/grid.h>
+#include <gtkmm/label.h>
 #include <functional>
 #include <optional>
 #include <string>
@@ -41,6 +43,8 @@ private:
     void prop_row(const std::string& type, const std::string& prop, bool pack);
     void signal_row(const std::string& type, const std::string& signal);
     void name_row(bool form);
+    void actions_rows();                                      // s003: the form's actions
+    void menu_rows(Gtk::Label* label, Gtk::Button* reset);    // s003: a MenuButton's menu
     void no_wheel_unless_focused(Gtk::Widget& w);
     void commit_prop(const std::string& prop, bool pack, const std::optional<core::Value>& v);
 
@@ -51,6 +55,7 @@ private:
     int                  m_line = 0;
     std::vector<Row>     m_rows;
     std::string          m_key, m_type, m_parent_type;
+    std::string          m_actions_sig;   // the form's action names, as last built
     bool                 m_painting = false;
     bool                 m_rebuilding = false;
     sigc::signal<void(const std::string&)> m_said;
