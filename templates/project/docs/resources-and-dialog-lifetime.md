@@ -99,6 +99,18 @@ but define `~Shell()` out-of-line in a `.cpp` that `#include`s `AboutWindow.hpp`
 incomplete type"* at the member's destruction point. The header stays light; the
 one TU that destroys it carries the include.
 
+### File dialogs -- the same lifetime question, asynchronously (s005)
+
+`Gtk::FileDialog` asks and returns at once; the answer comes back later, in a
+callback, on a later turn of the main loop. By then the window that asked may
+be gone. Mortimer's generated `choose_<name>()` keeps the rules so you don't
+have to: one at a time (asking again while it's up is refused); the callback
+checks a token the window's destructor drops, and the destructor cancels the
+dialog -- so a window closed with a dialog up is never called back; Cancel /
+Escape is not an error (it goes to `on_<name>_cancelled()` if ticked); a real
+failure is logged and handled as a cancel. Your side is two hooks:
+`on_<name>_chosen(path)` and, if you want it, `on_<name>_cancelled()`.
+
 ## Why they compose
 
 `AboutWindow` is the smallest thing that exercises both at once: it's opened as a

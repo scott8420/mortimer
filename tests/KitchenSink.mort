@@ -82,5 +82,12 @@
   "actions": [
     { "name": "refresh", "accel": "<Control>r" },
     { "name": "save_as", "accel": "<Control><Shift>s" }
+  ],
+  "files": [
+    { "name": "open_doc", "mode": "open", "title": "Open Document", "accept": "Open",
+      "filters": ["Text=*.txt;*.md", "Images=image/*"], "cancel": true },
+    { "name": "open_many", "mode": "open_multiple", "filters": ["Any=*"] },
+    { "name": "save_doc", "mode": "save", "title": "Save As", "required": true },
+    { "name": "pick_dir", "mode": "folder", "cancel": true }
   ]
 }

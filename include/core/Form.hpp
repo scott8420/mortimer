@@ -57,11 +57,45 @@ struct ActionDef {
     bool operator==(const ActionDef&) const = default;
 };
 
+// s005 -- a FILE DIALOG the form can ask: Gtk::FileDialog, generated async and
+// hooked. choose_<name>(initial) opens it over the window; the answer arrives
+// at on_<name>_chosen(path) (open_multiple: paths); Cancel / Escape arrive at
+// on_<name>_cancelled() when `cancel` is ticked, else quietly nowhere. The
+// window closing while it's up is handled (the answer is dropped, never
+// delivered to a dead object); asking again while it's up is refused.
+struct FileDef {
+    std::string name;              // C++ identifier: "open_doc" -> choose_open_doc(), on_open_doc_chosen()
+    std::string mode = "open";     // open | open_multiple | save | folder
+    std::string title;             // "" = GTK's own ("Open File" ...)
+    std::string accept;            // the accept button's label; "" = GTK's own
+    StringList  filters;           // "Text=*.txt;*.md", "Images=image/*" (a '/' = a MIME type)
+    bool        cancel = false;    // also a hook on_<name>_cancelled()
+    bool        required = false;  // on_<name>_chosen is pure virtual
+    bool operator==(const FileDef&) const = default;
+};
+
 struct Form {
     std::string name;   // the class stem: "MainWindow" -> MainWindowUi + MainWindow
     Node        root;
     std::vector<ActionDef> actions;   // s003: on disk only when there are any
+    std::vector<FileDef>   files;     // s005: on disk only when there are any
 };
+
+// s005 -- file dialogs.
+inline const StringList& file_modes() {
+    static const StringList m{"open", "open_multiple", "save", "folder"};
+    return m;
+}
+std::string file_chosen_hook(const FileDef& f);     // on_<name>_chosen
+std::string file_cancelled_hook(const FileDef& f);  // on_<name>_cancelled
+std::string file_chooser(const FileDef& f);         // choose_<name>
+// A filter row "Label=pat;pat". ok=false when it has no label or no pattern.
+struct FileFilterRow {
+    bool        ok = false;
+    std::string label;
+    StringList  patterns;          // "*.txt", "image/*"
+};
+FileFilterRow parse_file_filter(const std::string& s);
 
 // "save_as" -> "save-as" (GIO action names allow letters, digits, '-', '.').
 std::string gio_action_name(const std::string& name);

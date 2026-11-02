@@ -145,12 +145,19 @@ void Shell::repaint() {  // helper: every pane from the model
     // handed back to the selected row, or GTK drops it into the inspector's
     // first Entry and Ctrl+Z / Delete land in a text box (found driving s002).
     const Gtk::Widget* f = get_focus();
-    const bool keys_to_tree = !f || f->is_ancestor(m_tree) || f->is_ancestor(m_canvas) || m_keys_to_tree;
+    // s005: so is a button the inspector rebuilds away (Add action / Add file
+    // dialog, a delete) -- any inspector control that isn't a text box.
+    const bool in_inspector = f && f->is_ancestor(m_inspector);
+    bool keys_to_tree = !f || f->is_ancestor(m_tree) || f->is_ancestor(m_canvas) || m_keys_to_tree ||
+                        (in_inspector && !focus_is_text());
     m_keys_to_tree = false;
     m_palette.repaint(m_design, m_sel);
     m_tree.repaint(m_design, m_sel);
     m_canvas.show(m_design, m_sel);
-    m_inspector.show(m_sel);
+    // A rebuild while the keyboard was in it (a rename committed with Enter)
+    // destroyed the focused box: GTK would drop the keyboard into the first
+    // Entry, text selected, and the next keys would rename the root.
+    if (m_inspector.show(m_sel) && in_inspector) keys_to_tree = true;
     const auto r = m_design.get(m_sel);
     const bool child = r && !r->parent.empty();
     if (m_act_delete) m_act_delete->set_enabled(child);

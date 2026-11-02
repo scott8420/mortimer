@@ -145,6 +145,27 @@ Form form_from_json(const std::string& text) {
             f.actions.push_back({a.value("name", ""), a.value("accel", ""), a.value("required", false)});
         }
     }
+    if (j.contains("files")) {
+        if (!j["files"].is_array()) throw std::runtime_error("files must be a list");
+        for (const auto& x : j["files"]) {
+            if (!x.is_object()) throw std::runtime_error("a file dialog is {\"name\": ..., \"mode\": ...}");
+            FileDef d;
+            d.name = x.value("name", "");
+            d.mode = x.value("mode", "open");
+            d.title = x.value("title", "");
+            d.accept = x.value("accept", "");
+            if (x.contains("filters")) {
+                if (!x["filters"].is_array()) throw std::runtime_error("a file dialog's filters must be a list of strings");
+                for (const auto& r : x["filters"]) {
+                    if (!r.is_string()) throw std::runtime_error("a file dialog's filters must be a list of strings");
+                    d.filters.push_back(r.get<std::string>());
+                }
+            }
+            d.cancel = x.value("cancel", false);
+            d.required = x.value("required", false);
+            f.files.push_back(std::move(d));
+        }
+    }
     return f;
 }
 
@@ -163,6 +184,21 @@ std::string form_to_json(const Form& f) {
             a.push_back(o);
         }
         j["actions"] = a;
+    }
+    if (!f.files.empty()) {
+        json a = json::array();
+        for (const auto& x : f.files) {
+            json o;
+            o["name"] = x.name;
+            o["mode"] = x.mode;
+            if (!x.title.empty()) o["title"] = x.title;
+            if (!x.accept.empty()) o["accept"] = x.accept;
+            if (!x.filters.empty()) o["filters"] = x.filters;
+            if (x.cancel) o["cancel"] = true;
+            if (x.required) o["required"] = true;
+            a.push_back(o);
+        }
+        j["files"] = a;
     }
     return j.dump(2) + "\n";
 }
@@ -235,6 +271,33 @@ std::string gio_action_name(const std::string& name) {
 
 std::string action_hook(const ActionDef& a) { return "on_action_" + a.name; }
 
+std::string file_chosen_hook(const FileDef& f) { return "on_" + f.name + "_chosen"; }
+std::string file_cancelled_hook(const FileDef& f) { return "on_" + f.name + "_cancelled"; }
+std::string file_chooser(const FileDef& f) { return "choose_" + f.name; }
+
+FileFilterRow parse_file_filter(const std::string& s) {
+    FileFilterRow r;
+    const auto eq = s.find('=');
+    if (eq == std::string::npos) return r;
+    auto trim = [](std::string x) {
+        while (!x.empty() && x.front() == ' ') x.erase(x.begin());
+        while (!x.empty() && x.back() == ' ') x.pop_back();
+        return x;
+    };
+    r.label = trim(s.substr(0, eq));
+    std::string rest = s.substr(eq + 1);
+    std::size_t at = 0;
+    while (at <= rest.size()) {
+        const auto semi = rest.find(';', at);
+        const std::string p = trim(rest.substr(at, semi == std::string::npos ? std::string::npos : semi - at));
+        if (!p.empty()) r.patterns.push_back(p);
+        if (semi == std::string::npos) break;
+        at = semi + 1;
+    }
+    r.ok = !r.label.empty() && !r.patterns.empty();
+    return r;
+}
+
 MenuEntry parse_menu_entry(const std::string& s) {
     MenuEntry e;
     if (s == "-" || s == "---") { e.separator = true; return e; }
@@ -292,7 +355,32 @@ std::vector<Issue> validate(const Form& f) {
                 err(where, "key \"" + a.accel + "\" isn't GTK's syntax (\"<Control>s\", \"<Control><Shift>z\", \"F5\")");
         }
     }
+    // s005: file dialogs -- names, modes, filters; their hooks join the namespace.
+    std::set<std::string> files;
+    for (const auto& d : f.files) {
+        const std::string where = "file dialog " + (d.name.empty() ? std::string("?") : d.name);
+        if (!is_identifier(d.name) || is_cpp_keyword(d.name)) {
+            err(where, "a file dialog's name must be a C++ identifier (open_doc, export_pdf)");
+            continue;
+        }
+        if (!files.insert(d.name).second) err(where, "file dialog \"" + d.name + "\" is declared twice");
+        if (std::find(file_modes().begin(), file_modes().end(), d.mode) == file_modes().end())
+            err(where, "mode \"" + d.mode + "\" -- a file dialog is open, open_multiple, save or folder");
+        if (!hooks.insert(file_chosen_hook(d)).second)
+            err(where, "two things make the hook " + file_chosen_hook(d) + "()");
+        if (d.cancel && !hooks.insert(file_cancelled_hook(d)).second)
+            err(where, "two things make the hook " + file_cancelled_hook(d) + "()");
+        for (const auto& row : d.filters)
+            if (!parse_file_filter(row).ok)
+                err(where, "filter \"" + row + "\" -- write it Label=*.txt;*.md (a '/' makes a MIME type: Images=image/*)");
+        if (d.mode == "folder" && !d.filters.empty())
+            warn(where, "a folder dialog shows folders only -- its filters are ignored");
+    }
     walk(f.root, [&](const Node& n, const Node*) {
+        // The generated class's own members: m_hooks, m_actions, m_files, m_alive.
+        static const std::set<std::string> taken{"hooks", "actions", "files", "alive"};
+        if (taken.count(n.id))
+            err(n.id, "id \"" + n.id + "\" is taken -- the generated class has its own m_" + n.id);
         if (!is_identifier(n.id) || is_cpp_keyword(n.id))
             err(n.id.empty() ? "?" : n.id,
                 "id \"" + n.id + "\" must be a C++ identifier (letters, digits, _)");

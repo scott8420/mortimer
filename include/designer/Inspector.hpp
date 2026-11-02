@@ -29,7 +29,8 @@ namespace mortimer::designer {
 class Inspector : public widgets::ScrolledWindow {
 public:
     Inspector(core::Design& d, core::DesignJournal& j);
-    void show(const std::string& sel);
+    // true when it REBUILT (its widgets were replaced, the keyboard with them).
+    bool show(const std::string& sel);
     // A refusal or a note for the status line ("\"class\" isn't a C++ name").
     sigc::signal<void(const std::string&)>& signal_said() { return m_said; }
 
@@ -44,6 +45,7 @@ private:
     void signal_row(const std::string& type, const std::string& signal);
     void name_row(bool form);
     void actions_rows();                                      // s003: the form's actions
+    void files_rows();                                        // s005: the form's file dialogs
     void menu_rows(Gtk::Label* label, Gtk::Button* reset);    // s003: a MenuButton's menu
     void no_wheel_unless_focused(Gtk::Widget& w);
     void commit_prop(const std::string& prop, bool pack, const std::optional<core::Value>& v);
@@ -55,7 +57,7 @@ private:
     int                  m_line = 0;
     std::vector<Row>     m_rows;
     std::string          m_key, m_type, m_parent_type;
-    std::string          m_actions_sig;   // the form's action names, as last built
+    std::string          m_actions_sig;   // the form's action + file dialog names, as last built
     bool                 m_painting = false;
     bool                 m_rebuilding = false;
     sigc::signal<void(const std::string&)> m_said;

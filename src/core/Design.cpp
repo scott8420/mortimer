@@ -29,6 +29,7 @@ void Design::load(const Form& f) {
     m_next = 1;
     Rec form{"", f.name, "", 0, {}, {}, {}, {}};
     form.actions = f.actions;
+    form.files = f.files;
     put(kForm, form);
     std::function<void(const Node&, const Id&, double)> add = [&](const Node& n, const Id& parent, double pos) {
         const Id key = fresh_key();
@@ -49,7 +50,10 @@ Form Design::to_form() const {
         return n;
     };
     Form f{form_name(), build(r), {}};
-    if (const auto it = m_recs.find(kForm); it != m_recs.end()) f.actions = it->second.actions;
+    if (const auto it = m_recs.find(kForm); it != m_recs.end()) {
+        f.actions = it->second.actions;
+        f.files = it->second.files;
+    }
     return f;
 }
 
@@ -422,6 +426,61 @@ bool set_action(DesignJournal& j, Design& d, const std::string& name, const Acti
     }, "action:" + name);
 }
 
+std::string add_file(DesignJournal& j, Design& d, const std::string& name, std::string* why) {
+    auto r = d.get(Design::kForm);
+    if (!r) return {};
+    auto taken = [&](const std::string& n) {
+        for (const auto& x : r->files) if (x.name == n) return true;
+        return false;
+    };
+    std::string n = name;
+    if (n.empty())
+        for (int i = 1; n.empty() || taken(n); ++i) n = "file" + std::to_string(i);
+    if (!is_identifier(n) || is_cpp_keyword(n)) { say(why, "\"" + n + "\" isn't a C++ name"); return {}; }
+    if (taken(n)) { say(why, "the form already has a file dialog " + n); return {}; }
+    FileDef fd;
+    fd.name = n;
+    r->files.push_back(fd);
+    j.run("Add file dialog " + curly(n), {Design::kForm}, [&] { d.put(Design::kForm, *r); });
+    return n;
+}
+
+bool remove_file(DesignJournal& j, Design& d, const std::string& name) {
+    auto r = d.get(Design::kForm);
+    if (!r) return false;
+    const auto n = r->files.size();
+    std::erase_if(r->files, [&](const FileDef& x) { return x.name == name; });
+    if (r->files.size() == n) return false;
+    return j.run("Delete file dialog " + curly(name), {Design::kForm}, [&] { d.put(Design::kForm, *r); });
+}
+
+bool set_file(DesignJournal& j, Design& d, const std::string& name, const FileDef& now, std::string* why) {
+    auto r = d.get(Design::kForm);
+    if (!r) return false;
+    auto it = std::find_if(r->files.begin(), r->files.end(), [&](const FileDef& x) { return x.name == name; });
+    if (it == r->files.end() || *it == now) return false;
+    if (now.name != name) {
+        if (!is_identifier(now.name) || is_cpp_keyword(now.name)) { say(why, "\"" + now.name + "\" isn't a C++ name"); return false; }
+        for (const auto& x : r->files)
+            if (x.name == now.name) { say(why, "the form already has a file dialog " + now.name); return false; }
+    }
+    if (std::find(file_modes().begin(), file_modes().end(), now.mode) == file_modes().end()) {
+        say(why, "\"" + now.mode + "\" isn't a file dialog mode (open, open_multiple, save, folder)");
+        return false;
+    }
+    // Typing in one text field folds into one step (merge key per field); a
+    // rename, a mode, a tick is always its own step.
+    std::string merge;
+    if (now.name == name && now.mode == it->mode && now.cancel == it->cancel && now.required == it->required) {
+        const int changed = (now.title != it->title) + (now.accept != it->accept) + (now.filters != it->filters);
+        if (changed == 1)
+            merge = "file:" + name + (now.title != it->title ? ":title" : now.accept != it->accept ? ":accept" : ":filters");
+    }
+    const std::string label = now.name != name ? "Rename file dialog " + curly(name) : "File dialog " + curly(name);
+    *it = now;
+    return j.run(label, {Design::kForm}, [&] { d.put(Design::kForm, *r); }, merge);
+}
+
 bool set_prop(DesignJournal& j, Design& d, const Design::Id& id, const std::string& prop,
               const std::optional<Value>& v) {
     auto r = d.get(id);
@@ -562,7 +621,10 @@ Form fixture() {
     Node bar{"HeaderBar", "bar", {}, {{"slot", Value(S("titlebar"))}}, {}, {menu}};
     Node win{"ApplicationWindow", "win", {{"title", Value(S("Fixture"))}}, {},
              {{"close_request", false, ""}}, {bar, body}};
-    return Form{"Fixture", win, {{"save", "<Control>s", false}}};
+    FileDef open_doc;
+    open_doc.name = "open_doc";
+    open_doc.filters = {"Text=*.txt;*.md"};
+    return Form{"Fixture", win, {{"save", "<Control>s", false}}, {open_doc}};
 }
 
 const std::vector<Verb>& verbs() {
@@ -588,6 +650,14 @@ const std::vector<Verb>& verbs() {
         {"remove_action",[](DesignJournal& j, Design& d) { remove_action(j, d, "save"); }},
         {"rename_action",[](DesignJournal& j, Design& d) { set_action(j, d, "save", {"store", "<Control>s", false}); }},
         {"key_action",   [](DesignJournal& j, Design& d) { set_action(j, d, "save", {"save", "<Control><Shift>s", true}); }},
+        {"add_file",     [](DesignJournal& j, Design& d) { add_file(j, d, "export_pdf"); }},
+        {"remove_file",  [](DesignJournal& j, Design& d) { remove_file(j, d, "open_doc"); }},
+        {"rename_file",  [](DesignJournal& j, Design& d) {
+            FileDef x; x.name = "load"; x.filters = {"Text=*.txt;*.md"};
+            set_file(j, d, "open_doc", x); }},
+        {"mode_file",    [](DesignJournal& j, Design& d) {
+            FileDef x; x.name = "open_doc"; x.mode = "save"; x.title = "Save As"; x.cancel = true; x.required = true;
+            set_file(j, d, "open_doc", x); }},
     };
     return table;
 }

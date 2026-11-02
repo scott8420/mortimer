@@ -43,6 +43,7 @@ struct Rec {
     std::map<std::string, Value> pack;
     std::vector<SignalHook>      signals;
     std::vector<ActionDef>       actions;   // s003: on the kForm record only
+    std::vector<FileDef>         files;     // s005: on the kForm record only
     bool operator==(const Rec&) const = default;
 };
 
@@ -131,6 +132,14 @@ std::string add_action(DesignJournal& j, Design& d, const std::string& name = {}
 bool remove_action(DesignJournal& j, Design& d, const std::string& name);
 bool set_action(DesignJournal& j, Design& d, const std::string& name, const ActionDef& now,
                 std::string* why = nullptr);
+// s005 -- the form's file dialogs (on the kForm record). add_file names it
+// "file1".. unless given a name (mode "open"); set_file replaces one whole
+// (rename, mode, title, accept, filters, cancel, required) -- typing in one
+// field folds into one step ("file:<name>").
+std::string add_file(DesignJournal& j, Design& d, const std::string& name = {}, std::string* why = nullptr);
+bool remove_file(DesignJournal& j, Design& d, const std::string& name);
+bool set_file(DesignJournal& j, Design& d, const std::string& name, const FileDef& now,
+              std::string* why = nullptr);
 
 // A property: a value, or nullopt to clear it back to GTK's default. Typing in
 // one field folds into one step (merge key "prop:<key>:<name>").

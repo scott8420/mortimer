@@ -455,4 +455,96 @@ class X : public ui::XUi {
         }
         check("templates: XML comments are valid XML", bad.empty(), bad);
     }
+
+    // ── s005: file dialogs ──────────────────────────────────────────────────
+    {
+        auto with = [](std::vector<core::FileDef> files) {
+            auto f = small_form();
+            f.files = std::move(files);
+            return f;
+        };
+        core::FileDef open;
+        open.name = "open_doc";
+        open.title = "Open \"it\"";
+        open.accept = "Open";
+        open.filters = {"Text=*.txt; *.md", "Images=image/*"};
+        open.cancel = true;
+        core::FileDef many;  many.name = "open_many";  many.mode = "open_multiple";
+        core::FileDef save;  save.name = "save_doc";   save.mode = "save";  save.required = true;
+        core::FileDef dir;   dir.name = "pick_dir";    dir.mode = "folder";
+
+        const auto f = with({open, many, save, dir});
+        const std::string text = core::form_to_json(f);
+        const auto back = core::form_from_json(text);
+        check("files: JSON round-trips", back.files == f.files && core::form_to_json(back) == text, "");
+        check("files: none -> nothing on disk (old forms byte-identical)",
+              !has(core::form_to_json(small_form()), "\"files\""), "");
+        check("files: defaults stay off disk", !has(text, "\"cancel\": false") && !has(text, "\"title\": \"\""), "");
+        check("files: the probe with four dialogs validates", errors_of(f).empty(),
+              errors_of(f).empty() ? "" : errors_of(f)[0]);
+
+        const auto r = core::parse_file_filter("Text=*.txt; *.md;");
+        check("files: a filter row parses (trims, skips empties)",
+              r.ok && r.label == "Text" && r.patterns == core::StringList{"*.txt", "*.md"}, "");
+        check("files: a filter with no label or no pattern is not ok",
+              !core::parse_file_filter("=*.txt").ok && !core::parse_file_filter("Text=").ok &&
+              !core::parse_file_filter("*.txt").ok, "");
+
+        { auto x = open; x.mode = "load";
+          check("validate files: an unknown mode", any_error_has(with({x}), "open, open_multiple, save or folder"), ""); }
+        { auto x = open; x.filters = {"*.txt"};
+          check("validate files: a filter without a label", any_error_has(with({x}), "Label=*.txt"), ""); }
+        { check("validate files: declared twice", any_error_has(with({open, open}), "declared twice"), ""); }
+        { auto x = open; x.name = "class";
+          check("validate files: a keyword name", any_error_has(with({x}), "C++ identifier"), ""); }
+        { auto x = dir; x.filters = {"Text=*.txt"};
+          const auto is = core::validate(with({x}));
+          bool warned = false;
+          for (const auto& i : is) warned = warned || (!i.error && has(i.what, "filters are ignored"));
+          check("validate files: filters on a folder dialog warn", warned && !core::has_errors(is), ""); }
+        { // action "y_chosen" -> on_action_y_chosen; dialog "action_y" -> on_action_y_chosen
+          auto g = small_form();
+          g.actions.push_back({"y_chosen", "", false});
+          core::FileDef y; y.name = "action_y";
+          g.files.push_back(y);
+          check("validate files: a hook an action also makes", any_error_has(g, "make the hook on_action_y_chosen"), ""); }
+        { auto g = small_form();
+          g.root.children[0].children.push_back({"Label", "files", {}, {}, {}, {}});
+          check("validate: an id the generated class owns (m_files)", any_error_has(g, "is taken"), ""); }
+
+        const core::AppInfo app = core::derive_app("Probe Tool");
+        const auto out = core::generate_form(f, app);
+        const std::string& h = out[0].content;
+        const std::string& c = out[1].content;
+        check("codegen files: a public chooser per dialog",
+              has(h, "void choose_open_doc(const std::string& initial = {});") &&
+              has(h, "void choose_pick_dir(const std::string& initial = {});"), "");
+        check("codegen files: chosen is a hook (path)", has(h, "virtual void on_open_doc_chosen(const std::string& path);"), "");
+        check("codegen files: open_multiple's hook takes paths",
+              has(h, "virtual void on_open_many_chosen(const std::vector<std::string>& paths);"), "");
+        check("codegen files: REQUIRED chosen is pure", has(h, "virtual void on_save_doc_chosen(const std::string& path) = 0;"), "");
+        check("codegen files: cancel ticked -> a hook; unticked -> none",
+              has(h, "virtual void on_open_doc_cancelled();") && !has(h, "on_open_many_cancelled"), "");
+        check("codegen files: the token and the in-flight map",
+              has(h, "std::shared_ptr<bool> m_alive") && has(h, "m_files;"), "");
+        check("codegen files: each mode calls its own GTK pair",
+              has(c, "dialog->open(*this,") && has(c, "open_finish(result)") &&
+              has(c, "dialog->open_multiple(*this,") && has(c, "open_multiple_finish(result)") &&
+              has(c, "dialog->save(*this,") && has(c, "save_finish(result)") &&
+              has(c, "dialog->select_folder(*this,") && has(c, "select_folder_finish(result)"), "");
+        check("codegen files: the answer checks the token first", has(c, "if (alive.expired()) return;"), "");
+        check("codegen files: the destructor drops the token and cancels",
+              has(c, "m_alive.reset();") && has(c, "cancel->cancel();"), "");
+        check("codegen files: one at a time", has(c, "already open"), "");
+        check("codegen files: a '/' is a MIME type, else a pattern",
+              has(c, "ff->add_mime_type(\"image/*\");") && has(c, "ff->add_pattern(\"*.md\");"), "");
+        check("codegen files: strings escaped", has(c, "set_title(\"Open \\\"it\\\"\");"), "");
+        check("codegen files: save takes a bare name", has(c, "set_initial_name(initial)"), "");
+        check("codegen files: no file dialogs -> no file-dialog code",
+              !has(core::generate_form(small_form(), app)[1].content, "FileDialog"), "");
+        const auto stubs = core::user_stubs(f, app);
+        check("stubs files: the override logs what was chosen",
+              has(stubs[1].content, "open_doc chosen {}\", path") &&
+              has(stubs[1].content, "std::to_string(paths.size())"), "");
+    }
 }

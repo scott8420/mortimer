@@ -262,6 +262,40 @@ void selftest_design(const Check& check_) {
         check("validate: a broken key is refused", !first_error(bad).empty(), first_error(bad));
     }
 
+    // ── s005: file dialogs -- typing folds per field, a tick or mode never ──
+    {
+        Fix f;
+        auto cur = [&] { return f.d.to_form().files.front(); };
+        for (const char* t : {"P", "Pi", "Pick"}) {
+            auto x = cur(); x.title = t;
+            core::design::set_file(f.j, f.d, "open_doc", x);
+        }
+        check("file typing: a title is one step", f.j.size() == 1, std::to_string(f.j.size()));
+        { auto x = cur(); x.mode = "save"; core::design::set_file(f.j, f.d, "open_doc", x); }
+        check("file mode: its own step (not folded into the typing)", f.j.size() == 2, std::to_string(f.j.size()));
+        { auto x = cur(); x.filters = {"A=*.a"}; core::design::set_file(f.j, f.d, "open_doc", x); }
+        { auto x = cur(); x.cancel = true; core::design::set_file(f.j, f.d, "open_doc", x); }
+        check("file filters + tick: two more steps", f.j.size() == 4, std::to_string(f.j.size()));
+        f.j.undo(); f.j.undo(); f.j.undo();
+        check("file undo x3: the title stays, the mode is back", cur().title == "Pick" && cur().mode == "open");
+        f.j.undo();
+        check("file undo x4: the title is gone in one", cur().title.empty());
+        std::string why;
+        check("file: a duplicate is refused", core::design::add_file(f.j, f.d, "open_doc", &why).empty() &&
+                                              why.find("already") != std::string::npos, why);
+        check("file: auto-named", core::design::add_file(f.j, f.d) == "file1");
+        { auto x = cur(); x.name = "file1";
+          check("file rename onto a taken name: refused",
+                !core::design::set_file(f.j, f.d, "open_doc", x, &why) && why.find("already") != std::string::npos, why); }
+        { auto x = cur(); x.mode = "browse";
+          check("file: an unknown mode is refused", !core::design::set_file(f.j, f.d, "open_doc", x, &why), why); }
+        core::design::remove_file(f.j, f.d, "open_doc");
+        check("file delete", f.d.to_form().files.size() == 1);
+        f.j.undo();
+        check("file delete+undo: back, in place", f.d.to_form().files.size() == 2 &&
+                                                  f.d.to_form().files.front().name == "open_doc");
+    }
+
     // ── s002 m4: where a drop lands ─────────────────────────────────────────
     {
         using core::design::Zone;

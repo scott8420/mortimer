@@ -102,7 +102,7 @@ Inspector::Inspector(core::Design& d, core::DesignJournal& j)
     set_size_request(330, -1);
 }
 
-void Inspector::show(const std::string& sel) {
+bool Inspector::show(const std::string& sel) {
     const auto r = m_d.get(sel);
     std::string ptype;
     if (r && !r->parent.empty())
@@ -111,15 +111,22 @@ void Inspector::show(const std::string& sel) {
     // form's action NAMES: a name added / removed / renamed rebuilds.
     std::string sig;
     if (const auto f = m_d.get(core::Design::kForm))
+    {
         for (const auto& a : f->actions) sig += a.name + ",";
+        sig += "|";   // s005: and the file dialogs' names
+        for (const auto& x : f->files) sig += x.name + ",";
+    }
     if (sel != m_key || !r || r->type != m_type || ptype != m_parent_type || sig != m_actions_sig) {
         m_actions_sig = sig;
         m_key = sel;
         m_type = r ? r->type : "";
         m_parent_type = ptype;
         rebuild();
+        refresh();
+        return true;
     }
     refresh();
+    return false;
 }
 
 void Inspector::refresh() {
@@ -171,6 +178,10 @@ void Inspector::rebuild() {
         section("Actions", "win.<name>: a menu row or a button runs it, the key runs it, and the hook "
                            "on_action_<name>() is what it does.");
         actions_rows();
+        section("File dialogs", "Gtk::FileDialog: call choose_<name>() from a hook; it returns at once, and "
+                                "the answer arrives at on_<name>_chosen(path) -- Cancel at "
+                                "on_<name>_cancelled() if ticked.");
+        files_rows();
     }
     if (!w) return;
 
@@ -483,6 +494,138 @@ void Inspector::actions_rows() {
     add->set_child(*add_in);
     add->set_halign(Gtk::Align::START);
     add->signal_clicked().connect([this] { core::design::add_action(m_j, m_d); });
+    m_grid->attach(*add, 0, m_line++, 3, 1);
+}
+
+// ── s005: the form's file dialogs ───────────────────────────────────────────
+// A small block per dialog: name (commits on Enter / leaving it) + mode +
+// delete; title + accept label; filters (a comma list of "Label=*.a;*.b");
+// the cancel hook and required. Every edit is set_file (a field's typing
+// folds into one step); the block repaints in place, never under the cursor.
+void Inspector::files_rows() {
+    const auto f = m_d.get(core::Design::kForm);
+    if (!f) return;
+    // A GTK4 Entry's keyboard focus sits on its inner text: ask the child too.
+    auto typing = [](Gtk::Widget* w) { return w->has_focus() || gtk_widget_get_focus_child(w->gobj()) != nullptr; };
+    auto join = [](const core::StringList& l) {
+        std::string s;
+        for (const auto& x : l) s += (s.empty() ? "" : ", ") + x;
+        return s;
+    };
+    auto split = [](const std::string& s) {
+        core::StringList out;
+        std::stringstream ss(s);
+        std::string one;
+        while (std::getline(ss, one, ',')) {
+            while (!one.empty() && one.front() == ' ') one.erase(one.begin());
+            while (!one.empty() && one.back() == ' ') one.pop_back();
+            if (!one.empty()) out.push_back(one);
+        }
+        return out;
+    };
+    const auto& modes = core::file_modes();
+    for (const auto& d0 : f->files) {
+        const std::string name = d0.name;
+        auto* e = Gtk::make_managed<Gtk::Entry>();
+        e->set_hexpand(true);
+        e->set_margin_top(6);
+        e->set_tooltip_text("choose_" + name + "()  ->  on_" + name + "_chosen()");
+        std::vector<Glib::ustring> shown(modes.begin(), modes.end());
+        auto* mode = Gtk::make_managed<Gtk::DropDown>(Gtk::StringList::create(shown));
+        mode->set_margin_top(6);
+        mode->set_tooltip_text("open: one file  ·  open_multiple: several (the hook gets paths)  ·  "
+                               "save: a file to write  ·  folder: a folder");
+        no_wheel_unless_focused(*mode);
+        auto* del = Gtk::make_managed<Gtk::Button>();
+        del->set_icon_name("user-trash-symbolic");
+        del->set_has_frame(false);
+        del->set_margin_top(6);
+        del->set_tooltip_text("Delete the file dialog");
+        m_grid->attach(*e, 0, m_line);
+        m_grid->attach(*mode, 1, m_line);
+        m_grid->attach(*del, 2, m_line++);
+
+        auto* title = Gtk::make_managed<Gtk::Entry>();
+        title->set_placeholder_text("Title");
+        title->set_tooltip_text("The dialog's title. Empty = GTK's own (\"Open File\", \"Save File\" ...)");
+        auto* accept = Gtk::make_managed<Gtk::Entry>();
+        accept->set_placeholder_text("Accept label");
+        accept->set_width_chars(10);
+        accept->set_tooltip_text("The accept button's label (\"_Open\", \"_Export\"). Empty = GTK's own.");
+        m_grid->attach(*title, 0, m_line);
+        m_grid->attach(*accept, 1, m_line++, 2, 1);
+
+        auto* filters = Gtk::make_managed<Gtk::Entry>();
+        filters->set_placeholder_text("Text=*.txt;*.md, Images=image/*");
+        filters->set_tooltip_text("Filters, a comma list: Label=pattern;pattern. A '/' makes a MIME type "
+                                  "(image/*). The first is the one shown. Ignored by a folder dialog.");
+        m_grid->attach(*filters, 0, m_line++, 3, 1);
+
+        auto* checks = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 12);
+        auto* cancel = Gtk::make_managed<Gtk::CheckButton>("Cancel hook");
+        cancel->set_tooltip_text("Also a hook on_" + name + "_cancelled() for Cancel / Escape");
+        auto* req = Gtk::make_managed<Gtk::CheckButton>("Required");
+        req->set_tooltip_text("on_" + name + "_chosen is pure virtual: the class won't build without it");
+        checks->append(*cancel);
+        checks->append(*req);
+        m_grid->attach(*checks, 0, m_line++, 3, 1);
+
+        auto current = [this, name]() -> std::optional<core::FileDef> {
+            if (const auto f = m_d.get(core::Design::kForm))
+                for (const auto& x : f->files) if (x.name == name) return x;
+            return std::nullopt;
+        };
+        auto edit = [this, name, current](const std::function<void(core::FileDef&)>& change) {
+            if (m_painting || m_rebuilding) return;
+            auto x = current();
+            if (!x) return;
+            change(*x);
+            std::string why;
+            if (!core::design::set_file(m_j, m_d, name, *x, &why) && !why.empty()) m_said.emit(why);
+        };
+        auto rename = [this, e, name, edit] {
+            if (m_painting || m_rebuilding || e->get_text().raw() == name) return;
+            edit([e](core::FileDef& x) { x.name = e->get_text(); });
+        };
+        e->signal_activate().connect(rename);
+        auto focus = Gtk::EventControllerFocus::create();
+        focus->signal_leave().connect(rename);
+        e->add_controller(focus);
+        mode->property_selected().signal_changed().connect([mode, edit, &modes] {
+            const auto i = mode->get_selected();
+            if (i < modes.size()) edit([&](core::FileDef& x) { x.mode = modes[i]; });
+        });
+        title->signal_changed().connect([title, edit] { edit([&](core::FileDef& x) { x.title = title->get_text(); }); });
+        accept->signal_changed().connect([accept, edit] { edit([&](core::FileDef& x) { x.accept = accept->get_text(); }); });
+        filters->signal_changed().connect([filters, edit, split] {
+            edit([&](core::FileDef& x) { x.filters = split(filters->get_text()); });
+        });
+        cancel->signal_toggled().connect([cancel, edit] { edit([&](core::FileDef& x) { x.cancel = cancel->get_active(); }); });
+        req->signal_toggled().connect([req, edit] { edit([&](core::FileDef& x) { x.required = req->get_active(); }); });
+        del->signal_clicked().connect([this, name] { core::design::remove_file(m_j, m_d, name); });
+
+        m_rows.push_back({[=, &modes](const core::Rec&) {
+            const auto x = current();
+            if (!x) return;
+            if (!typing(e) && e->get_text().raw() != x->name) e->set_text(x->name);
+            for (std::size_t i = 0; i < modes.size(); ++i)
+                if (modes[i] == x->mode && mode->get_selected() != i) mode->set_selected(static_cast<guint>(i));
+            if (!typing(title) && title->get_text().raw() != x->title) title->set_text(x->title);
+            if (!typing(accept) && accept->get_text().raw() != x->accept) accept->set_text(x->accept);
+            // A comma list typed half-way ("Text=*.txt, ") isn't rewritten under the cursor.
+            if (!typing(filters) && split(filters->get_text()) != x->filters) filters->set_text(join(x->filters));
+            filters->set_sensitive(x->mode != "folder");
+            cancel->set_active(x->cancel);
+            req->set_active(x->required);
+        }});
+    }
+    auto* add = Gtk::make_managed<Gtk::Button>();
+    auto* add_in = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 6);
+    add_in->append(*Gtk::make_managed<Gtk::Image>(Glib::ustring("list-add-symbolic")));
+    add_in->append(*Gtk::make_managed<Gtk::Label>("Add file dialog"));
+    add->set_child(*add_in);
+    add->set_halign(Gtk::Align::START);
+    add->signal_clicked().connect([this] { core::design::add_file(m_j, m_d); });
     m_grid->attach(*add, 0, m_line++, 3, 1);
 }
 

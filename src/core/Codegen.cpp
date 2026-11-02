@@ -259,6 +259,15 @@ std::vector<Hook> hooks_of(const Form& f) {
     // s003: each action is a hook too (widget = the action's name, type "Action").
     for (const auto& a : f.actions)
         out.push_back({action_hook(a), "void", "", "", a.name, "Action", "activate", a.required});
+    // s005: each file dialog's answer is a hook; Cancel is one too when ticked.
+    for (const auto& d : f.files) {
+        out.push_back({file_chosen_hook(d), "void",
+                       d.mode == "open_multiple" ? "const std::vector<std::string>& paths"
+                                                 : "const std::string& path",
+                       "", d.name, "FileDialog", "chosen", d.required});
+        if (d.cancel)
+            out.push_back({file_cancelled_hook(d), "void", "", "", d.name, "FileDialog", "cancelled", false});
+    }
     return out;
 }
 
@@ -269,6 +278,88 @@ std::string override_decl(const Hook& h) {
 std::string override_def(const Hook& h, const std::string& cls) {
     std::string body = h.ret == "void" ? "" : "    return " + h.ret_default + ";\n";
     return h.ret + " " + cls + "::" + h.name + "(" + h.params + ") {\n" + body + "}\n";
+}
+
+// s005 -- one file dialog's choose_<name>(): build the Gtk::FileDialog, ask,
+// and deliver the answer to its hook. The rules it keeps:
+//   * one at a time -- asking again while it's up is refused (logged), not stacked;
+//   * the answer checks the window's token first -- if the window went, nothing runs;
+//   * Cancel / Escape (DialogError DISMISSED / CANCELLED) is not an error: it goes
+//     to on_<name>_cancelled() when ticked, else nowhere; a real failure is logged
+//     and then treated as a cancel, so a hook waiting on the answer always gets one.
+static std::string file_chooser_def(const Form& f, const FileDef& d, const std::string& ui) {
+    static const std::map<std::string, std::pair<std::string, std::string>> calls = {
+        {"open", {"open", "open_finish"}},
+        {"open_multiple", {"open_multiple", "open_multiple_finish"}},
+        {"save", {"save", "save_finish"}},
+        {"folder", {"select_folder", "select_folder_finish"}},
+    };
+    const auto call = calls.count(d.mode) ? calls.at(d.mode) : calls.at("open");
+    const bool many = d.mode == "open_multiple";
+    const std::string who = f.name + ": " + d.name;
+    std::ostringstream c;
+    c << "\n// ── file dialog " << d.name << " (" << d.mode << ") ──\n"
+      << "void " << ui << "::" << file_chooser(d) << "(const std::string& initial) {\n"
+      << "    if (m_files[" << cpp_string(d.name) << "]) {\n"
+      << "        if (auto lg = log::get(log::Area::Ui)) lg->info(" << cpp_string(who + ": already open") << ");\n"
+      << "        return;\n"
+      << "    }\n"
+      << "    auto dialog = Gtk::FileDialog::create();\n"
+      << "    dialog->set_modal(true);\n";
+    if (!d.title.empty()) c << "    dialog->set_title(" << cpp_string(d.title) << ");\n";
+    if (!d.accept.empty()) c << "    dialog->set_accept_label(" << cpp_string(d.accept) << ");\n";
+    if (!d.filters.empty() && d.mode != "folder") {
+        c << "    {\n"
+          << "        auto filters = Gio::ListStore<Gtk::FileFilter>::create();\n";
+        for (const auto& row : d.filters) {
+            const FileFilterRow r = parse_file_filter(row);
+            if (!r.ok) continue;
+            c << "        {\n"
+              << "            auto ff = Gtk::FileFilter::create();\n"
+              << "            ff->set_name(" << cpp_string(r.label) << ");\n";
+            for (const auto& p : r.patterns)
+                c << "            ff->" << (p.find('/') != std::string::npos ? "add_mime_type(" : "add_pattern(")
+                  << cpp_string(p) << ");\n";
+            c << "            filters->append(ff);\n"
+              << "        }\n";
+        }
+        c << "        dialog->set_filters(filters);\n"
+          << "    }\n";
+    }
+    c << "    if (!initial.empty()) {\n"
+      << "        auto at = Gio::File::create_for_path(initial);\n"
+      << "        if (Glib::file_test(initial, Glib::FileTest::IS_DIR)) dialog->set_initial_folder(at);\n";
+    if (d.mode == "save")
+        c << "        else if (initial.find('/') == std::string::npos) dialog->set_initial_name(initial);\n";
+    c << "        else dialog->set_initial_file(at);   // its folder, and its name\n"
+      << "    }\n"
+      << "    auto cancel = Gio::Cancellable::create();\n"
+      << "    m_files[" << cpp_string(d.name) << "] = cancel;\n"
+      << "    dialog->" << call.first << "(*this, [this, alive = std::weak_ptr<bool>(m_alive), dialog]\n"
+      << "                         (const Glib::RefPtr<Gio::AsyncResult>& result) {\n"
+      << "        if (alive.expired()) return;   // the window went first: nobody to tell\n"
+      << "        m_files.erase(" << cpp_string(d.name) << ");\n";
+    if (many) c << "        std::vector<std::string> paths;\n";
+    else      c << "        std::string path;\n";
+    c << "        try {\n";
+    if (many)
+        c << "            for (const auto& file : dialog->" << call.second << "(result))\n"
+          << "                if (file) paths.push_back(file->get_path().empty() ? file->get_uri() : file->get_path());\n";
+    else
+        c << "            if (auto file = dialog->" << call.second << "(result))\n"
+          << "                path = file->get_path().empty() ? file->get_uri() : file->get_path();\n";
+    c << "        } catch (const Gtk::DialogError& e) {\n"
+      << "            if (e.code() == Gtk::DialogError::FAILED)\n"
+      << "                if (auto lg = log::get(log::Area::Ui)) lg->error(" << cpp_string(who + ": {}") << ", e.what());\n"
+      << "        } catch (const Glib::Error& e) {\n"
+      << "            if (auto lg = log::get(log::Area::Ui)) lg->error(" << cpp_string(who + ": {}") << ", e.what());\n"
+      << "        }\n"
+      << "        if (!" << (many ? "paths" : "path") << ".empty()) " << file_chosen_hook(d)
+      << "(" << (many ? "paths" : "path") << ");\n";
+    if (d.cancel) c << "        else " << file_cancelled_hook(d) << "();\n";
+    c << "    }, cancel);\n"
+      << "}\n";
+    return c.str();
 }
 
 std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
@@ -289,7 +380,9 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << "#include \"generated/Widgets.hpp\"\n\n"
       << "#include <" << rootw->header << ">\n"
       << (f.actions.empty() ? "" : "#include <giomm/simpleactiongroup.h>\n")
+      << (f.files.empty() ? "" : "#include <giomm/cancellable.h>\n")
       << "#include <sigc++/connection.h>\n"
+      << (f.files.empty() ? "" : "#include <map>\n#include <memory>\n#include <string>\n")
       << "#include <vector>\n\n"
       << "namespace " << app.ns << "::ui {\n\n"
       << "class " << ui << " : public " << rootw->gtk_class << " {\n"
@@ -305,8 +398,20 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
                 "        set_transient_for(parent);\n"
                 "        present();\n"
                 "    }\n\n"
-              : "")
-      << "protected:\n";
+              : "");
+    if (!f.files.empty()) {
+        h << "    // ── file dialogs ── call one (from a hook, a button, an action); it opens over\n"
+          << "    // this window and RETURNS AT ONCE. The answer arrives later, at its hook.\n"
+          << "    // `initial`: a folder to start in, a file to start on, or (save) a bare name.\n";
+        for (const auto& d : f.files) {
+            std::string answer = file_chosen_hook(d) + (d.mode == "open_multiple" ? "(paths)" : "(path)");
+            if (d.cancel) answer += " / " + file_cancelled_hook(d) + "()";
+            h << "    void " << file_chooser(d) << "(const std::string& initial = {});   // "
+              << d.mode << " -> " << answer << "\n";
+        }
+        h << "\n";
+    }
+    h << "protected:\n";
     if (hooks.empty()) {
         h << "    // ── hooks: none ticked in the form yet ──\n\n";
     } else {
@@ -337,6 +442,12 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << "    std::vector<sigc::connection> m_hooks;   // cut first in the destructor\n"
       << (f.actions.empty() ? "" : rootw->type == "ApplicationWindow" ? "" :
           "    Glib::RefPtr<Gio::SimpleActionGroup> m_actions;   // \"win.*\" (a plain Window has no action map)\n")
+      << (f.files.empty() ? "" :
+          "    // s005: a file dialog that is up, by name (its Cancellable); and the token its\n"
+          "    // answer checks first -- the destructor drops it, so an answer arriving after\n"
+          "    // this window is gone is dropped, never delivered to a dead object.\n"
+          "    std::map<std::string, Glib::RefPtr<Gio::Cancellable>> m_files;\n"
+          "    std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);\n")
       << "};\n\n"
       << "}  // namespace " << app.ns << "::ui\n";
 
@@ -349,6 +460,10 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << (f.actions.empty() ? "" :
           "\n#include <giomm/simpleaction.h>\n#include <gtkmm/shortcut.h>\n#include <gtkmm/shortcutaction.h>\n"
           "#include <gtkmm/shortcutcontroller.h>\n#include <gtkmm/shortcuttrigger.h>\n")
+      << (f.files.empty() ? "" :
+          "\n#include \"Log.hpp\"\n\n#include <giomm/file.h>\n#include <giomm/liststore.h>\n"
+          "#include <glibmm/fileutils.h>\n#include <gtkmm/error.h>\n#include <gtkmm/filedialog.h>\n"
+          "#include <gtkmm/filefilter.h>\n")
       << "\n"
       << "namespace " << app.ns << "::ui {\n\n"
       << ui << "::" << ui << "()";
@@ -366,6 +481,11 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << "    // teardown fires (a Stack changing page, a ListBox dropping its selection)\n"
       << "    // must not reach a hook -- a REQUIRED one is pure virtual here.\n"
       << "    for (auto& c : m_hooks) c.disconnect();\n"
+      << (f.files.empty() ? "" :
+          "    // A file dialog still up: drop the token (its answer is now ignored) and\n"
+          "    // cancel it (the dialog closes with the window).\n"
+          "    m_alive.reset();\n"
+          "    for (auto& [name, cancel] : m_files) if (cancel) cancel->cancel();\n")
       << "    registry::remove(this);\n"
       << "}\n\n"
       << "void " << ui << "::build_ui() {\n";
@@ -414,6 +534,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
     }
     if (hooks.empty()) c << "    // nothing ticked yet\n";
     c << "}\n";
+    for (const auto& d : f.files) c << file_chooser_def(f, d, ui);
 
     bool any_default = false;
     for (const auto& k : hooks) any_default = any_default || !k.required;
@@ -540,9 +661,15 @@ std::vector<OutFile> user_stubs(const Form& f, const AppInfo& app) {
       << "    // wired. Fill in models, load state, set what the form can't express.\n"
       << "}\n";
     for (const auto& k : hooks) {
-        c << "\n" << k.ret << " " << f.name << "::" << k.name << "(" << k.params << ") {\n"
-          << "    if (auto lg = log::get(log::Area::Ui)) lg->info(\"" << f.name << ": " << k.widget
-          << " " << k.signal << "\");\n";
+        c << "\n" << k.ret << " " << f.name << "::" << k.name << "(" << k.params << ") {\n";
+        if (k.type == "FileDialog" && k.signal == "chosen")
+            c << "    if (auto lg = log::get(log::Area::Ui)) lg->info(\"" << f.name << ": " << k.widget
+              << " chosen {}\", " << (k.params.find("paths") != std::string::npos
+                                           ? "std::to_string(paths.size()) + \" file(s)\"" : "path")
+              << ");\n";
+        else
+            c << "    if (auto lg = log::get(log::Area::Ui)) lg->info(\"" << f.name << ": " << k.widget
+              << " " << k.signal << "\");\n";
         if (k.ret != "void")
             c << "    return " << k.ret_default << ";"
               << (k.signal == "close_request" ? "   // true keeps the window open" : "") << "\n";
