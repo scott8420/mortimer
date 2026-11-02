@@ -46,6 +46,7 @@ private:
     void name_row(bool form);
     void actions_rows();                                      // s003: the form's actions
     void files_rows();                                        // s005: the form's file dialogs
+    void models_rows();                                       // s006: the form's models
     void menu_rows(Gtk::Label* label, Gtk::Button* reset);    // s003: a MenuButton's menu
     void no_wheel_unless_focused(Gtk::Widget& w);
     void commit_prop(const std::string& prop, bool pack, const std::optional<core::Value>& v);

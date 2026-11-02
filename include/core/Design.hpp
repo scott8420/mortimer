@@ -141,6 +141,15 @@ std::string add_file(DesignJournal& j, Design& d, const std::string& name = {}, 
 bool remove_file(DesignJournal& j, Design& d, const std::string& name);
 bool set_file(DesignJournal& j, Design& d, const std::string& name, const FileDef& now,
               std::string* why = nullptr);
+// s006 -- the form's models (on the kForm record). add_model names it
+// "Model1".. with one string field "title" (a model needs a column);
+// remove_model refuses while a ColumnView shows it (says which); set_model
+// replaces one whole -- a rename carries every ColumnView "model" with it,
+// same step; typing a field's name or header folds per field.
+std::string add_model(DesignJournal& j, Design& d, const std::string& name = {}, std::string* why = nullptr);
+bool remove_model(DesignJournal& j, Design& d, const std::string& name, std::string* why = nullptr);
+bool set_model(DesignJournal& j, Design& d, const std::string& name, const ModelDef& now,
+               std::string* why = nullptr);
 
 // A property: a value, or nullopt to clear it back to GTK's default. Typing in
 // one field folds into one step (merge key "prop:<key>:<name>").

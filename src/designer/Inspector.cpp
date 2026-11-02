@@ -16,6 +16,7 @@
 #include <gtkmm/adjustment.h>
 #include <glibmm/markup.h>
 
+#include <algorithm>
 #include <cmath>
 #include <sstream>
 
@@ -116,7 +117,11 @@ bool Inspector::show(const std::string& sel) {
         sig += "|";   // s005: and the file dialogs' names
         for (const auto& x : f->files) sig += x.name + ",";
         sig += "|";   // s006: and the models' names (the model picker's choices)
-        for (const auto& m : f->models) sig += m.name + ",";
+        for (const auto& m : f->models) {   // and their fields (a row each)
+            sig += m.name + ":";
+            for (const auto& x : m.fields) sig += x.name + ",";
+            sig += ";";
+        }
     }
     if (sel != m_key || !r || r->type != m_type || ptype != m_parent_type || sig != m_actions_sig) {
         m_actions_sig = sig;
@@ -184,6 +189,9 @@ void Inspector::rebuild() {
                                 "the answer arrives at on_<name>_chosen(path) -- Cancel at "
                                 "on_<name>_cancelled() if ticked.");
         files_rows();
+        section("Models", "Row types for tables: <Name>Item, a C++ member per field and a unique id() "
+                          "(automatic, or yours). A ColumnView shows one, a column per field.");
+        models_rows();
     }
     if (!w) return;
 
@@ -636,6 +644,143 @@ void Inspector::files_rows() {
     add->set_child(*add_in);
     add->set_halign(Gtk::Align::START);
     add->signal_clicked().connect([this] { core::design::add_file(m_j, m_d); });
+    m_grid->attach(*add, 0, m_line++, 3, 1);
+}
+
+// ── s006: the form's models ─────────────────────────────────────────────────
+// A block per model: its name (commits on Enter / leaving it; a rename carries
+// the ColumnViews that show it) + delete; then a line per field -- name,
+// header (placeholder: the one made from the name), type, delete; Add field.
+void Inspector::models_rows() {
+    const auto f = m_d.get(core::Design::kForm);
+    if (!f) return;
+    auto typing = [](Gtk::Widget* w) { return w->has_focus() || gtk_widget_get_focus_child(w->gobj()) != nullptr; };
+    const auto& types = core::field_types();
+    for (const auto& m0 : f->models) {
+        const std::string name = m0.name;
+        auto current = [this, name]() -> std::optional<core::ModelDef> {
+            if (const auto f = m_d.get(core::Design::kForm))
+                for (const auto& m : f->models) if (m.name == name) return m;
+            return std::nullopt;
+        };
+        auto edit = [this, name, current](const std::function<void(core::ModelDef&)>& change) {
+            if (m_painting || m_rebuilding) return;
+            auto m = current();
+            if (!m) return;
+            change(*m);
+            std::string why;
+            if (!core::design::set_model(m_j, m_d, name, *m, &why) && !why.empty()) m_said.emit(why);
+        };
+
+        auto* e = Gtk::make_managed<Gtk::Entry>();
+        e->set_hexpand(true);
+        e->set_margin_top(6);
+        e->set_tooltip_text("The class: " + name + "Item (create it with " + name + "Item::create(...))");
+        auto* cls = Gtk::make_managed<Gtk::Label>(name + "Item");
+        cls->add_css_class("dim-label");
+        cls->set_margin_top(6);
+        auto* del = Gtk::make_managed<Gtk::Button>();
+        del->set_icon_name("user-trash-symbolic");
+        del->set_has_frame(false);
+        del->set_margin_top(6);
+        del->set_tooltip_text("Delete the model (not while a ColumnView shows it)");
+        m_grid->attach(*e, 0, m_line);
+        m_grid->attach(*cls, 1, m_line);
+        m_grid->attach(*del, 2, m_line++);
+        auto rename = [this, e, name, edit] {
+            if (m_painting || m_rebuilding || e->get_text().raw() == name) return;
+            edit([e](core::ModelDef& m) { m.name = e->get_text(); });
+        };
+        e->signal_activate().connect(rename);
+        auto focus = Gtk::EventControllerFocus::create();
+        focus->signal_leave().connect(rename);
+        e->add_controller(focus);
+        del->signal_clicked().connect([this, name] {
+            std::string why;
+            if (!core::design::remove_model(m_j, m_d, name, &why) && !why.empty()) m_said.emit(why);
+        });
+        m_rows.push_back({[=](const core::Rec&) {
+            if (!typing(e) && e->get_text().raw() != name) e->set_text(name);
+        }});
+
+        for (std::size_t i = 0; i < m0.fields.size(); ++i) {
+            auto* line = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 4);
+            line->set_margin_start(12);
+            auto* fname = Gtk::make_managed<Gtk::Entry>();
+            fname->set_hexpand(true);
+            fname->set_width_chars(6);
+            fname->set_tooltip_text("The field: a C++ member of the item (title, due_date)");
+            auto* title = Gtk::make_managed<Gtk::Entry>();
+            title->set_width_chars(6);
+            title->set_hexpand(true);
+            title->set_tooltip_text("The column's header. Empty = made from the name.");
+            line->append(*fname);
+            line->append(*title);
+            std::vector<Glib::ustring> shown(types.begin(), types.end());
+            auto* type = Gtk::make_managed<Gtk::DropDown>(Gtk::StringList::create(shown));
+            type->set_tooltip_text("string, int (64-bit), double, bool (a check box)");
+            no_wheel_unless_focused(*type);
+            auto* fdel = Gtk::make_managed<Gtk::Button>();
+            fdel->set_icon_name("list-remove-symbolic");
+            fdel->set_has_frame(false);
+            fdel->set_tooltip_text("Remove the field");
+            m_grid->attach(*line, 0, m_line);
+            m_grid->attach(*type, 1, m_line);
+            m_grid->attach(*fdel, 2, m_line++);
+
+            auto commit_name = [this, fname, i, edit, current] {
+                if (m_painting || m_rebuilding) return;
+                const auto m = current();
+                if (!m || i >= m->fields.size() || m->fields[i].name == fname->get_text().raw()) return;
+                edit([&](core::ModelDef& x) { x.fields[i].name = fname->get_text(); });
+            };
+            fname->signal_activate().connect(commit_name);
+            auto ff = Gtk::EventControllerFocus::create();
+            ff->signal_leave().connect(commit_name);
+            fname->add_controller(ff);
+            title->signal_changed().connect([title, i, edit] {
+                edit([&](core::ModelDef& x) { if (i < x.fields.size()) x.fields[i].title = title->get_text(); });
+            });
+            type->property_selected().signal_changed().connect([type, i, edit, &types] {
+                const auto k = type->get_selected();
+                if (k < types.size()) edit([&](core::ModelDef& x) { if (i < x.fields.size()) x.fields[i].type = types[k]; });
+            });
+            fdel->signal_clicked().connect([i, edit] {
+                edit([&](core::ModelDef& x) { if (i < x.fields.size()) x.fields.erase(x.fields.begin() + static_cast<long>(i)); });
+            });
+            m_rows.push_back({[=, &types](const core::Rec&) {
+                const auto m = current();
+                if (!m || i >= m->fields.size()) return;
+                const auto& x = m->fields[i];
+                if (!typing(fname) && fname->get_text().raw() != x.name) fname->set_text(x.name);
+                if (!typing(title) && title->get_text().raw() != x.title) title->set_text(x.title);
+                title->set_placeholder_text(core::field_title({x.name, x.type, ""}));
+                for (std::size_t k = 0; k < types.size(); ++k)
+                    if (types[k] == x.type && type->get_selected() != k) type->set_selected(static_cast<guint>(k));
+            }});
+        }
+        auto* addf = Gtk::make_managed<Gtk::Button>("Add field");
+        addf->set_has_frame(false);
+        addf->set_halign(Gtk::Align::START);
+        addf->set_margin_start(12);
+        addf->signal_clicked().connect([edit] {
+            edit([](core::ModelDef& x) {
+                std::string n;
+                for (int k = 1; n.empty() || std::any_of(x.fields.begin(), x.fields.end(),
+                                                         [&](const core::FieldDef& y) { return y.name == n; }); ++k)
+                    n = "field" + std::to_string(k);
+                x.fields.push_back({n, "string", ""});
+            });
+        });
+        m_grid->attach(*addf, 0, m_line++, 3, 1);
+    }
+    auto* add = Gtk::make_managed<Gtk::Button>();
+    auto* add_in = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 6);
+    add_in->append(*Gtk::make_managed<Gtk::Image>(Glib::ustring("list-add-symbolic")));
+    add_in->append(*Gtk::make_managed<Gtk::Label>("Add model"));
+    add->set_child(*add_in);
+    add->set_halign(Gtk::Align::START);
+    add->signal_clicked().connect([this] { core::design::add_model(m_j, m_d); });
     m_grid->attach(*add, 0, m_line++, 3, 1);
 }
 

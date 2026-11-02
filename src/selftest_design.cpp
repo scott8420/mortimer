@@ -296,6 +296,34 @@ void selftest_design(const Check& check_) {
                                                   f.d.to_form().files.front().name == "open_doc");
     }
 
+    // ── s006: models -- a rename carries the views; a shown model can't go ──
+    {
+        auto fx = core::design::fixture();
+        fx.root.children[1].children.push_back({"ColumnView", "table", {{"model", Value(std::string("Note"))}}, {}, {}, {}});
+        Fix f(fx);
+        const auto table = f.d.find("table");
+        auto model_of = [&] { return std::get<std::string>(f.d.get(table)->props.at("model")); };
+        core::design::set_model(f.j, f.d, "Note", {"Task", {{"title", "string", ""}, {"done", "bool", ""}}});
+        check("model rename: the view follows, one step", model_of() == "Task" && f.j.size() == 1, model_of());
+        check("model rename: still validates", first_error(f.d.to_form()).empty(), first_error(f.d.to_form()));
+        f.j.undo();
+        check("model rename+undo: view back", model_of() == "Note");
+        std::string why;
+        check("model delete while shown: refused, says which",
+              !core::design::remove_model(f.j, f.d, "Note", &why) && why.find("table") != std::string::npos, why);
+        check("model: auto-named, with a field", core::design::add_model(f.j, f.d) == "Model1" &&
+                                                 f.d.to_form().models.back().fields.size() == 1);
+        check("model: a new one validates", first_error(f.d.to_form()).empty(), first_error(f.d.to_form()));
+        for (const char* t : {"N", "Na", "Name"}) {
+            auto m = f.d.to_form().models.front();
+            m.fields[0].title = t;
+            core::design::set_model(f.j, f.d, "Note", m);
+        }
+        check("model typing: a header is one step", f.j.size() == 2, std::to_string(f.j.size()));
+        { auto m = f.d.to_form().models.front(); m.fields[0].type = "date";
+          check("model: an unknown field type is refused", !core::design::set_model(f.j, f.d, "Note", m, &why), why); }
+    }
+
     // ── s002 m4: where a drop lands ─────────────────────────────────────────
     {
         using core::design::Zone;

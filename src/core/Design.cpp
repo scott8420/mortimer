@@ -483,6 +483,99 @@ bool set_file(DesignJournal& j, Design& d, const std::string& name, const FileDe
     return j.run(label, {Design::kForm}, [&] { d.put(Design::kForm, *r); }, merge);
 }
 
+namespace {
+// The ColumnViews whose "model" is `name`.
+std::vector<Design::Id> views_of(const Design& d, const std::string& name) {
+    std::vector<Design::Id> out;
+    for (const auto& k : d.all()) {
+        const auto o = d.get(k);
+        if (!o || o->type != "ColumnView") continue;
+        const auto it = o->props.find("model");
+        if (it != o->props.end() && std::holds_alternative<std::string>(it->second) &&
+            std::get<std::string>(it->second) == name)
+            out.push_back(k);
+    }
+    return out;
+}
+}  // namespace
+
+std::string add_model(DesignJournal& j, Design& d, const std::string& name, std::string* why) {
+    auto r = d.get(Design::kForm);
+    if (!r) return {};
+    auto taken = [&](const std::string& n) {
+        for (const auto& m : r->models) if (m.name == n) return true;
+        return false;
+    };
+    std::string n = name;
+    if (n.empty())
+        for (int i = 1; n.empty() || taken(n); ++i) n = "Model" + std::to_string(i);
+    if (!is_identifier(n) || is_cpp_keyword(n)) { say(why, "\"" + n + "\" isn't a C++ class name"); return {}; }
+    if (taken(n)) { say(why, "the form already has a model " + n); return {}; }
+    r->models.push_back({n, {{"title", "string", ""}}});
+    j.run("Add model " + curly(n), {Design::kForm}, [&] { d.put(Design::kForm, *r); });
+    return n;
+}
+
+bool remove_model(DesignJournal& j, Design& d, const std::string& name, std::string* why) {
+    auto r = d.get(Design::kForm);
+    if (!r) return false;
+    if (const auto v = views_of(d, name); !v.empty()) {
+        say(why, "ColumnView " + d.get(v.front())->name + " shows " + name + " -- give it another model first");
+        return false;
+    }
+    const auto n = r->models.size();
+    std::erase_if(r->models, [&](const ModelDef& m) { return m.name == name; });
+    if (r->models.size() == n) return false;
+    return j.run("Delete model " + curly(name), {Design::kForm}, [&] { d.put(Design::kForm, *r); });
+}
+
+bool set_model(DesignJournal& j, Design& d, const std::string& name, const ModelDef& now, std::string* why) {
+    auto r = d.get(Design::kForm);
+    if (!r) return false;
+    auto it = std::find_if(r->models.begin(), r->models.end(), [&](const ModelDef& m) { return m.name == name; });
+    if (it == r->models.end() || *it == now) return false;
+    if (now.name != name) {
+        if (!is_identifier(now.name) || is_cpp_keyword(now.name)) { say(why, "\"" + now.name + "\" isn't a C++ class name"); return false; }
+        for (const auto& m : r->models)
+            if (m.name == now.name) { say(why, "the form already has a model " + now.name); return false; }
+    }
+    for (const auto& x : now.fields)
+        if (std::find(field_types().begin(), field_types().end(), x.type) == field_types().end()) {
+            say(why, "\"" + x.type + "\" isn't a field type (string, int, double, bool)");
+            return false;
+        }
+    // Typing in one field's name or header folds; anything else is its own step.
+    std::string merge;
+    if (now.name == name && now.fields.size() == it->fields.size()) {
+        int changed = 0;
+        std::string key;
+        for (std::size_t i = 0; i < now.fields.size(); ++i) {
+            const auto& a = it->fields[i];
+            const auto& b = now.fields[i];
+            if (a.type != b.type) { changed = 99; break; }
+            if (a.name != b.name) { ++changed; key = std::to_string(i) + ":name"; }
+            if (a.title != b.title) { ++changed; key = std::to_string(i) + ":title"; }
+        }
+        if (changed == 1) merge = "model:" + name + ":" + key;
+    }
+    // A rename carries the ColumnViews that show it.
+    std::vector<Design::Id> ids{Design::kForm};
+    std::map<Design::Id, Rec> views;
+    if (now.name != name)
+        for (const auto& k : views_of(d, name)) {
+            auto o = *d.get(k);
+            o.props["model"] = Value(now.name);
+            ids.push_back(k);
+            views[k] = o;
+        }
+    const std::string label = now.name != name ? "Rename model " + curly(name) : "Model " + curly(name);
+    *it = now;
+    return j.run(label, ids, [&] {
+        d.put(Design::kForm, *r);
+        for (const auto& [k, o] : views) d.put(k, o);
+    }, merge);
+}
+
 bool set_prop(DesignJournal& j, Design& d, const Design::Id& id, const std::string& prop,
               const std::optional<Value>& v) {
     auto r = d.get(id);
@@ -626,7 +719,8 @@ Form fixture() {
     FileDef open_doc;
     open_doc.name = "open_doc";
     open_doc.filters = {"Text=*.txt;*.md"};
-    return Form{"Fixture", win, {{"save", "<Control>s", false}}, {open_doc}};
+    return Form{"Fixture", win, {{"save", "<Control>s", false}}, {open_doc},
+                {{"Note", {{"title", "string", ""}, {"done", "bool", ""}}}}};
 }
 
 const std::vector<Verb>& verbs() {
@@ -653,6 +747,12 @@ const std::vector<Verb>& verbs() {
         {"rename_action",[](DesignJournal& j, Design& d) { set_action(j, d, "save", {"store", "<Control>s", false}); }},
         {"key_action",   [](DesignJournal& j, Design& d) { set_action(j, d, "save", {"save", "<Control><Shift>s", true}); }},
         {"add_file",     [](DesignJournal& j, Design& d) { add_file(j, d, "export_pdf"); }},
+        {"add_model",    [](DesignJournal& j, Design& d) { add_model(j, d, "Patient"); }},
+        {"remove_model", [](DesignJournal& j, Design& d) { remove_model(j, d, "Note"); }},
+        {"rename_model", [](DesignJournal& j, Design& d) {
+            set_model(j, d, "Note", {"Task", {{"title", "string", ""}, {"done", "bool", ""}}}); }},
+        {"field_model",  [](DesignJournal& j, Design& d) {
+            set_model(j, d, "Note", {"Note", {{"title", "string", "Name"}, {"done", "bool", ""}, {"n", "int", ""}}}); }},
         {"remove_file",  [](DesignJournal& j, Design& d) { remove_file(j, d, "open_doc"); }},
         {"rename_file",  [](DesignJournal& j, Design& d) {
             FileDef x; x.name = "load"; x.filters = {"Text=*.txt;*.md"};
