@@ -7,6 +7,8 @@
 // Then the edges a window will hit: refusals that say why and record nothing,
 // renames that carry refs, delete + undo in place, typing that merges, the
 // packing a container chooses.
+#include "core/Xml.hpp"
+#include "core/UiFile.hpp"
 #include "core/Design.hpp"
 #include "core/Catalog.hpp"
 #include "core/Project.hpp"
@@ -648,6 +650,95 @@ void selftest_design(const Check& check_) {
               dz::paste(f.j, f.d, dz::copy_of(f.d, {ok, cancel, hint}), paned, -1, &why).empty() && f.d.count() == n1, why);
         check("paste: an empty clip says so", dz::paste(f.j, f.d, dz::Clip{}, body, -1, &why).empty() &&
               why.find("copy something") != std::string::npos);
+    }
+
+    // ── s024 m4: a GtkBuilder .ui in ─────────────────────────────────────────
+    {
+        auto slurp = [](const fs::path& p) { std::ifstream in(p); std::stringstream s; s << in.rdbuf(); return s.str(); };
+        {
+            const auto x = core::parse_xml("<?xml version=\"1.0\"?>\n<!-- c -->\n<a k='1' j=\"&lt;&amp;&#233;&#x41;\">"
+                                           "t<b/><![CDATA[<raw>]]><!-- in --><c x=\"y\">u</c></a>");
+            check("s024 m4 xml: attrs (either quote), entities, CDATA, comments, self-closing",
+                  x.name == "a" && x.attr("k") == "1" && x.attr("j") == "<&\xC3\xA9" "A" && x.children.size() == 2 &&
+                  x.children[0].name == "b" && x.children[1].text == "u" && x.text == "t<raw>");
+            std::string err;
+            try { core::parse_xml("<a>\n<b>\n</a>"); } catch (const std::exception& e) { err = e.what(); }
+            check("s024 m4 xml: a mismatched close says where", err.find("line 3") != std::string::npos &&
+                  err.find("closes <b>") != std::string::npos, err);
+        }
+        check("s024 m4: a file stem as a form name", core::form_name_from("main-window") == "MainWindow" &&
+              core::form_name_from("2nd_try") == "Imported2ndTry");
+        // The round trip is the gate: export -> import -> export says the same thing.
+        const auto ks = core::load_form((fs::path(MORTIMER_SOURCE_DIR) / "tests" / "KitchenSink.mort").string());
+        const auto ui1 = core::export_ui(ks).xml;
+        const auto back = core::import_ui(ui1, "KitchenSink");
+        const auto ui2 = core::export_ui(back.form).xml;
+        auto body = [](const std::string& x) { return x.substr(x.find("-->")); };
+        check("s024 m4 round trip: the kitchen sink, exported, imported, exported -- the same .ui",
+              body(ui1) == body(ui2), std::to_string(body(ui1).size()) + " vs " + std::to_string(body(ui2).size()));
+        check("s024 m4 round trip: every widget back, same ids", [&] {
+            std::vector<std::string> a, b;
+            core::walk(ks.root, [&](const core::Node& n, const core::Node*) { a.push_back(n.type + ":" + n.id); });
+            core::walk(back.form.root, [&](const core::Node& n, const core::Node*) { b.push_back(n.type + ":" + n.id); });
+            // the ListView's row template is a factory's (export leaves it out)
+            std::erase_if(a, [](const std::string& t) { return t.find(":task_") != std::string::npos || t == "Box:task_row"; });
+            return a == b;
+        }());
+
+        const auto imp = core::import_ui(slurp(fs::path(MORTIMER_SOURCE_DIR) / "tests" / "Imported.ui"), "Notes");
+        const auto& r = imp.form.root;
+        auto find = [&](const std::string& id) {
+            const core::Node* hit = nullptr;
+            core::walk(r, [&](const core::Node& n, const core::Node*) { if (n.id == id) hit = &n; });
+            return hit;
+        };
+        auto noted = [&](const std::string& t) {
+            for (const auto& n : imp.notes) if (n.find(t) != std::string::npos) return true;
+            return false;
+        };
+        check("s024 m4 import: a template is the window; ids as C++ names (dashes, a keyword, none)",
+              r.type == "ApplicationWindow" && r.id == "notes_window" && find("new_note") && find("class_") &&
+              find("header_bar1") && find("label1") && find("edit_page"));
+        const auto* nn = find("new_note");
+        check("s024 m4 import: a custom handler kept; the default one stays default",
+              nn && nn->signals.size() == 1 && nn->signals[0].handler == "new_note_cb" && find("title") &&
+              find("title")->signals.size() == 1 && find("title")->signals[0].handler.empty());
+        const auto* page = find("edit_page");
+        check("s024 m4 import: four equal margins -> margin; uneven ones kept; css classes; the old tab -> the title",
+              page && page->props.count("margin") && !page->props.count("margin_start") && page->props.count("css_classes") &&
+              page->pack.count("title") && std::get<std::string>(page->pack.at("title")) == "Edit" &&
+              find("label1") && find("label1")->props.count("margin_start") && !find("label1")->props.count("margin"));
+        const auto* size = find("size");
+        check("s024 m4 import: a Grid cell, a span; the adjustment's range (a default one dropped)",
+              size && std::get<std::int64_t>(size->pack.at("column")) == 1 && std::get<std::int64_t>(size->pack.at("width")) == 2 &&
+              std::get<double>(size->props.at("upper")) == 72 && !size->props.count("step"));
+        check("s024 m4 import: Paned children by slot, the shrink given to its child",
+              find("class_") && std::get<std::string>(find("class_")->pack.at("slot")) == "start" &&
+              std::get<bool>(find("class_")->pack.at("shrink")) == false && find("pages") &&
+              std::get<std::string>(find("pages")->pack.at("slot")) == "end");
+        check("s024 m4 import: what it can't keep is noted -- an unknown widget, an app. action",
+              !find("meter") && noted("meter: a GtkLevelBar") && noted("app.quit is the app's own action"));
+        check("s024 m4 import: a menu's win.* row becomes an action of the form",
+              imp.form.actions.size() == 1 && imp.form.actions[0].name == "export_notes" && noted("a new action export_notes"));
+        bool err = false;
+        for (const auto& i : core::validate(imp.form)) err = err || i.error;
+        check("s024 m4 import: the imported form validates (it can generate)", !err);
+        std::string bad;
+        try { core::import_ui("<ui/>", "X"); } catch (const std::exception& e) { bad = e.what(); }
+        check("s024 m4 import: not a .ui -> says so", bad.find("not a GtkBuilder file") != std::string::npos, bad);
+
+        const fs::path tmp = fs::temp_directory_path() / "mortimer_import_selftest";
+        fs::remove_all(tmp);
+        fs::create_directories(tmp);
+        try {
+            const auto app = core::create_workspace(core::derive_app("Taker"), tmp.string());
+            const auto at = core::add_form_as(app, imp.form);
+            bool twice = false;
+            try { core::add_form_as(app, imp.form); } catch (const std::exception&) { twice = true; }
+            check("s024 m4: add_form_as lists it in the project; refuses it twice",
+                  fs::exists(at) && core::project_of(at) == app && twice);
+        } catch (const std::exception& e) { check("s024 m4: add_form_as", false, e.what()); }
+        fs::remove_all(tmp);
     }
 
     // ── s024: an app made before the gate gets it on generate, once ──────────

@@ -403,6 +403,20 @@ std::string add_form(const std::string& app_dir, const std::string& name, const 
     return path.string();
 }
 
+std::string add_form_as(const std::string& app_dir, const Form& f) {
+    if (!is_identifier(f.name) || is_cpp_keyword(f.name))
+        throw std::runtime_error("\"" + f.name + "\" isn't a C++ class name");
+    Project pr = load_project(app_dir);
+    for (const auto& x : pr.forms)
+        if (x == f.name) throw std::runtime_error("the project already has a form " + f.name);
+    const fs::path path = fs::path(app_dir) / "forms" / (f.name + ".mort");
+    if (fs::exists(path)) throw std::runtime_error(path.string() + " already exists");
+    save_form(f, path.string());
+    pr.forms.push_back(f.name);
+    save_project(pr, app_dir);
+    return path.string();
+}
+
 HookReport live_report(const std::string& app_dir, const Form& f) {
     const fs::path root(app_dir);
     const fs::path uh = root / "include" / (f.name + ".hpp");

@@ -10,6 +10,7 @@
 // tests/KitchenSink.mort (or the starter form). proof.sh compiles that form, so
 // an entry added here without being exercised fails HERE, and an entry spelled
 // wrong fails THERE. (CANON: a claim isn't a fact until a consumer exercises it.)
+#include "core/UiFile.hpp"
 #include "core/Catalog.hpp"
 #include "core/Codegen.hpp"
 #include "core/CssScope.hpp"
@@ -1639,5 +1640,79 @@ class X : public ui::XUi {
               has(cm, "message(FATAL_ERROR \"mortimer-gen generate: the forms have errors") &&
               has(cm, "mortimer-gen not found: generated/ is used as it is") &&
               has(cm, "option(@BIN_UPPER@_REGENERATE"), "");
+    }
+
+    // ── s024 m3: a form as a GtkBuilder .ui ─────────────────────────────────
+    {
+        using core::Value;
+        auto bp = [](const char* type, const char* prop) {
+            const auto* w = core::find_widget(type);
+            const auto* p = w ? core::find_prop(*w, prop) : nullptr;
+            return p ? core::builder_prop(*w, *p) : core::BuilderProp{};
+        };
+        using H = core::BuilderProp::How;
+        check("s024 m3: builder names from the setters (placeholder-text, default-width, transition-type, tooltip-text)",
+              bp("Entry", "placeholder").name == "placeholder-text" && bp("Window", "default_width").name == "default-width" &&
+              bp("Stack", "transition").name == "transition-type" && bp("Button", "tooltip").name == "tooltip-text" &&
+              bp("Button", "tooltip").how == H::Plain, "");
+        check("s024 m3: the spelled-differently ones (icon-name on an Image, label-xalign on a Frame)",
+              bp("Image", "icon_name").name == "icon-name" && bp("Frame", "label_xalign").name == "label-xalign", "");
+        check("s024 m3: grouped ones: a range on the adjustment, text on the buffer, a dialog's title on the dialog",
+              bp("Scale", "lower").how == H::Adjustment && bp("Scale", "value").how == H::Adjustment &&
+              bp("SpinButton", "step").name == "step-increment" && bp("TextView", "text").how == H::Buffer &&
+              bp("ColorDialogButton", "dialog_title").how == H::Dialog, "");
+        check("s024 m3: margin -> four sides; css classes -> <style>; items -> a GtkStringList; menu -> a <menu>",
+              bp("Button", "margin").how == H::Margins && bp("Button", "css_classes").how == H::Css &&
+              bp("DropDown", "items").how == H::Strings && bp("MenuButton", "menu").how == H::Menu, "");
+        check("s024 m3: Mortimer's own are left out, with why (remember, bind, model, a font)",
+              bp("Window", "remember").how == H::Skip && bp("Label", "bind").how == H::Skip &&
+              bp("ColumnView", "model").how == H::Skip && bp("FontDialogButton", "font").how == H::Skip, "");
+        const auto* btn = core::find_widget("Button");
+        const auto* stk = core::find_widget("Stack");
+        check("s024 m3: signals: signal_clicked() -> clicked; a property's change -> notify::visible-child",
+              btn && core::builder_signal(*core::find_signal(*btn, "clicked")) == "clicked" &&
+              stk && core::builder_signal(*core::find_signal(*stk, "visible_child_changed")) == "notify::visible-child", "");
+
+        core::Form f;
+        f.name = "Shown";
+        core::Node a{"Label", "a", {{"label", Value(std::string("A & <b>"))}}, {{"column", Value(std::int64_t(1))}, {"row", Value(std::int64_t(2))},
+                     {"width", Value(std::int64_t(2))}}, {}, {}};
+        core::Node grid{"Grid", "grid", {}, {}, {}, {a}};
+        core::Node p1{"Box", "p1", {}, {{"name", Value(std::string("one"))}, {"title", Value(std::string("One"))}}, {}, {grid}};
+        core::Node pages{"Stack", "pages", {}, {}, {}, {p1}};
+        core::Node go{"Button", "go", {{"label", Value(std::string("Go"))}}, {{"slot", Value(std::string("end"))}}, {{"clicked"}}, {}};
+        core::Node menu{"MenuButton", "menu", {{"menu", Value(core::StringList{"Undo=win.undo", "-", "Quit=win.quit"})}},
+                        {{"slot", Value(std::string("start"))}}, {}, {}};
+        core::Node head{"HeaderBar", "head", {}, {{"slot", Value(std::string("titlebar"))}}, {}, {go, menu}};
+        f.root = {"ApplicationWindow", "shown", {{"title", Value(std::string("Shown"))}, {"remember", Value(true)}}, {}, {}, {head, pages}};
+        f.actions = {{"save", "<Control>s", false, "", "", ""}};
+        f.models = {{"Note", {{"title", "string", ""}}}};
+        const auto x = core::export_ui(f);
+        auto at = [&](const std::string& t) { return x.xml.find(t); };
+        check("s024 m3 export: the window, its titlebar child, the header's start / end",
+              has(x.xml, "<object class=\"GtkApplicationWindow\" id=\"shown\">") && has(x.xml, "<child type=\"titlebar\">") &&
+              has(x.xml, "<child type=\"end\">") && has(x.xml, "<child type=\"start\">") &&
+              has(x.xml, "<property name=\"child\">"), "");
+        check("s024 m3 export: a Grid child's <layout> INSIDE its object (column, row, span)",
+              at("<layout>") > at("<object class=\"GtkLabel\" id=\"a\">") && at("<layout>") < x.xml.find("</object>", at("id=\"a\"")) &&
+              has(x.xml, "<property name=\"column\">1</property>") && has(x.xml, "<property name=\"column-span\">2</property>") &&
+              !has(x.xml, "row-span"), "");
+        check("s024 m3 export: a Stack page is a GtkStackPage (name, title, child)",
+              has(x.xml, "<object class=\"GtkStackPage\">") && has(x.xml, "<property name=\"name\">one</property>") &&
+              has(x.xml, "<property name=\"title\">One</property>"), "");
+        check("s024 m3 export: text escaped; the hook as the handler; the menu by id",
+              has(x.xml, ">A &amp; &lt;b&gt;</property>") && has(x.xml, "<signal name=\"clicked\" handler=\"on_go_clicked\"/>") &&
+              has(x.xml, "<property name=\"menu-model\">menu_menu</property>") && has(x.xml, "<menu id=\"menu_menu\">") &&
+              has(x.xml, "<attribute name=\"action\">win.quit</attribute>") && has(x.xml, "</section>\n    <section>"), "");
+        bool act = false, mdl = false, rem = false;
+        for (const auto& l : x.left_out) {
+            act = act || has(l, "action save (<Control>s)");
+            mdl = mdl || has(l, "model Note");
+            rem = rem || has(l, "shown.remember");
+        }
+        const auto c0 = x.xml.find("<!--"), c1 = x.xml.find("-->");
+        check("s024 m3 export: what a .ui can't say is NAMED (an action, a model, window state), in the header too",
+              act && mdl && rem && has(x.xml, "Left out (a .ui can't say them):") &&
+              x.xml.substr(c0 + 4, c1 - c0 - 4).find("--") == std::string::npos, "");
     }
 }

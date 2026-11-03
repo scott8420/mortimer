@@ -15,6 +15,8 @@
 #   break an item's undo -> the undo gate must FAIL the build (s024)
 #   drop a form          -> its generated files are pruned
 #   edit forms by hand   -> the build regenerates first; a broken one stops it (s024 m2)
+#   export every form    -> GtkBuilder loads each .ui (tests/ui_load.c; s024 m3)
+#   import a Glade .ui   -> a form that builds; every form round-trips (s024 m4)
 #   rename two forms     -> your halves follow (class inside); builds
 #   ...and your half (include/, src/) is never written by any of it.
 #
@@ -162,6 +164,39 @@ if build; then bad "a broken .mort stops the build"; else ok "a broken .mort sto
 check "...and says why"          grep -q "the forms have errors" "$WORK/build.log"
 cp "$WORK/Extra2.good" forms/Extra2.mort
 check "...fixed: builds again"   build
+
+echo "== import a .ui (s024 m4): Glade-style in, a form out, and it builds"
+"$GEN" import-ui "$HERE/tests/Imported.ui" . > "$WORK/import.log" 2>&1
+check "import-ui: a new form of the project"   grep -q "wrote ./forms/Imported.mort" "$WORK/import.log"
+check "...the unknown widget noted"            grep -q "meter: a GtkLevelBar" "$WORK/import.log"
+check "...imported form builds (the build regenerates)" build
+check "...its handlers are your hooks"         grep -q "void new_note_cb() override;" include/Imported.hpp
+
+echo "== export as .ui (s024 m3): GtkBuilder must take every exported form"
+UI_LOAD="$WORK/ui_load"
+if cc -o "$UI_LOAD" "$HERE/tests/ui_load.c" $(pkg-config --cflags --libs gtk4) 2>"$WORK/ui_load.log"; then
+    RUN=()
+    if [[ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+        if command -v xvfb-run >/dev/null; then RUN=(xvfb-run -a); else RUN=(skip); fi
+    fi
+    for m in "$HERE/tests/KitchenSink.mort" forms/*.mort; do
+        stem=$(basename "$m" .mort)
+        "$GEN" export-ui "$m" "$WORK/$stem.ui" > /dev/null 2>&1 || { bad "export $stem"; continue; }
+        if [[ "${RUN[0]:-}" == skip ]]; then echo "  SKIP  load $stem.ui (no display, no xvfb-run)"; continue; fi
+        check "GtkBuilder loads $stem.ui" env GIO_USE_VFS=local "${RUN[@]}" "$UI_LOAD" "$WORK/$stem.ui"
+    done
+else
+    bad "build tests/ui_load.c (see $WORK/ui_load.log)"
+fi
+# s024 m4: the round trip -- export, import, export: the same .ui (past its header).
+for m in "$HERE/tests/KitchenSink.mort" forms/*.mort; do
+    stem=$(basename "$m" .mort)
+    "$GEN" export-ui "$m" "$WORK/$stem.1.ui" > /dev/null 2>&1
+    "$GEN" import-ui "$WORK/$stem.1.ui" --to "$WORK/$stem.back.mort" > /dev/null 2>&1
+    "$GEN" export-ui "$WORK/$stem.back.mort" "$WORK/$stem.2.ui" > /dev/null 2>&1
+    check "round trip $stem: export, import, export -- the same" \
+        cmp -s <(sed '1,/^-->$/d' "$WORK/$stem.1.ui") <(sed '1,/^-->$/d' "$WORK/$stem.2.ui")
+done
 
 echo "-----------------------------------------------"
 echo "$pass pass / $fail fail"

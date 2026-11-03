@@ -6,6 +6,7 @@
 #include "Registry.hpp"
 #include "core/Project.hpp"
 #include "core/Recents.hpp"
+#include "core/UiFile.hpp"
 
 #include <gtkmm/alertdialog.h>
 #include <gtkmm/filedialog.h>
@@ -18,6 +19,9 @@
 
 #include <cctype>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <stdexcept>
 
 // Shell_handlers.cpp -- HANDLERS. Each verb handler is ONE call into
 // core::design:: (which goes through the journal), then says where the
@@ -461,6 +465,101 @@ void Shell::on_save_as() {  // handler: file dialog -> save_to
             }
         } catch (const Glib::Error& e) {
             if (auto lg = log::get(log::Area::Io)) lg->info("save: dismissed ({})", e.what());
+        }
+    });
+}
+
+// s024 m4 -- a GtkBuilder .ui (Glade, Cambalache, an export) as a form. With a
+// project open it becomes the project's next form (generated, then opened --
+// like Add Window); without one, an unsaved form. Not an undo step: it's a new
+// document, like Open. What it couldn't keep (and the actions it made for menu
+// rows) goes to the log, the count to the status line.
+void Shell::on_import_ui() {  // handler: file dialog -> import_ui_from
+    auto f = Gtk::FileFilter::create();
+    f->set_name("GtkBuilder (*.ui)");
+    f->add_pattern("*.ui");
+    auto all = Gtk::FileFilter::create();
+    all->set_name("All files");
+    all->add_pattern("*");
+    auto filters = Gio::ListStore<Gtk::FileFilter>::create();
+    filters->append(f);
+    filters->append(all);
+    auto dialog = Gtk::FileDialog::create();
+    dialog->set_title("Import a GtkBuilder .ui");
+    dialog->set_filters(filters);
+    dialog->open(*this, [this, dialog](const Glib::RefPtr<Gio::AsyncResult>& result) {
+        try {
+            if (auto file = dialog->open_finish(result)) import_ui_from(file->get_path());
+        } catch (const Glib::Error& e) {
+            if (auto lg = log::get(log::Area::Io)) lg->info("import-ui: dismissed ({})", e.what());
+        }
+    });
+}
+
+void Shell::import_ui_from(const std::string& path) {  // handler: core::import_ui -> a form
+    const std::string dir = m_app_dir;
+    confirm_discard([this, path, dir] {
+        try {
+            std::ifstream in(path);
+            if (!in) throw std::runtime_error("can't read it");
+            std::stringstream text;
+            text << in.rdbuf();
+            std::string name = core::form_name_from(std::filesystem::path(path).stem().string());
+            if (!dir.empty())   // the project's: a name it doesn't have yet (Notes, Notes2, ...)
+                for (int n = 2; std::filesystem::exists(std::filesystem::path(dir) / "forms" / (name + ".mort")); ++n)
+                    name = core::form_name_from(std::filesystem::path(path).stem().string()) + std::to_string(n);
+            const auto r = core::import_ui(text.str(), name);
+            for (const auto& note : r.notes)
+                if (auto lg = log::get(log::Area::Io)) lg->info("import-ui: {}", note);
+            const std::string tail = r.notes.empty() ? std::string(".")
+                : " -- " + std::to_string(r.notes.size()) + " notes in the log, the first: " + r.notes.front();
+            const std::string file = std::filesystem::path(path).filename().string();
+            if (dir.empty()) {
+                load_form(r.form, "");
+                say("Imported " + file + " as " + name + " (unsaved: Save keeps it)" + tail);
+            } else {
+                const std::string at = core::add_form_as(dir, r.form);
+                core::generate_project(dir);
+                open_path(at);
+                say("Imported " + file + " as the project's form " + name + tail);
+            }
+        } catch (const std::exception& e) {
+            say("Couldn't import " + path + ": " + e.what(), 2);
+        }
+    });
+}
+
+// s024 m3 -- the form as a GtkBuilder .ui, for Glade / Cambalache / Gtk::Builder.
+// A copy, not a save: the form (and its undo) are untouched, and what a .ui
+// can't say (actions, file dialogs, models...) is listed in the file's header.
+void Shell::on_export_ui() {  // handler: file dialog -> core::export_ui
+    auto f = Gtk::FileFilter::create();
+    f->set_name("GtkBuilder (*.ui)");
+    f->add_pattern("*.ui");
+    auto filters = Gio::ListStore<Gtk::FileFilter>::create();
+    filters->append(f);
+    auto dialog = Gtk::FileDialog::create();
+    dialog->set_title("Export as GtkBuilder .ui");
+    dialog->set_filters(filters);
+    dialog->set_initial_name(m_design.form_name() + ".ui");
+    if (!m_path.empty())
+        dialog->set_initial_folder(Gio::File::create_for_path(std::filesystem::path(m_path).parent_path().string()));
+    dialog->save(*this, [this, dialog](const Glib::RefPtr<Gio::AsyncResult>& result) {
+        try {
+            auto file = dialog->save_finish(result);
+            if (!file) return;
+            std::string p = file->get_path();
+            if (std::filesystem::path(p).extension() != ".ui") p += ".ui";
+            const auto x = core::export_ui(m_design.to_form());
+            std::ofstream out(p);
+            out << x.xml;
+            if (!out) { say("Couldn't write " + p); return; }
+            if (auto lg = log::get(log::Area::Io)) lg->info("export-ui: {} ({} left out)", p, x.left_out.size());
+            say("Exported " + std::filesystem::path(p).filename().string() +
+                (x.left_out.empty() ? "" : " -- " + std::to_string(x.left_out.size()) +
+                                           " things a .ui can't say are listed at its top"));
+        } catch (const Glib::Error& e) {
+            if (auto lg = log::get(log::Area::Io)) lg->info("export-ui: dismissed ({})", e.what());
         }
     });
 }

@@ -73,6 +73,9 @@ std::string project_of(const std::string& form_path);
 // A new form in the project: forms/<name>.mort (a Window with an empty Box),
 // listed in mortimer.json. Throws with a readable message if the name isn't a
 // class name or the form exists. Returns the form's path. Doesn't generate.
+// s024 m4 -- a form made elsewhere (an imported .ui): forms/<f.name>.mort, listed in
+// mortimer.json. The same refusals as add_form (a bad name, one already there).
+std::string add_form_as(const std::string& app_dir, const Form& f);
 std::string add_form(const std::string& app_dir, const std::string& name,
                      const std::string& root_type = "Window");   // or "Dialog" (s004)
 

@@ -9,10 +9,13 @@
 //   mortimer-gen catalog [Type]                        what can be placed, and how
 #include "core/Catalog.hpp"
 #include "core/Project.hpp"
+#include "core/UiFile.hpp"
 #include "core/Resources.hpp"
 
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -28,6 +31,9 @@ int usage() {
         "  mortimer-gen generate [APP_DIR]                    regenerate every form\n"
         "  mortimer-gen hooks [APP_DIR]                       hooked / unhooked / missing / stale\n"
         "  mortimer-gen check <form.mort>                     validate one form\n"
+        "  mortimer-gen export-ui <form.mort> [OUT.ui]        the form as a GtkBuilder .ui (stdout without OUT)\n"
+        "  mortimer-gen import-ui FILE.ui [Name] [APP_DIR]    a .ui as a new form of the project (Name: from the file)\n"
+        "  mortimer-gen import-ui FILE.ui --to OUT.mort       ...or as a loose form\n"
         "  mortimer-gen catalog [Type]                        widgets, properties, signals\n"
         "  mortimer-gen resources [APP_DIR]                   the bundle: kind, file, what code names\n"
         "  mortimer-gen add icon|image|data FILE [APP_DIR]    copy into resources/ and bundle it\n"
@@ -151,6 +157,47 @@ int main(int argc, char** argv) {
         if (cmd == "generate") return cmd_generate(a.size() > 1 ? a[1] : ".");
         if (cmd == "hooks") {
             print_hooks(core::hook_reports(a.size() > 1 ? a[1] : "."));
+            return 0;
+        }
+        if (cmd == "import-ui") {   // s024 m4
+            if (a.size() < 2) return usage();
+            std::ifstream in(a[1]);
+            if (!in) { std::cerr << "can't read " << a[1] << "\n"; return 1; }
+            std::stringstream text;
+            text << in.rdbuf();
+            const bool loose = a.size() > 3 && a[2] == "--to";
+            // [Name] [APP_DIR]: a folder in Name's place is the app ("import-ui x.ui .").
+            std::vector<std::string> rest(a.begin() + 2, a.end());
+            if (!loose && !rest.empty() && fs::is_directory(rest[0])) rest.insert(rest.begin(), "");
+            std::string name = loose ? core::form_name_from(fs::path(a[3]).stem().string())
+                             : !rest.empty() && !rest[0].empty() ? rest[0]
+                             : core::form_name_from(fs::path(a[1]).stem().string());
+            const std::string app_dir = !loose && rest.size() > 1 ? rest[1] : ".";
+            const auto r = core::import_ui(text.str(), name);
+            std::string where;
+            if (loose) {
+                core::save_form(r.form, a[3]);
+                where = a[3];
+            } else {
+                where = core::add_form_as(app_dir, r.form);
+            }
+            std::cout << "wrote " << where << "\n";
+            for (const auto& l : r.notes) std::cout << "  note      " << l << "\n";
+            for (const auto& i : core::validate(r.form))
+                std::cout << (i.error ? "  error     " : "  warn      ") << i.where << ": " << i.what << "\n";
+            if (!loose) std::cout << "run generate to make " << name << "Ui and your half\n";
+            return 0;
+        }
+        if (cmd == "export-ui") {   // s024 m3
+            if (a.size() < 2) return usage();
+            const auto x = core::export_ui(core::load_form(a[1]));
+            if (a.size() > 2) {
+                std::ofstream(a[2]) << x.xml;
+                std::cout << "wrote " << a[2] << "\n";
+            } else {
+                std::cout << x.xml;
+            }
+            for (const auto& l : x.left_out) std::cerr << "  left out  " << l << "\n";
             return 0;
         }
         if (cmd == "check") {

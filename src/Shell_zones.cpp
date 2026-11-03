@@ -115,6 +115,8 @@ Glib::RefPtr<Gio::Menu> Shell::build_menu() {  // zone: hamburger model
     file->append_submenu("Open Recent", m_recents_menu);
     file->append("Save", "win.save");
     file->append("Save As…", "win.save-as");
+    file->append("Import .ui…", "win.import-ui");      // s024 m4: Glade / Cambalache -> a form
+    file->append("Export as .ui…", "win.export-ui");   // s024 m3: a GtkBuilder copy (the form stays the source)
     menu->append_section(file);
 
     // The app the form lives in: Mortimer makes the whole workspace.

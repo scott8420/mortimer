@@ -73,6 +73,9 @@ private:
     void on_new();                               // category: handler: a fresh starter form
     void on_open();                              // category: handler: file dialog -> open_path
     void on_save();                              // category: handler: to its file, or Save As
+    void on_import_ui();                         // category: handler: file dialog -> core::import_ui (s024 m4)
+    void import_ui_from(const std::string& path);   // category: handler: the import itself (a project's form, or unsaved)
+    void on_export_ui();                         // category: handler: file dialog -> core::export_ui (s024 m3)
     void on_save_as();                           // category: handler: file dialog -> save_to
     void on_new_project();                       // category: handler: ask -> create_workspace -> open its form
     void on_open_project();                      // category: handler: folder -> its main form

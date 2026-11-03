@@ -70,6 +70,8 @@ add_library(mortimer_core STATIC
     # ── s002: the design the window edits -- a Form flattened by stable key so
     # the journal holds it; every designer verb + the verb table the gate walks.
     src/core/Design.cpp
+    src/core/Xml.cpp      # s024 m4: just enough XML for a .ui (no new dependency)
+    src/core/UiFile.cpp   # s024 m3: a form as a GtkBuilder .ui (export; what it can't say, named)
     ${MORTIMER_TEMPLATES_CPP}
 )
 target_include_directories(mortimer_core PUBLIC include)

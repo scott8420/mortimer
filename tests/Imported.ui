@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- tests/Imported.ui -- a .ui as Glade / Cambalache write them, NOT as
+     Mortimer exports: the importer's proof (s024 m4). Widgets without ids, ids
+     with dashes and a keyword, a widget Mortimer doesn't know (GtkLevelBar), a
+     notebook tab given the old way (<child type="tab">), app. and win. menu
+     rows, custom handler names, uneven margins, translatable text, a template. -->
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="NotesWindow" parent="GtkApplicationWindow">
+    <property name="title" translatable="yes">Notes &amp; Things</property>
+    <property name="default-width">640</property>
+    <property name="default-height">420</property>
+    <child type="titlebar">
+      <object class="GtkHeaderBar">
+        <child type="start">
+          <object class="GtkButton" id="new-note">
+            <property name="icon-name">list-add-symbolic</property>
+            <property name="tooltip-text" translatable="yes">New note</property>
+            <signal name="clicked" handler="new_note_cb" swapped="no"/>
+          </object>
+        </child>
+        <child type="end">
+          <object class="GtkMenuButton">
+            <property name="icon-name">open-menu-symbolic</property>
+            <property name="menu-model">primary-menu</property>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
+      <object class="GtkPaned" id="split">
+        <property name="position">200</property>
+        <property name="shrink-start-child">False</property>
+        <property name="start-child">
+          <object class="GtkListBox" id="class">
+            <property name="selection-mode">browse</property>
+            <signal name="row-selected" handler="on_class_row_selected"/>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">First</property>
+                <property name="xalign">0</property>
+                <property name="margin-start">12</property>
+                <property name="margin-top">6</property>
+              </object>
+            </child>
+          </object>
+        </property>
+        <property name="end-child">
+          <object class="GtkNotebook" id="pages">
+            <child>
+              <object class="GtkBox" id="edit-page">
+                <property name="orientation">vertical</property>
+                <property name="spacing">6</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
+                <property name="margin-top">12</property>
+                <property name="margin-bottom">12</property>
+                <style>
+                  <class name="card"/>
+                </style>
+                <child>
+                  <object class="GtkEntry" id="title">
+                    <property name="placeholder-text" translatable="yes">Title</property>
+                    <signal name="activate" handler="on_title_activate"/>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLevelBar" id="meter">
+                    <property name="value">0.5</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkGrid">
+                    <property name="column-spacing">8</property>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label">Size</property>
+                        <layout>
+                          <property name="column">0</property>
+                          <property name="row">0</property>
+                        </layout>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkSpinButton" id="size">
+                        <property name="adjustment">
+                          <object class="GtkAdjustment">
+                            <property name="lower">1</property>
+                            <property name="upper">72</property>
+                            <property name="step-increment">1</property>
+                            <property name="value">12</property>
+                          </object>
+                        </property>
+                        <layout>
+                          <property name="column">1</property>
+                          <property name="row">0</property>
+                          <property name="column-span">2</property>
+                        </layout>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child type="tab">
+              <object class="GtkLabel">
+                <property name="label" translatable="yes">Edit</property>
+              </object>
+            </child>
+          </object>
+        </property>
+      </object>
+    </child>
+  </template>
+  <menu id="primary-menu">
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">_Export…</attribute>
+        <attribute name="action">win.export-notes</attribute>
+      </item>
+    </section>
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">_Quit</attribute>
+        <attribute name="action">app.quit</attribute>
+      </item>
+    </section>
+  </menu>
+</interface>

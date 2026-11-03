@@ -17,6 +17,8 @@ void Shell::bind_actions() {  // bindings: win.* + recents group
     add_action("open",          sigc::mem_fun(*this, &Shell::on_open));
     add_action("save",          sigc::mem_fun(*this, &Shell::on_save));
     add_action("save-as",       sigc::mem_fun(*this, &Shell::on_save_as));
+    add_action("import-ui",     sigc::mem_fun(*this, &Shell::on_import_ui));   // s024 m4
+    add_action("export-ui",     sigc::mem_fun(*this, &Shell::on_export_ui));   // s024 m3
     add_action("new-project",   sigc::mem_fun(*this, &Shell::on_new_project));
     add_action("open-project",  sigc::mem_fun(*this, &Shell::on_open_project));
     m_act_add_form = add_action("add-window", [this] { on_add_form("Window"); });
