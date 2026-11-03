@@ -50,18 +50,33 @@ bool Shell::save_to(const std::string& path) {  // helper: write the .mort
         // renamed form would orphan your include/<Old>.hpp -- refuse in words.
         const std::string app = core::project_of(path);
         const std::string stem = std::filesystem::path(path).stem().string();
+        // s021: in a project the file's stem IS the class (forms/<Form>.mort).
+        // The form renamed in the inspector + Save = the project renames it:
+        // the file, the list, your halves (originals kept in removed/).
+        std::string to = path;
+        std::string lead;
         if (!app.empty() && f.name != stem) {
-            say("This form is " + stem + " in its project; renaming a project's form isn't supported yet -- "
-                "put the name back to " + stem + " (or use Add Form for a new one).", 2);
-            return false;
+            if (path != m_path) {   // Save As onto another form's file: not a rename
+                say("That file is the project's form " + stem + " -- save this one under its own name.", 2);
+                return false;
+            }
+            const auto r = core::rename_project_form(app, stem, f.name);   // throws, in words
+            to = (std::filesystem::path(app) / "forms" / (f.name + ".mort")).string();
+            lead = "Renamed " + stem + " -> " + f.name;
+            if (!r.edited.empty()) lead += " (" + std::to_string(r.edited.size()) + " file" + (r.edited.size() == 1 ? "" : "s") +
+                                           " of yours followed; the originals are in " + r.kept + "/)";
+            if (!r.forms.empty()) lead += ", " + std::to_string(r.forms.size()) + (r.forms.size() == 1 ? " form opens it" : " forms open it");
+            core::recents_remove(m_recents, path);
+            if (auto lg = log::get(log::Area::Io)) lg->info("renamed form '{}' -> '{}' in '{}'", stem, f.name, app);
         }
-        core::save_form(f, path);
-        m_path = path;
+        core::save_form(f, to);
+        m_path = to;
         m_app_dir = app;
         m_saved = core::form_to_json(f);
         update_title();
-        if (auto lg = log::get(log::Area::Io)) lg->info("saved '{}'", path);
-        if (!m_app_dir.empty()) { generate(); rebuild_forms_menu(); repaint(); return true; }
+        if (!lead.empty()) note_recent(to);
+        if (auto lg = log::get(log::Area::Io)) lg->info("saved '{}'", to);
+        if (!m_app_dir.empty()) { generate(lead); rebuild_forms_menu(); repaint(); return true; }
         const auto issues = core::validate(f);
         if (core::has_errors(issues)) say("Saved " + path + " -- but it has problems the generator will refuse.", 1);
         else say("Saved " + path + " (a loose form: save it into an app's forms/ to generate)");
@@ -72,10 +87,10 @@ bool Shell::save_to(const std::string& path) {  // helper: write the .mort
     }
 }
 
-void Shell::generate() {  // helper: the project, after a save
+void Shell::generate(const std::string& lead) {  // helper: the project, after a save
     try {
         const auto r = core::generate_project(m_app_dir);
-        std::string s = "Saved and generated: " + std::to_string(r.written.size()) + " written, " +
+        std::string s = (lead.empty() ? "" : lead + ". ") + "Saved and generated: " + std::to_string(r.written.size()) + " written, " +
                         std::to_string(r.unchanged.size()) + " unchanged";
         if (!r.stubs.empty()) s += ", " + std::to_string(r.stubs.size()) + " of yours started";
         if (!r.pruned.empty()) s += ", " + std::to_string(r.pruned.size()) + " pruned";

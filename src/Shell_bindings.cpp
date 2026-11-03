@@ -83,6 +83,8 @@ void Shell::bind_model() {  // bindings: design <-> journal <-> panes
     // s009: the navigator's project list.
     m_project.signal_open_form().connect(sigc::mem_fun(*this, &Shell::on_open_form));
     m_project.signal_remove_form().connect(sigc::mem_fun(*this, &Shell::on_remove_form));
+    m_project.signal_rename_form().connect(sigc::mem_fun(*this, &Shell::on_rename_form));
+    m_project.signal_rename_resource().connect(sigc::mem_fun(*this, &Shell::on_rename_resource));
     m_project.signal_remove_resource().connect(sigc::mem_fun(*this, &Shell::on_remove_resource));
     m_project.signal_open_style().connect(sigc::mem_fun(*this, &Shell::on_edit_style));
     m_project.signal_copy().connect([this](const std::string& text, const std::string& what) {

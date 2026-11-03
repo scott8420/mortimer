@@ -203,7 +203,8 @@ void Inspector::rebuild() {
     section("Name", "The C++ name: member m_<name>, hooks on_<name>_<signal>.");
     name_row(false);
     if (is_root) {
-        section("Form", "The class this form becomes: <Name>Ui (generated) and <Name> (yours).");
+        section("Form", "The class this form becomes: <Name>Ui (generated) and <Name> (yours). "
+                        "In a project, Save renames its files too -- your code follows; the originals go to removed/.");
         name_row(true);
         section("Actions", "win.<name>: a menu row, a button or its key runs it. It runs its hook "
                            "on_action_<name>(), or opens a window (built once, hides on close). The second "

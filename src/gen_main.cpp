@@ -35,6 +35,8 @@ int usage() {
         "  mortimer-gen add about [APP_DIR]                   forms/About.mort, an About dialog (+ your half)\n"
         "  mortimer-gen remove resource FILE [APP_DIR]        unbundle; the file moves to removed/\n"
         "  mortimer-gen remove form STEM [APP_DIR]            the form + your halves move to removed/\n"
+        "  mortimer-gen rename form OLD NEW [APP_DIR]         the form, your halves (class inside), the forms that open it\n"
+        "  mortimer-gen rename resource FILE NAME [APP_DIR]   the bundled file; forms naming the icon follow\n"
         "  mortimer-gen share FORM MODEL [APP_DIR]            the form's model becomes the project's (shared)\n"
         "  mortimer-gen unshare MODEL [APP_DIR]               every form that shows it gets its own copy back\n"
         "  mortimer-gen models [APP_DIR]                      the project's shared models\n";
@@ -218,6 +220,25 @@ int main(int argc, char** argv) {
             const std::string dir = a.size() > 3 ? a[3] : ".";
             const std::string went = a[1] == "form" ? core::remove_form(dir, a[2]) : core::remove_resource(dir, a[2]);
             std::cout << "moved to " << went << (a[1] == "form" ? " -- run generate to prune its generated files" : "") << "\n";
+            return 0;
+        }
+        if (cmd == "rename" && a.size() >= 4 && a[1] == "resource") {   // s021 m2
+            const std::string dir = a.size() > 4 ? a[4] : ".";
+            const auto r = core::rename_resource(dir, a[2], a[3]);
+            std::cout << "renamed " << a[2] << " -> " << r.now.file << "\n  code names it  " << r.now.use << "  (was " << r.was << ")\n";
+            for (const auto& f : r.forms) std::cout << "  followed      forms/" << f << ".mort\n";
+            for (const auto& f : r.mentions) std::cout << "  still names the old one (a string; yours)  " << f << "\n";
+            if (!r.forms.empty()) std::cout << "run generate to carry the forms\n";
+            return 0;
+        }
+        if (cmd == "rename" && a.size() >= 4 && a[1] == "form") {   // s021
+            const std::string dir = a.size() > 4 ? a[4] : ".";
+            const auto r = core::rename_project_form(dir, a[2], a[3]);
+            std::cout << "renamed " << a[2] << " -> " << a[3] << "\n";
+            for (const auto& f : r.edited) std::cout << "  yours      " << f << "\n";
+            for (const auto& f : r.forms) std::cout << "  opens it   forms/" << f << ".mort\n";
+            if (!r.kept.empty()) std::cout << "  originals  " << r.kept << "/\n";
+            std::cout << "run generate to write " << a[3] << "Ui and prune " << a[2] << "Ui\n";
             return 0;
         }
     } catch (const std::exception& e) {

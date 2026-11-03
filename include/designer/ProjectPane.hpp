@@ -12,7 +12,7 @@
 //
 // A form row opens the form; a resource row copies what code names (the icon
 // name, the resource path). The trash moves things to <app>/removed/ (the
-// shell asks first). The + menu runs the shell's win.add-* actions.
+// shell asks first); the pencil renames (s021 m2 -- the shell asks the name). The + menu runs the shell's win.add-* actions.
 #include "widgets/Widgets.hpp"
 
 #include <functional>
@@ -37,13 +37,15 @@ public:
     sigc::signal<void(const std::string&, const std::string&)>& signal_copy() { return m_copy; }   // (text, what)
     sigc::signal<void(const std::string&)>& signal_remove_form() { return m_remove_form; }
     sigc::signal<void(const std::string&)>& signal_remove_resource() { return m_remove_resource; }
+    sigc::signal<void(const std::string&)>& signal_rename_form() { return m_rename_form; }          // s021 m2
+    sigc::signal<void(const std::string&)>& signal_rename_resource() { return m_rename_resource; }  // s021 m2
     sigc::signal<void()>& signal_open_style() { return m_open_style; }   // s012: the STYLE row
 
 private:
     struct RowAct { enum { None, Form, Resource } kind = None; std::string key, use, what; };
     void heading(const std::string& text);
     void item(const std::string& name, const std::string& detail, const std::string& trash_tip, bool can_trash,
-              RowAct act, std::function<void()> trash);
+              RowAct act, std::function<void()> trash, std::function<void()> rename = {});
 
     widgets::MenuButton     m_add;
     widgets::ScrolledWindow m_scroll;
@@ -54,6 +56,8 @@ private:
     sigc::signal<void(const std::string&, const std::string&)> m_copy;
     sigc::signal<void(const std::string&)> m_remove_form;
     sigc::signal<void(const std::string&)> m_remove_resource;
+    sigc::signal<void(const std::string&)> m_rename_form;
+    sigc::signal<void(const std::string&)> m_rename_resource;
     sigc::signal<void()> m_open_style;
 };
 

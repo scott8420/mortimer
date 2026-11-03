@@ -88,6 +88,8 @@ private:
     bool save_then(const std::string& what);          // category: helper: s013 a file op on the forms: save this one first     // category: handler: s013 save -> share_model -> generate -> reopen                             // category: handler: s012 the stylesheet editor (makes the file if needed)                              // category: handler: s010 + ▸ About dialog -> add_about    // category: handler: s009 + ▸ icon / image / data / stylesheet
     void on_remove_form(const std::string& stem);     // category: handler: s009 trash: ask -> remove_form -> generate
     void on_remove_resource(const std::string& file); // category: handler: s009 trash: ask -> remove_resource
+    void on_rename_form(const std::string& stem);      // category: handler: s021 m2 the navigator's pencil on a form
+    void on_rename_resource(const std::string& file);  // category: handler: s021 m2 the pencil on a resource
     void on_undo();                              // category: handler
     void on_redo();                              // category: handler
     void on_add(const std::string& type);        // category: handler: palette -> design::add
@@ -111,7 +113,7 @@ private:
     // ── helpers ────────────────────────────────────────────────────────────
     void load_form(const core::Form& f, const std::string& path);   // category: helper: a new document
     void confirm_discard(std::function<void()> then);   // category: helper: unsaved? ask, then go on
-    void generate();                             // category: helper: the project, after a save
+    void generate(const std::string& lead = ""); // category: helper: the project, after a save (lead: what came first, s021)
     void rebuild_forms_menu();                   // category: helper: the project's forms
     bool save_to(const std::string& path);       // category: helper: write the .mort
     void queue_repaint();                        // category: helper: one repaint per idle

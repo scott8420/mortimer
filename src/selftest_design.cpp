@@ -778,4 +778,153 @@ void selftest_design(const Check& check_) {
         }
         fs::remove_all(tmp);
     }
+
+    // ── s021: rename a project's form ───────────────────────────────────────
+    {
+        // The scanner alone: code and #includes follow, strings never do.
+        const std::string code =
+            "#include \"About.hpp\"   // About -- your half\n"
+            "#include \"generated/AboutUi.hpp\"\n"
+            "#include \"AboutBox.hpp\"\n"
+            "class About : public ui::AboutUi {   /* About */\n"
+            "    About();  int About2 = 1'000;\n"
+            "    const char* t = \"About Notes\"; char c = 'A';\n"
+            "    const char* r = R\"x(About \"About\")x\";\n"
+            "};\n";
+        const std::string own = core::rename_class_in(code, "About", "Info", true);
+        const std::string other = core::rename_class_in(code, "About", "Info", false);
+        check("s021 rename_class_in: class, base, includes follow; a longer name doesn't",
+              own.find("class Info : public ui::InfoUi") != std::string::npos &&
+              own.find("#include \"Info.hpp\"") != std::string::npos &&
+              own.find("#include \"generated/InfoUi.hpp\"") != std::string::npos &&
+              own.find("#include \"AboutBox.hpp\"") != std::string::npos &&
+              own.find("    Info();  int About2 = 1'000;") != std::string::npos, own);
+        check("s021 rename_class_in: strings, chars, raw strings never change",
+              own.find("\"About Notes\"") != std::string::npos && own.find("'A'") != std::string::npos &&
+              own.find("R\"x(About \"About\")x\"") != std::string::npos, own);
+        check("s021 rename_class_in: comments follow in your form's own files, not in others",
+              own.find("// Info -- your half") != std::string::npos && own.find("/* Info */") != std::string::npos &&
+              other.find("// About -- your half") != std::string::npos && other.find("/* About */") != std::string::npos &&
+              other.find("class Info : public ui::InfoUi") != std::string::npos, other);
+        check("s021 rename_class_in: nothing to rename -> the same text",
+              core::rename_class_in("int x = 1; // y\n", "About", "Info", true) == "int x = 1; // y\n");
+
+        const fs::path tmp = fs::temp_directory_path() / "mortimer_rename_selftest";
+        fs::remove_all(tmp);
+        fs::create_directories(tmp);
+        std::string app, err;
+        try { app = core::create_workspace(core::derive_app("Probe"), tmp.string()); }
+        catch (const std::exception& e) { err = e.what(); }
+        check("s021 rename: a workspace (with About)", !app.empty(), err);
+        if (!app.empty()) {
+            const fs::path A(app);
+            auto slurp = [](const fs::path& p) { std::ifstream in(p); std::stringstream s; s << in.rdbuf(); return s.str(); };
+            auto refused = [&](auto fn) { try { fn(); } catch (const std::exception&) { return true; } return false; };
+            core::generate_project(app);
+            // A mention of About in another file of yours (code + a string).
+            {
+                std::ofstream(A / "src" / "Extra.cpp") << "#include \"About.hpp\"\nnamespace probe {\n"
+                                                          "void show_about() { auto* a = new About(); a->set_title(\"About\"); }\n}\n";
+            }
+            check("s021 rename: not a class name / taken / the app's own file -> refused",
+                  refused([&] { core::rename_project_form(app, "About", "class"); }) &&
+                  refused([&] { core::rename_project_form(app, "About", "MainWindow"); }) &&
+                  refused([&] { core::rename_project_form(app, "About", "App"); }) &&
+                  refused([&] { core::rename_project_form(app, "Nope", "Info"); }) &&
+                  fs::exists(A / "forms/About.mort"));
+            core::RenamedForm r;
+            err.clear();
+            try { r = core::rename_project_form(app, "About", "Info"); } catch (const std::exception& e) { err = e.what(); }
+            const auto pr = core::load_project(app);
+            check("s021 rename: the file, its name inside, the list in its place",
+                  err.empty() && fs::exists(A / "forms/Info.mort") && !fs::exists(A / "forms/About.mort") &&
+                  core::load_form((A / "forms/Info.mort").string()).name == "Info" &&
+                  pr.forms.size() == 2 && pr.forms[1] == "Info", err);
+            check("s021 rename: your halves moved, the class renamed inside",
+                  fs::exists(A / "include/Info.hpp") && !fs::exists(A / "include/About.hpp") &&
+                  fs::exists(A / "src/Info.cpp") && !fs::exists(A / "src/About.cpp") &&
+                  slurp(A / "include/Info.hpp").find("class Info : public ui::InfoUi") != std::string::npos &&
+                  slurp(A / "src/Info.cpp").find("Info::Info()") != std::string::npos);
+            const std::string extra = slurp(A / "src/Extra.cpp");
+            check("s021 rename: another file of yours follows (include, code), its string doesn't",
+                  extra.find("#include \"Info.hpp\"") != std::string::npos && extra.find("new Info()") != std::string::npos &&
+                  extra.find("set_title(\"About\")") != std::string::npos, extra);
+            bool opens = false;
+            for (const auto& a : core::load_form((A / "forms/MainWindow.mort").string()).actions) opens |= a.opens == "Info";
+            check("s021 rename: the main window's About action opens Info now",
+                  opens && std::find(r.forms.begin(), r.forms.end(), "MainWindow") != r.forms.end());
+            check("s021 rename: the originals kept in removed/About.renamed/",
+                  r.kept == "removed/About.renamed" && fs::exists(A / "removed/About.renamed/include/About.hpp") &&
+                  fs::exists(A / "removed/About.renamed/src/Extra.cpp") &&
+                  slurp(A / "removed/About.renamed/src/Extra.cpp").find("new About()") != std::string::npos, r.kept);
+            check("s021 rename: the hooks manifest moved with it", fs::exists(A / "generated/Info.hooks.json") &&
+                                                                 !fs::exists(A / "generated/About.hooks.json"));
+            const auto g = core::generate_project(app);
+            check("s021 rename: generate writes InfoUi, prunes AboutUi, the main window includes Info",
+                  g.ok() && fs::exists(A / "generated/InfoUi.hpp") && !fs::exists(A / "generated/AboutUi.hpp") &&
+                  slurp(A / "generated/MainWindowUi.cpp").find("#include \"Info.hpp\"") != std::string::npos);
+            // The main form: main_form follows, and App.cpp's `new MainWindow()`.
+            err.clear();
+            try { core::rename_project_form(app, "MainWindow", "Main"); } catch (const std::exception& e) { err = e.what(); }
+            check("s021 rename: the main form -- main_form and App.cpp follow",
+                  err.empty() && core::load_project(app).main_form == "Main" &&
+                  slurp(A / "src/App.cpp").find("new Main()") != std::string::npos &&
+                  slurp(A / "src/App.cpp").find("#include \"Main.hpp\"") != std::string::npos, err);
+            // s021 m2: rename a resource.
+            {
+                const fs::path srcs = tmp / "srcs";
+                fs::create_directories(srcs);
+                std::ofstream(srcs / "star-symbolic.svg") << "<svg xmlns=\"http://www.w3.org/2000/svg\"/>";
+                std::ofstream(srcs / "cover.png") << "png";
+                core::add_resource(app, "icon", (srcs / "star-symbolic.svg").string());
+                const auto img = core::add_resource(app, "image", (srcs / "cover.png").string());
+                core::add_stylesheet(app);   // listed, so its refusal below is the real one
+                // A form names the icon (a button), and code names the image's path.
+                core::Form mf = core::load_form((A / "forms/Main.mort").string());
+                mf.root.children[0].props["icon_name"] = core::Value(std::string("star-symbolic"));
+                core::save_form(mf, (A / "forms/Main.mort").string());
+                std::ofstream(A / "src" / "Cover.cpp") << "const char* k = \"" << img.path << "\";\n";
+                const auto list = [&] { return core::list_resources(app); };
+                check("s021 m2 rename resource: refused -- the stylesheet, the logo, a bad name, an icon not .svg, taken",
+                      refused([&] { core::rename_resource(app, "probe.css", "x.css"); }) &&
+                      refused([&] { core::rename_resource(app, "icons/scalable/apps/probe-logo-symbolic.svg", "l.svg"); }) &&
+                      refused([&] { core::rename_resource(app, "images/cover.png", "my cover.png"); }) &&
+                      refused([&] { core::rename_resource(app, "icons/scalable/apps/star-symbolic.svg", "star.png"); }) &&
+                      refused([&] { core::rename_resource(app, "images/cover.png", "cover"); }) &&
+                      refused([&] { core::rename_resource(app, "images/nope.png", "x.png"); }));
+                core::RenamedResource rr;
+                err.clear();
+                try { rr = core::rename_resource(app, "icons/scalable/apps/star-symbolic.svg", "sun-symbolic"); }
+                catch (const std::exception& e) { err = e.what(); }
+                check("s021 m2 rename icon: the file, the xml (extension kept), the icon name",
+                      err.empty() && rr.now.file == "icons/scalable/apps/sun-symbolic.svg" && rr.now.use == "sun-symbolic" &&
+                      rr.was == "star-symbolic" && fs::exists(A / "resources/icons/scalable/apps/sun-symbolic.svg") &&
+                      !fs::exists(A / "resources/icons/scalable/apps/star-symbolic.svg") &&
+                      slurp(A / "resources/probe.gresource.xml").find("preprocess=\"xml-stripblanks\" alias=\"sun-symbolic.svg\">icons/scalable/apps/sun-symbolic.svg<") != std::string::npos, err);
+                check("s021 m2 rename icon: the form that named it follows",
+                      rr.forms == std::vector<std::string>{"Main"} &&
+                      std::get<std::string>(core::load_form((A / "forms/Main.mort").string()).root.children[0].props["icon_name"]) == "sun-symbolic");
+                err.clear();
+                try { rr = core::rename_resource(app, "images/cover.png", "front"); } catch (const std::exception& e) { err = e.what(); }
+                check("s021 m2 rename image: path follows; code naming the old path listed, not changed",
+                      err.empty() && rr.now.file == "images/front.png" && rr.now.path.ends_with("/images/front.png") &&
+                      rr.mentions == std::vector<std::string>{"src/Cover.cpp"} &&
+                      slurp(A / "src/Cover.cpp").find("/images/cover.png") != std::string::npos && list().size() == 4,
+                      err + " list " + std::to_string(list().size()));
+                if (std::system("command -v glib-compile-resources >/dev/null 2>&1") == 0) {
+                    const std::string cmd = "cd '" + (A / "resources").string() +
+                                            "' && glib-compile-resources --generate-source --target=/dev/null probe.gresource.xml >/dev/null 2>&1";
+                    check("s021 m2 rename resource: the xml still compiles", std::system(cmd.c_str()) == 0);
+                }
+                fs::remove(A / "src" / "Cover.cpp");
+            }
+            // And back: a second rename keeps its originals beside the first.
+            err.clear();
+            try { r = core::rename_project_form(app, "Info", "About"); } catch (const std::exception& e) { err = e.what(); }
+            check("s021 rename: back again; the second originals don't overwrite the first",
+                  err.empty() && fs::exists(A / "src/About.cpp") && r.kept == "removed/Info.renamed" &&
+                  slurp(A / "src/Extra.cpp").find("new About()") != std::string::npos, err + r.kept);
+        }
+        fs::remove_all(tmp);
+    }
 }

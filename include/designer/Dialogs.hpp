@@ -39,7 +39,7 @@ public:
     // `check(name)` returns "" when fine, else the reason; `done(name)` on OK.
     void ask(const std::string& title, const std::string& prompt, const std::string& initial,
              std::function<std::string(const std::string&)> check,
-             std::function<void(const std::string&)> done);
+             std::function<void(const std::string&)> done, const std::string& ok = "Add");
 
 private:
     Gtk::Label  m_prompt;

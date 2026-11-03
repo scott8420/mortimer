@@ -53,6 +53,47 @@ std::string remove_resource(const std::string& app_dir, const std::string& file)
 // is refused. Returns the folder they went to.
 std::string remove_form(const std::string& app_dir, const std::string& stem);
 
+// s021 -- rename a project's form `old` -> `now` (the class follows its file):
+//   forms/<old>.mort -> forms/<now>.mort (its name inside too); the project's
+//   list keeps its place, main_form follows; other forms' actions that open it
+//   follow; generated/<old>.hooks.{json,txt} move (stale hooks stay tracked).
+//   YOUR half: include/<old>.hpp + src/<old>.cpp become <now>.hpp / <now>.cpp
+//   with the class renamed inside (code and comments; never a string); every
+//   other file of yours under include/ and src/ has its #include "<old>.hpp"
+//   and its code mentions renamed (comments and strings left alone).
+//   The original of every file of yours that changed is kept in
+//   removed/<old>.renamed/ -- nothing is lost.
+// Refused, in words: not a class name, no such form, the name is taken (a form,
+// or include/<now>.hpp / src/<now>.cpp already there). Doesn't generate.
+struct RenamedForm {
+    std::vector<std::string> edited;    // files of yours rewritten (relative, new names)
+    std::vector<std::string> forms;     // other forms whose actions open it
+    std::string kept;                   // "removed/<old>.renamed" ("" = nothing of yours changed)
+};
+RenamedForm rename_project_form(const std::string& app_dir, const std::string& old, const std::string& now);
+
+// The rewrite behind it, alone (the selftest's): C++ text with identifier `old`
+// -> `now` and `old`Ui -> `now`Ui; an #include of "<old>.hpp" / "<old>Ui.hpp"
+// (any folder) follows. Strings and char literals never change; comments do
+// only when `comments` (your form's own two files).
+std::string rename_class_in(const std::string& text, const std::string& old, const std::string& now, bool comments);
+
+// s021 m2 -- rename a bundled file: `file` (as Resource::file) -> `name` (a
+// file name; no extension = the old one's). The file moves in its folder, the
+// xml follows; an ICON's name is what forms say (icon_name, a Stack page's
+// icon), so every form that names it follows too. Code names a resource in a
+// STRING, and strings are yours: the files of yours (and the stylesheet) that
+// still name the old one are listed, not changed. Refused, in words: the
+// stylesheet (it's <bin>.css by name), the logo, a name that isn't letters /
+// digits / . _ -, an icon that isn't .svg, a name already there.
+struct RenamedResource {
+    Resource now;                       // as the bundle lists it after
+    std::string was;                    // what code named before (icon name / path)
+    std::vector<std::string> forms;     // forms whose icon_name followed
+    std::vector<std::string> mentions;  // your files still naming `was` in a string
+};
+RenamedResource rename_resource(const std::string& app_dir, const std::string& file, const std::string& name);
+
 // The root type of a project form ("Window", "Dialog", ...) for the list; "" if unreadable.
 std::string form_kind(const std::string& app_dir, const std::string& stem);
 

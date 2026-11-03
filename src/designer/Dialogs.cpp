@@ -166,8 +166,9 @@ NameDialog::NameDialog(Gtk::Window& parent) {
 
 void NameDialog::ask(const std::string& title, const std::string& prompt, const std::string& initial,
                      std::function<std::string(const std::string&)> check,
-                     std::function<void(const std::string&)> done) {
+                     std::function<void(const std::string&)> done, const std::string& ok) {
     set_title(title);
+    m_ok.set_label(ok);   // s021 m2: "Add", or "Rename"
     m_prompt.set_text(prompt);
     m_check = std::move(check);
     m_done = std::move(done);

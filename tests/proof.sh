@@ -13,6 +13,7 @@
 #   write the override   -> builds
 #   regenerate again     -> writes nothing (only changes are written)
 #   drop a form          -> its generated files are pruned
+#   rename two forms     -> your halves follow (class inside); builds
 #   ...and your half (include/, src/) is never written by any of it.
 #
 # Needs: a built mortimer-gen (./build.sh), python3, the gtkmm build deps.
@@ -118,6 +119,15 @@ check "pruned KitchenSinkUi.cpp"  grep -q "removed    generated/KitchenSinkUi.cp
 check "your KitchenSink files kept" test -f src/KitchenSink.cpp
 rm -f include/KitchenSink.hpp src/KitchenSink.cpp
 check "builds without it"       build
+
+echo "== rename forms (s021): About -> AboutBox, the main form MainWindow -> Main"
+"$GEN" rename form About AboutBox . > /dev/null
+"$GEN" rename form MainWindow Main . > /dev/null
+"$GEN" generate . > "$WORK/gen.log"
+check "MainWindowUi pruned"     grep -q "removed    generated/MainWindowUi.cpp" "$WORK/gen.log"
+check "your halves moved"       test -f src/Main.cpp -a -f include/AboutBox.hpp -a ! -f src/MainWindow.cpp
+check "the save override kept"  grep -q "void Main::on_save_clicked" src/Main.cpp
+check "builds after the renames" build
 
 echo "-----------------------------------------------"
 echo "$pass pass / $fail fail"

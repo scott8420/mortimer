@@ -16,6 +16,7 @@
 
 #include <glibmm/main.h>
 
+#include <cctype>
 #include <filesystem>
 
 // Shell_handlers.cpp -- HANDLERS. Each verb handler is ONE call into
@@ -346,6 +347,99 @@ void Shell::on_remove_resource(const std::string& file) {  // handler: trash on 
             say(e.what(), 2);
         }
     });
+}
+
+// ── s021 m2: the navigator's pencil ───────────────────────────────────────
+
+void Shell::on_rename_form(const std::string& stem) {  // handler: ask a name -> (open: the inspector's rename + Save) / rename_project_form
+    if (m_app_dir.empty()) return;
+    if (!m_name_dialog) m_name_dialog = std::make_unique<designer::NameDialog>(*this);
+    const std::string dir = m_app_dir;
+    m_name_dialog->ask(
+        "Rename " + stem,
+        "The new class name. forms/<Name>.mort, generated <Name>Ui and your include/<Name>.hpp + src/<Name>.cpp "
+        "follow (the class renamed inside); the forms that open it follow; the originals of your files go to removed/.",
+        stem,
+        [dir, stem](const std::string& n) -> std::string {
+            namespace fs = std::filesystem;
+            if (n == stem) return "that's its name now";
+            if (!core::is_identifier(n) || core::is_cpp_keyword(n)) return "\"" + n + "\" isn't a C++ class name";
+            for (const fs::path rel : {fs::path("forms") / (n + ".mort"), fs::path("include") / (n + ".hpp"),
+                                       fs::path("src") / (n + ".cpp")})
+                if (fs::exists(fs::path(dir) / rel)) return rel.string() + " is already there";
+            return {};
+        },
+        [this, dir, stem](const std::string& n) {
+            const bool open = !m_path.empty() && std::filesystem::path(m_path).stem() == stem;
+            if (open) {   // the open form: the same rename the inspector makes, then Save does the files
+                std::string why;
+                if (!core::design::rename_form(m_journal, m_design, n, &why)) { say(why, 2); return; }
+                save_to(m_path);
+                return;
+            }
+            if (!save_then("Renaming a form")) return;   // this form may open it: saved, then reloaded
+            const std::string path = m_path;
+            try {
+                const auto r = core::rename_project_form(dir, stem, n);
+                const auto g = core::generate_project(dir);
+                load_form(core::load_form(path), path);
+                std::string s = "Renamed " + stem + " -> " + n;
+                if (!r.edited.empty()) s += " (" + std::to_string(r.edited.size()) + " file" + (r.edited.size() == 1 ? "" : "s") +
+                                            " of yours followed; the originals are in " + r.kept + "/)";
+                if (!r.forms.empty()) s += ", " + std::to_string(r.forms.size()) + (r.forms.size() == 1 ? " form opens it" : " forms open it");
+                say(s + (g.ok() ? "; generated." : "; generating found a problem -- Save shows it."));
+                if (auto lg = log::get(log::Area::Io)) lg->info("renamed form '{}' -> '{}' in '{}'", stem, n, dir);
+            } catch (const std::exception& e) {
+                say(e.what(), 2);
+            }
+        },
+        "Rename");
+}
+
+void Shell::on_rename_resource(const std::string& file) {  // handler: ask a name -> rename_resource -> forms follow
+    if (!save_then("Renaming a resource")) return;   // forms on disk may change: this one saved, then reloaded
+    if (!m_name_dialog) m_name_dialog = std::make_unique<designer::NameDialog>(*this);
+    const std::string dir = m_app_dir, path = m_path;
+    const std::string name = std::filesystem::path(file).filename().string();
+    const bool icon = file.rfind("icons/", 0) == 0;
+    m_name_dialog->ask(
+        "Rename " + name,
+        icon ? "The new file name (the icon name is the name without .svg). Every form's icon_name that says the old "
+               "one follows; code that names it in a string is yours -- you'll be told where."
+             : "The new file name (no extension keeps the old one). Code names it by its resource path, in a string -- "
+               "that's yours; you'll be told where it still says the old one.",
+        name,
+        [dir, file, name](const std::string& n) -> std::string {
+            namespace fs = std::filesystem;
+            std::string full = n;
+            if (fs::path(full).extension().empty()) full += fs::path(name).extension().string();
+            if (full == name) return "that's its name now";
+            for (unsigned char c : full)
+                if (!std::isalnum(c) && c != '.' && c != '_' && c != '-') return "letters, digits, . _ - only";
+            if (fs::exists(fs::path(dir) / "resources" / fs::path(file).parent_path() / full)) return full + " is already there";
+            return {};
+        },
+        [this, dir, path, file](const std::string& n) {
+            try {
+                const auto r = core::rename_resource(dir, file, n);
+                if (!r.forms.empty()) core::generate_project(dir);
+                load_form(core::load_form(path), path);   // its icon_name may have followed
+                std::string s = "Renamed " + r.was + " -> " + r.now.use;
+                if (!r.forms.empty()) {
+                    s += " -- followed in ";
+                    for (std::size_t i = 0; i < r.forms.size(); ++i) s += (i ? ", " : "") + r.forms[i];
+                }
+                if (!r.mentions.empty()) {
+                    s += ". Still says the old one (a string -- yours): ";
+                    for (std::size_t i = 0; i < r.mentions.size(); ++i) s += (i ? ", " : "") + r.mentions[i];
+                }
+                say(s + ". Rebuild the app to bundle it.", r.mentions.empty() ? 0 : 1);
+                if (auto lg = log::get(log::Area::Io)) lg->info("renamed resource '{}' -> '{}'", file, r.now.file);
+            } catch (const std::exception& e) {
+                say(e.what(), 2);
+            }
+        },
+        "Rename");
 }
 
 void Shell::on_save() {  // handler: to its file, or Save As

@@ -76,7 +76,7 @@ void ProjectPane::heading(const std::string& text) {
 }
 
 void ProjectPane::item(const std::string& name, const std::string& detail, const std::string& trash_tip,
-                       bool can_trash, RowAct act, std::function<void()> trash) {
+                       bool can_trash, RowAct act, std::function<void()> trash, std::function<void()> rename) {
     auto* line = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 6);
     auto* n = Gtk::make_managed<Gtk::Label>(name);
     n->set_xalign(0);
@@ -88,6 +88,16 @@ void ProjectPane::item(const std::string& name, const std::string& detail, const
     d->set_hexpand(true);
     d->set_ellipsize(act.kind == RowAct::Form ? Pango::EllipsizeMode::END : Pango::EllipsizeMode::START);
     line->append(*d);
+    if (rename) {   // s021 m2: shows on hover, like the trash
+        auto* p = Gtk::make_managed<Gtk::Button>();
+        p->set_icon_name("document-edit-symbolic");
+        p->set_has_frame(false);
+        p->set_focusable(false);
+        p->add_css_class("mortimer-project-trash");
+        p->set_tooltip_text("Rename " + name);
+        p->signal_clicked().connect(rename);
+        line->append(*p);
+    }
     auto* t = Gtk::make_managed<Gtk::Button>();
     t->set_icon_name("user-trash-symbolic");
     t->set_has_frame(false);
@@ -131,7 +141,8 @@ void ProjectPane::repaint(const std::string& app_dir, const std::string& current
             if (main) detail += " · main";
             if (f == current_form) detail += " · open";
             item(f, detail, main ? "The main form stays: the app opens it" : "Remove " + f + " (moves to removed/)",
-                 !main, {RowAct::Form, f, "", ""}, [this, f] { m_remove_form.emit(f); });
+                 !main, {RowAct::Form, f, "", ""}, [this, f] { m_remove_form.emit(f); },
+                 [this, f] { m_rename_form.emit(f); });
         }
         const auto res = core::list_resources(app_dir);
         for (const auto& [kind, title] : std::vector<std::pair<std::string, std::string>>{
@@ -148,7 +159,9 @@ void ProjectPane::repaint(const std::string& app_dir, const std::string& current
                      logo ? "The logo stays: the .desktop file and About use it"
                           : "Remove " + name + " from the bundle (the file moves to removed/)",
                      !logo, {RowAct::Resource, r.file, kind == "css" ? r.path : r.use, what},
-                     [this, file = r.file] { m_remove_resource.emit(file); });
+                     [this, file = r.file] { m_remove_resource.emit(file); },
+                     logo || kind == "css" ? std::function<void()>{}
+                                           : [this, file = r.file] { m_rename_resource.emit(file); });
             }
         }
     } catch (const std::exception& e) {
