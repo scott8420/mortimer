@@ -157,6 +157,34 @@ static void widgets_cmake(const fs::path& root, GenerateResult& r) {
     r.notes.push_back("CMakeLists.txt: src/widgets/*.cpp added to the app's sources (your promoted widgets)");
 }
 
+// s024 m2 -- an app made before s024 m2 doesn't regenerate from its build:
+// insert the template's block, once, before the first glob (so a new form's
+// files are seen in the same build), and say so.
+static void regenerate_cmake(const fs::path& root, GenerateResult& r) {
+    const fs::path cm = root / "CMakeLists.txt";
+    if (!fs::exists(cm)) return;
+    std::string text = read_file(cm);
+    if (text.find("MORTIMER_GEN") != std::string::npos) return;
+    std::string block;
+    for (const auto& t : project_templates())
+        if (std::string(t.path) == "@BIN@/CMakeLists.txt") {
+            const std::string all = t.content;
+            auto from = all.find("forms/ -> generated/, by the build");
+            const auto to = all.find("@BIN@_core -- the GTK-free half");
+            if (from == std::string::npos || to == std::string::npos) break;
+            from = all.rfind('\n', from) + 1;
+            block = render_tokens(all.substr(from, all.rfind('\n', to) + 1 - from), load_project(root.string()).app);
+        }
+    const auto glob = text.find("file(GLOB");
+    if (block.empty() || glob == std::string::npos) {
+        r.notes.push_back("CMakeLists.txt: no glob found -- the regenerate block (see a new app's) wasn't added");
+        return;
+    }
+    text.insert(text.rfind('\n', glob) + 1, block);
+    write_if_changed(cm, text);
+    r.notes.push_back("CMakeLists.txt: the build now regenerates generated/ when a form or mortimer.json is newer");
+}
+
 // s024 -- an app made before s024 has no undo gate target: append it once (the
 // block the template has), and say so. Its build then runs the gate.
 static void undo_gate_cmake(const fs::path& root, GenerateResult& r) {
@@ -289,6 +317,7 @@ GenerateResult generate_project(const std::string& app_dir) {
     // s024: the undo gate, from every form that generated and the shared models.
     for (const auto& f : generate_undo_gate(keyed, pr.models, pr.app)) emit(f);
     undo_gate_cmake(root, r);
+    regenerate_cmake(root, r);   // s024 m2
     if (!main_seen)
         r.issues.push_back({pr.main_form, {true, "project", "main_form \"" + pr.main_form +
                                                                 "\" isn't in the forms list"}});

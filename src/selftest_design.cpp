@@ -678,6 +678,20 @@ void selftest_design(const Check& check_) {
                   at != std::string::npos && after.find("add_executable(older_undo_gate") != std::string::npos && noted);
             core::generate_project(app);
             check("s024: ...once", slurp(cm) == after);
+            // s024 m2: and the regenerate block, before the first glob.
+            std::string t2 = slurp(cm);
+            const auto rb = t2.find("# \u2500\u2500 forms/ -> generated/");
+            const auto cb = t2.find("# \u2500\u2500 older_core");
+            if (rb != std::string::npos && cb != std::string::npos) { t2.erase(rb, cb - rb); std::ofstream(cm) << t2; }
+            const auto r2 = core::generate_project(app);
+            const std::string a2 = slurp(cm);
+            bool said = false;
+            for (const auto& n : r2.notes) said = said || n.find("now regenerates") != std::string::npos;
+            check("s024 m2: an older app gets the regenerate block, before its globs, and is told",
+                  rb != std::string::npos && said && a2.find("MORTIMER_GEN") != std::string::npos &&
+                  a2.find("execute_process(COMMAND \"${MORTIMER_GEN}\"") < a2.find("file(GLOB CORE_SOURCES"));
+            core::generate_project(app);
+            check("s024 m2: ...once", slurp(cm) == a2);
         }
         fs::remove_all(tmp);
     }

@@ -1625,4 +1625,19 @@ class X : public ui::XUi {
               has(cm, "generated/*Items.cpp"), "");
         check("s024 template: build.sh says the gate passed", has(bs, "_undo_gate -v"), "");
     }
+
+    // ── s024 m2: the build regenerates when a form is newer ────────────────
+    {
+        std::string cm;
+        for (const auto& t : core::project_templates())
+            if (std::string(t.path) == "@BIN@/CMakeLists.txt") cm = t.content;
+        const auto run = cm.find("execute_process(COMMAND \"${MORTIMER_GEN}\" generate \"${CMAKE_CURRENT_SOURCE_DIR}\"");
+        check("s024 m2 template: forms and mortimer.json re-run CMake; it runs generate BEFORE the globs",
+              has(cm, "set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${FORM_FILES} \"${CMAKE_CURRENT_SOURCE_DIR}/mortimer.json\")") &&
+              run != std::string::npos && run < cm.find("file(GLOB CORE_SOURCES"), "");
+        check("s024 m2 template: a form with errors stops it; no mortimer-gen -> generated/ as it is; can be turned off",
+              has(cm, "message(FATAL_ERROR \"mortimer-gen generate: the forms have errors") &&
+              has(cm, "mortimer-gen not found: generated/ is used as it is") &&
+              has(cm, "option(@BIN_UPPER@_REGENERATE"), "");
+    }
 }

@@ -29,6 +29,37 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTKMM REQUIRED gtkmm-4.0)
 find_package(spdlog REQUIRED)
 
+# ── forms/ -> generated/, by the build ───────────────────────────────────────
+# Change a forms/*.mort or mortimer.json ANY way -- Mortimer, an editor, a git
+# pull -- and the next build regenerates before it compiles, so it can't build
+# a stale form. How: CMake re-runs itself when one of them is newer than its
+# last run (CMAKE_CONFIGURE_DEPENDS), and that run calls mortimer-gen generate
+# HERE, before the globs below -- so a new form's files are in this same build.
+# generate writes only what changed; a form with errors stops the build, and
+# the last good generated/ stays. Without mortimer-gen (someone building your
+# published app) generated/ is used as it is -- that's why it's checked in.
+# Off: cmake -B build -D@BIN_UPPER@_REGENERATE=OFF. Elsewhere: -DMORTIMER_GEN=/path.
+option(@BIN_UPPER@_REGENERATE "Regenerate generated/ from forms/ when they change" ON)
+find_program(MORTIMER_GEN mortimer-gen HINTS "$ENV{HOME}/.local/bin")
+file(GLOB FORM_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/forms/*.mort")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${FORM_FILES} "${CMAKE_CURRENT_SOURCE_DIR}/mortimer.json")
+if(@BIN_UPPER@_REGENERATE AND MORTIMER_GEN)
+    execute_process(COMMAND "${MORTIMER_GEN}" generate "${CMAKE_CURRENT_SOURCE_DIR}"
+                    RESULT_VARIABLE GEN_RESULT OUTPUT_VARIABLE GEN_OUT ERROR_VARIABLE GEN_OUT)
+    if(NOT GEN_RESULT EQUAL 0)
+        message(FATAL_ERROR "mortimer-gen generate: the forms have errors (the last good generated/ is kept):\n${GEN_OUT}")
+    endif()
+    string(REGEX MATCHALL "  (wrote|your half|removed|note|warn) [^\n]*" GEN_SAID "${GEN_OUT}")
+    if(GEN_SAID)
+        string(REPLACE ";" "\n" GEN_SAID "${GEN_SAID}")
+        message(STATUS "forms regenerated (mortimer-gen):\n${GEN_SAID}")
+    else()
+        message(STATUS "forms: generated/ is up to date")
+    endif()
+elseif(@BIN_UPPER@_REGENERATE)
+    message(STATUS "mortimer-gen not found: generated/ is used as it is (forms/ edits need a generate)")
+endif()
+
 # ── @BIN@_core -- the GTK-free half (docs/two-layer-seam.md) ─────────────────
 # No gtkmm on this library's link line, BY DESIGN: a stray UI include under
 # core/ fails to compile, so the seam is enforced by the build graph.

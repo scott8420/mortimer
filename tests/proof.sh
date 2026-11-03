@@ -14,6 +14,7 @@
 #   regenerate again     -> writes nothing (only changes are written)
 #   break an item's undo -> the undo gate must FAIL the build (s024)
 #   drop a form          -> its generated files are pruned
+#   edit forms by hand   -> the build regenerates first; a broken one stops it (s024 m2)
 #   rename two forms     -> your halves follow (class inside); builds
 #   ...and your half (include/, src/) is never written by any of it.
 #
@@ -67,7 +68,7 @@ check "add the stylesheet"      "$GEN" add stylesheet .
 check "promoted: NoteTable written"  test -f include/widgets/NoteTable.hpp -a -f src/widgets/NoteTable.cpp
 check "promoted: the member"         grep -q "widgets::Named<widgets::NoteTable> m_notes;" generated/KitchenSinkUi.hpp
 check "promoted: in a row, plain"    grep -q "widgets::TaskTitle .*m_task_title;" generated/KitchenSinkUi.hpp
-check "configure"               cmake -B build
+check "configure"               cmake -B build -DMORTIMER_GEN="$GEN"
 check "builds (every widget, property, signal)" build
 check "selftest"                ./build/proofapp_selftest
 # s013: the KitchenSink's Note becomes the project's -- its views, rows and hooks
@@ -142,6 +143,25 @@ check "MainWindowUi pruned"     grep -q "removed    generated/MainWindowUi.cpp" 
 check "your halves moved"       test -f src/Main.cpp -a -f include/AboutBox.hpp -a ! -f src/MainWindow.cpp
 check "the save override kept"  grep -q "void Main::on_save_clicked" src/Main.cpp
 check "builds after the renames" build
+
+echo "== the build regenerates (s024 m2): forms edited by hand, no generate"
+json forms/Main.mort 'node(j["root"],"body")["children"].append({"type":"Label","id":"by_hand","props":{"label":"edited in an editor"}})'
+check "a .mort edited by hand: the build regenerates and builds" build
+check "...the widget is in the generated form" grep -q "m_by_hand" generated/MainUi.hpp
+python3 - forms/AboutBox.mort forms/Extra2.mort <<'PY'
+import json, sys
+j = json.load(open(sys.argv[1])); j["name"] = "Extra2"; j["root"]["id"] = "extra2"
+open(sys.argv[2], "w").write(json.dumps(j, indent=2) + "\n")
+PY
+json mortimer.json 'j["forms"].append("Extra2")'
+check "a form added by hand: one build makes and compiles it" build
+check "...its generated half and your stubs" test -f generated/Extra2Ui.cpp -a -f src/Extra2.cpp
+cp forms/Extra2.mort "$WORK/Extra2.good"
+echo "{ not json" > forms/Extra2.mort
+if build; then bad "a broken .mort stops the build"; else ok "a broken .mort stops the build"; fi
+check "...and says why"          grep -q "the forms have errors" "$WORK/build.log"
+cp "$WORK/Extra2.good" forms/Extra2.mort
+check "...fixed: builds again"   build
 
 echo "-----------------------------------------------"
 echo "$pass pass / $fail fail"
