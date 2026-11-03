@@ -11,4 +11,4 @@ if [[ ! -f build/CMakeCache.txt ]] && command -v ninja >/dev/null 2>&1; then GEN
 cmake -B build "${GEN[@]}"
 cmake --build build -j"$(nproc)"
 echo ""
-echo "Built: ./build/@BIN@  and  ./build/@BIN@_selftest"
+echo "Built: ./build/@BIN@  and  ./build/@BIN@_selftest  (the undo gate passed: ./build/@BIN@_undo_gate -v)"

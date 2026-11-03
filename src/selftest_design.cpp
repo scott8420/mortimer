@@ -650,6 +650,38 @@ void selftest_design(const Check& check_) {
               why.find("copy something") != std::string::npos);
     }
 
+    // ── s024: an app made before the gate gets it on generate, once ──────────
+    {
+        const fs::path tmp = fs::temp_directory_path() / "mortimer_gate_selftest";
+        fs::remove_all(tmp);
+        fs::create_directories(tmp);
+        std::string app;
+        try { app = core::create_workspace(core::derive_app("Older"), tmp.string()); }
+        catch (const std::exception& e) { check("s024 workspace", false, e.what()); }
+        if (!app.empty()) {
+            auto slurp = [](const fs::path& p) { std::ifstream in(p); std::stringstream s; s << in.rdbuf(); return s.str(); };
+            const fs::path cm = fs::path(app) / "CMakeLists.txt";
+            std::string text = slurp(cm);
+            check("s024: a new app's CMakeLists has the gate", text.find("older_undo_gate") != std::string::npos);
+            check("s024: a new app has generated/UndoGate.cpp", fs::exists(fs::path(app) / "generated" / "UndoGate.cpp"));
+            auto at = text.find("older_undo_gate -- ");
+            if (at != std::string::npos) {
+                at = text.rfind('\n', at) + 1;
+                text.erase(at);
+                std::ofstream(cm) << text;   // as an app made before s024
+            }
+            const auto r = core::generate_project(app);
+            const std::string after = slurp(cm);
+            bool noted = false;
+            for (const auto& n : r.notes) noted = noted || n.find("the undo gate added") != std::string::npos;
+            check("s024: generate appends the gate to an older app's CMakeLists, and says so",
+                  at != std::string::npos && after.find("add_executable(older_undo_gate") != std::string::npos && noted);
+            core::generate_project(app);
+            check("s024: ...once", slurp(cm) == after);
+        }
+        fs::remove_all(tmp);
+    }
+
     // ── s002 m3: the window's project awareness ─────────────────────────────
     {
         const fs::path tmp = fs::temp_directory_path() / "mortimer_design_selftest";

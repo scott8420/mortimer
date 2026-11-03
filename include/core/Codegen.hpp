@@ -64,6 +64,11 @@ std::vector<OutFile> generate_models(const std::vector<ModelDef>& models, const 
 // s010 -- generated/Shortcuts.hpp/.cpp: the keyboard-shortcuts window, a row
 // per key any of `forms` gives an action (in that order; the main form first).
 std::vector<OutFile> generate_shortcuts(const std::vector<Form>& forms, const AppInfo& app);
+// s024 -- generated/UndoGate.cpp: <bin>_undo_gate, which walks every row type
+// (the forms' own models, the shared ones, one of its own) through the app's
+// undo -- add, each field alone, remove; undo, redo. The build runs it.
+std::vector<OutFile> generate_undo_gate(const std::vector<Form>& forms, const std::vector<ModelDef>& shared,
+                                        const AppInfo& app);
 // generated/Widgets.hpp, Hooks.hpp/.cpp, README.md -- shared by every form.
 std::vector<OutFile> generate_support(const AppInfo& app);
 // include/<Form>.hpp + src/<Form>.cpp -- the one-time stubs, one override per

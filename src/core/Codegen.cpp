@@ -1444,7 +1444,8 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << "    registry::remove(this);\n"
       << "}\n\n"
       << state_functions(f, ui);
-    for (const auto& m : f.models) c << item_def(m, ui + "::", app.ns, ui + "::");
+    // s024: the item classes' definitions are in generated/<Form>Items.cpp (below), so the
+    // undo gate can link them without the form -- whose code needs your half.
     c << row_classes_source(f, ui);
     for (auto* m : members)
         if (menu_names_steps(f, *m)) c << fill_menu_def(f, *m, ui);
@@ -1578,7 +1579,20 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
     }
     c << "\n}  // namespace " << app.ns << "::ui\n";
 
-    return {{"generated/" + ui + ".hpp", h.str()}, {"generated/" + ui + ".cpp", c.str()}};
+    std::vector<OutFile> out = {{"generated/" + ui + ".hpp", h.str()}, {"generated/" + ui + ".cpp", c.str()}};
+    if (!f.models.empty()) {   // s024: the items on their own -- the undo gate links them alone
+        std::ostringstream it;
+        it << "// " << kGeneratedMarker << " from forms/" << f.name << ".mort -- DO NOT EDIT.\n"
+           << "// " << f.name << "'s row types, defined apart from the form: they need nothing of\n"
+           << "// the window (or of your half), so " << app.bin << "_undo_gate links them on their own\n"
+           << "// and walks their undo on every build.\n"
+           << "#include \"generated/" << ui << ".hpp\"\n#include \"generated/Undo.hpp\"\n#include \"Log.hpp\"\n\n"
+           << "namespace " << app.ns << "::ui {\n\n";
+        for (const auto& m : f.models) it << item_def(m, ui + "::", app.ns, ui + "::");
+        it << "}  // namespace " << app.ns << "::ui\n";
+        out.push_back({"generated/" + f.name + "Items.cpp", it.str()});
+    }
+    return out;
 }
 
 // s008 -- the window-state file, shared by every form that remembers. Flat
@@ -2272,6 +2286,214 @@ std::vector<OutFile> generate_shortcuts(const std::vector<Form>& forms, const Ap
       << "ShortcutsWindow::~ShortcutsWindow() { registry::remove(this); }\n\n"
       << "}  // namespace " << app.ns << "::ui\n";
     return {{"generated/Shortcuts.hpp", h.str()}, {"generated/Shortcuts.cpp", c.str()}};
+}
+
+// s024 -- generated/UndoGate.cpp: <bin>_undo_gate, the app's undo checked on
+// every build. Walks every row type the app has -- each form's own models, the
+// shared ones, and one of the gate's own (so a starter app with no models is
+// checked too) -- through generated/Undo the way a user goes: add a row, change
+// each field alone, remove it; undo and redo each. The CMake target runs it and
+// a failure fails the build. The whole file sits under MORTIMER_UNDO_GATE, which
+// only the gate target defines: in the app (whose glob takes generated/*.cpp)
+// it is empty.
+namespace {
+struct GateType {
+    std::string cls;     // how the gate names it in C++: "::notes::ui::KitchenSinkUi::NoteItem"
+    const ModelDef* m;
+};
+std::string gate_value(const FieldDef& x, bool second) {
+    if (x.type == "int") return second ? "-42" : "7";
+    if (x.type == "double") return second ? "0.25" : "2.5";
+    if (x.type == "bool") return second ? "false" : "true";
+    // text that must survive the snapshot: a quote, a comma, a colon, a newline
+    return cpp_string(second ? "gate: \"two\", line\nnext" : "gate one");
+}
+}  // namespace
+
+std::vector<OutFile> generate_undo_gate(const std::vector<Form>& forms, const std::vector<ModelDef>& shared,
+                                        const AppInfo& app) {
+    static const ModelDef own{"Gate", {{"title", "string", ""}, {"count", "int", ""},
+                                       {"weight", "double", ""}, {"done", "bool", ""}}};
+    std::vector<GateType> types{{"::" + app.ns + "::ui::gate::GateItem", &own}};
+    std::vector<std::string> includes;
+    for (const auto& f : forms) {
+        if (f.models.empty()) continue;
+        includes.push_back("generated/" + f.name + "Ui.hpp");
+        for (const auto& m : f.models) types.push_back({"::" + app.ns + "::ui::" + f.name + "Ui::" + model_item(m), &m});
+    }
+    if (!shared.empty()) includes.push_back("generated/Models.hpp");
+    for (const auto& m : shared) types.push_back({"::" + app.ns + "::model::" + model_item(m), &m});   // namespace level, not ui
+
+    std::ostringstream c;
+    c << "// " << kGeneratedMarker << " from every form's models -- DO NOT EDIT.\n"
+      << "//\n"
+      << "// " << app.bin << "_undo_gate -- the app's undo, checked on every build.\n"
+      << "//\n"
+      << "// Every row type the app has (each form's models, the shared ones, and one of\n"
+      << "// the gate's own, so even an app with no models yet is checked) goes through the\n"
+      << "// app's ONE undo journal, generated/Undo, the way a user would go:\n"
+      << "//\n"
+      << "//   add a row; undo, redo        it leaves the list, and comes back in its place\n"
+      << "//   change each field ALONE      every field is in the step -- a field the snapshot\n"
+      << "//   ; undo, redo                 forgets is an edit Ctrl+Z can't see\n"
+      << "//   remove a row; undo, redo     the SAME row again: same id, same fields, same place,\n"
+      << "//                                even after the row itself was destroyed\n"
+      << "//\n"
+      << "// CMakeLists.txt runs it as part of the build (the undo_gate target), so a\n"
+      << "// broken undo is a red build here -- not lost work for your user. It needs no\n"
+      << "// display: the items are plain Glib::Objects, the list a Gio::ListStore.\n"
+      << "//\n"
+      << "// Only the gate target defines MORTIMER_UNDO_GATE. The app's build takes every\n"
+      << "// generated/*.cpp too, and there this file is empty -- it has a main() of its own.\n"
+      << "#ifdef MORTIMER_UNDO_GATE\n\n"
+      << "#include \"generated/Undo.hpp\"\n#include \"Log.hpp\"\n";
+    for (const auto& i : includes) c << "#include \"" << i << "\"\n";
+    c << "\n#include <giomm/init.h>\n#include <giomm/liststore.h>\n#include <glibmm/init.h>\n"
+      << "#include <glibmm/object.h>\n#include <glibmm/refptr.h>\n#include <sigc++/signal.h>\n\n"
+      << "#include <cstdint>\n#include <functional>\n#include <iostream>\n#include <map>\n#include <string>\n#include <vector>\n\n"
+      << "// The gate's own row type, made by the same generator as yours -- so the gate\n"
+      << "// checks the generated item code itself, not a hand-written stand-in.\n"
+      << "namespace " << app.ns << "::ui::gate {\n\n"
+      << item_decl(own, "")
+      << item_def(own, "", app.ns, "gate::")
+      << "}  // namespace " << app.ns << "::ui::gate\n\n"
+      << "namespace {\n\n"
+      << "namespace undo = ::" << app.ns << "::ui::undo;\n\n"
+      << "// Quiet in a build -- a FAIL and the summary; -v shows every check.\n"
+      << "int g_pass = 0, g_fail = 0;\n"
+      << "bool g_verbose = false;\n"
+      << "void check(const std::string& name, bool ok, const std::string& detail = {}) {\n"
+      << "    ok ? ++g_pass : ++g_fail;\n"
+      << "    if (ok && !g_verbose) return;\n"
+      << "    std::cout << (ok ? \"  PASS  \" : \"  FAIL  \") << name;\n"
+      << "    if (!ok && !detail.empty()) std::cout << \"  (\" << detail << \")\";\n"
+      << "    std::cout << \"\\n\";\n"
+      << "}\n\n"
+      << "// One field and a change to it: a value different from the one make() gave.\n"
+      << "template <class Item>\n"
+      << "struct Field {\n"
+      << "    const char* name;\n"
+      << "    std::function<void(Item&)> change;\n"
+      << "};\n\n"
+      << "// The whole walk for one row type. `make`: an item with every field set.\n"
+      << "template <class Item>\n"
+      << "void walk(const std::function<Glib::RefPtr<Item>()>& make, const std::vector<Field<Item>>& fields) {\n"
+      << "    const std::string type = Item::undo_type();\n"
+      << "    if (g_verbose) std::cout << type << \"\\n\";\n\n"
+      << "    // A list like a view's: a Gio::ListStore, registered with the undo by name --\n"
+      << "    // the same four calls each form makes for its own views.\n"
+      << "    auto store = Gio::ListStore<Item>::create();\n"
+      << "    const std::string list = \"gate.\" + type;\n"
+      << "    undo::register_list(list, {\n"
+      << "        [&](const Glib::RefPtr<Glib::ObjectBase>& o) {\n"
+      << "            for (guint i = 0; i < store->get_n_items(); ++i)\n"
+      << "                if (Glib::RefPtr<Glib::ObjectBase>(store->get_item(i)) == o) return static_cast<int>(i);\n"
+      << "            return -1;\n"
+      << "        },\n"
+      << "        [&](guint at, const Glib::RefPtr<Glib::ObjectBase>& o) {\n"
+      << "            if (auto x = std::dynamic_pointer_cast<Item>(o)) store->insert(at, x);\n"
+      << "        },\n"
+      << "        [&](guint at) { store->remove(at); },\n"
+      << "        [&] { return store->get_n_items(); }});\n\n"
+      << "    auto a = make();\n"
+      << "    check(type + \": made\", static_cast<bool>(a));\n"
+      << "    if (!a) return;\n"
+      << "    const std::uint64_t id = a->id();\n\n"
+      << "    // 1. Add a row -- one step; undo takes it out, redo puts it back.\n"
+      << "    check(type + \": adding a row is a step\", undo::add(list, type, id, 0, \"Add\"));\n"
+      << "    check(type + \": Undo names it\", undo::undo_label() == \"Add\", undo::undo_label());\n"
+      << "    undo::undo();\n"
+      << "    check(type + \": undo takes the row out\", store->get_n_items() == 0);\n"
+      << "    undo::redo();\n"
+      << "    check(type + \": redo puts it back\", store->get_n_items() == 1 && store->get_item(0) == a);\n\n"
+      << "    // 2. Each field ALONE. If the snapshot forgot a field, changing only that\n"
+      << "    // field looks like no change at all -- and Ctrl+Z would silently skip it.\n"
+      << "    for (const auto& f : fields) {\n"
+      << "        const std::string what = type + \".\" + f.name;\n"
+      << "        const std::string before = a->snapshot();\n"
+      << "        int shown = 0;   // what shows the row hears each change (signal_changed)\n"
+      << "        auto heard = a->signal_changed().connect([&] { ++shown; });\n"
+      << "        const bool step = undo::edit(a, std::string(\"Edit \") + f.name, [&] { f.change(*a); });\n"
+      << "        const std::string after = a->snapshot();\n"
+      << "        check(what + \": a change is a step\", step && after != before,\n"
+      << "              \"the snapshot doesn't carry this field -- undo can't see it\");\n"
+      << "        undo::undo();\n"
+      << "        check(what + \": undo puts it back\", a->snapshot() == before,\n"
+      << "              \"restore() doesn't read back what snapshot() wrote\");\n"
+      << "        undo::redo();\n"
+      << "        check(what + \": redo does it again\", a->snapshot() == after);\n"
+      << "        check(what + \": the row re-shows each time\", shown >= 3, std::to_string(shown) + \" of 3\");\n"
+      << "        heard.disconnect();\n"
+      << "    }\n\n"
+      << "    // 3. Remove it -- and let go of it, so the item is DESTROYED, as a removed\n"
+      << "    // row is in the app. Undo must make it again: same id, fields, place.\n"
+      << "    const std::string fields_now = a->snapshot();\n"
+      << "    auto b = make();\n"
+      << "    store->append(b);   // a row after it: the removed one must come back BEFORE b\n"
+      << "    check(type + \": removing a row is a step\", undo::remove(list, type, id, \"Remove\"));\n"
+      << "    check(type + \": it's out of the list\", store->get_n_items() == 1 && store->get_item(0) == b);\n"
+      << "    a.reset();\n"
+      << "    check(type + \": and gone\", !Item::find(id));\n"
+      << "    undo::undo();\n"
+      << "    auto back = Item::find(id);\n"
+      << "    check(type + \": undo brings the same row back\", back && back->snapshot() == fields_now);\n"
+      << "    check(type + \": in its place\", store->get_n_items() == 2 && back && store->get_item(0) == back);\n"
+      << "    undo::redo();\n"
+      << "    check(type + \": redo removes it again\", store->get_n_items() == 1 && store->get_item(0) == b);\n\n"
+      << "    // 4. The window that showed the list closes (its form unregisters it): an\n"
+      << "    // undo into it must do nothing, not crash.\n"
+      << "    undo::unregister_list(list);\n"
+      << "    undo::undo();\n"
+      << "    check(type + \": an undo into a closed list does nothing\", store->get_n_items() == 1);\n"
+      << "}\n\n"
+      << "// The journal's own rules, once (on the gate's type).\n"
+      << "void journal_rules() {\n"
+      << "    if (g_verbose) std::cout << \"the journal\\n\";\n"
+      << "    using ::" << app.ns << "::ui::gate::GateItem;\n"
+      << "    auto x = GateItem::create(\"start\");\n"
+      << "    check(\"a change to the same value is not a step\", !undo::edit(x, \"Nothing\", [&] { x->title = \"start\"; }));\n"
+      << "    // Typing: steps with one merge key, close together, fold into ONE step.\n"
+      << "    undo::edit(x, \"Type\", [&] { x->title = \"s\"; }, \"typing\", false);\n"
+      << "    undo::edit(x, \"Type\", [&] { x->title = \"st\"; }, \"typing\", false);\n"
+      << "    undo::edit(x, \"Type\", [&] { x->title = \"sta\"; }, \"typing\", false);\n"
+      << "    undo::undo();\n"
+      << "    check(\"typing folds into one step\", x->title == \"start\", x->title);\n"
+      << "    undo::redo();\n"
+      << "    check(\"and redoes as one\", x->title == \"sta\", x->title);\n"
+      << "    undo::edit(x, \"Rename\", [&] { x->title = \"later\"; });\n"
+      << "    undo::undo();\n"
+      << "    check(\"a new step after an undo drops the redo\", !undo::can_redo() || undo::redo_label() == \"Rename\");\n"
+      << "    while (undo::undo()) {}\n"
+      << "    check(\"undo with nothing to undo says so\", !undo::undo() && !undo::can_undo());\n"
+      << "}\n\n"
+      << "}  // namespace\n\n"
+      << "int main(int argc, char** argv) {\n"
+      << "    g_verbose = argc > 1 && std::string(argv[1]) == \"-v\";\n"
+      << "    Glib::init();\n"
+      << "    Gio::init();\n"
+;
+    for (const auto& t : types) {
+        const std::string& q = t.cls;
+        std::string a1;
+        for (std::size_t i = 0; i < t.m->fields.size(); ++i) a1 += (i ? ", " : "") + gate_value(t.m->fields[i], false);
+        c << "    walk<" << q << ">(\n"
+          << "        [] { return " << q << "::create(" << a1 << "); },\n"
+          << "        {";
+        for (std::size_t i = 0; i < t.m->fields.size(); ++i) {
+            const auto& x = t.m->fields[i];
+            c << (i ? ",\n         " : "") << "{" << cpp_string(x.name) << ", [](" << q << "& x) { x." << x.name
+              << " = " << gate_value(x, true) << "; }}";
+        }
+        c << "});\n";
+    }
+    c << "    journal_rules();\n"
+      << "    std::cout << \"" << app.bin << "_undo_gate: \" << g_pass << \" pass / \" << g_fail << \" fail (\"\n"
+      << "              << \"" << types.size() << (types.size() == 1 ? " row type" : " row types") << ")\\n\";\n"
+      << "    if (g_fail) std::cout << \"the undo is broken -- see the FAILs above (docs: generated/Undo.hpp)\\n\";\n"
+      << "    return g_fail == 0 ? 0 : 1;\n"
+      << "}\n\n"
+      << "#endif  // MORTIMER_UNDO_GATE\n";
+    return {{"generated/UndoGate.cpp", c.str()}};
 }
 
 std::vector<OutFile> generate_support(const AppInfo& app) {

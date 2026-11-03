@@ -157,6 +157,31 @@ static void widgets_cmake(const fs::path& root, GenerateResult& r) {
     r.notes.push_back("CMakeLists.txt: src/widgets/*.cpp added to the app's sources (your promoted widgets)");
 }
 
+// s024 -- an app made before s024 has no undo gate target: append it once (the
+// block the template has), and say so. Its build then runs the gate.
+static void undo_gate_cmake(const fs::path& root, GenerateResult& r) {
+    const fs::path cm = root / "CMakeLists.txt";
+    if (!fs::exists(cm)) return;
+    std::string text = read_file(cm);
+    if (text.find("_undo_gate") != std::string::npos) return;
+    std::string block;
+    for (const auto& t : project_templates())
+        if (std::string(t.path) == "@BIN@/CMakeLists.txt") {
+            const std::string all = t.content;
+            auto at = all.find("@BIN@_undo_gate -- ");   // the block's heading line, to the end
+            if (at != std::string::npos) {
+                at = all.rfind('\n', at) + 1;
+                block = render_tokens(all.substr(at), load_project(root.string()).app);
+            }
+        }
+    if (block.empty()) return;
+    if (!text.empty() && text.back() != '\n') text += "\n";
+    text += "\n" + block;
+    write_if_changed(cm, text);
+    r.notes.push_back("CMakeLists.txt: the undo gate added -- every build now walks the app's undo (" +
+                      load_project(root.string()).app.bin + "_undo_gate)");
+}
+
 GenerateResult generate_project(const std::string& app_dir) {
     const fs::path root(app_dir);
     const Project pr = load_project(app_dir);
@@ -192,7 +217,7 @@ GenerateResult generate_project(const std::string& app_dir) {
             form = load_form(form_path.string());
         } catch (const std::exception& e) {
             r.issues.push_back({stem, {true, "form", e.what()}});
-            for (const char* s : {"Ui.hpp", "Ui.cpp", ".hooks.txt", ".hooks.json"})
+            for (const char* s : {"Ui.hpp", "Ui.cpp", "Items.cpp", ".hooks.txt", ".hooks.json"})
                 produced.insert("generated/" + stem + s);   // keep the old ones; don't prune
             continue;
         }
@@ -214,7 +239,7 @@ GenerateResult generate_project(const std::string& app_dir) {
         bool bad = false;
         for (const auto& [s, i] : r.issues) bad = bad || (s == stem && i.error);
         if (bad) {
-            for (const char* s : {"Ui.hpp", "Ui.cpp", ".hooks.txt", ".hooks.json"})
+            for (const char* s : {"Ui.hpp", "Ui.cpp", "Items.cpp", ".hooks.txt", ".hooks.json"})
                 produced.insert("generated/" + stem + s);
             r.notes.push_back(stem + ": not generated (errors above); the last good files stay");
             continue;
@@ -261,6 +286,9 @@ GenerateResult generate_project(const std::string& app_dir) {
     }
     // s010: the keyboard-shortcuts window, from every form that generated.
     for (const auto& f : generate_shortcuts(keyed, pr.app)) emit(f);
+    // s024: the undo gate, from every form that generated and the shared models.
+    for (const auto& f : generate_undo_gate(keyed, pr.models, pr.app)) emit(f);
+    undo_gate_cmake(root, r);
     if (!main_seen)
         r.issues.push_back({pr.main_form, {true, "project", "main_form \"" + pr.main_form +
                                                                 "\" isn't in the forms list"}});
@@ -401,6 +429,13 @@ Form starter_form(const AppInfo& app) {
                  // s014: the app's undo -- every edit a user makes in a generated list.
                  {"undo", "<Control>z", false, "", "", "undo"},
                  {"redo", "<Control><Shift>z", false, "", "", "redo"}};
+    // s023: the header's Open button opens a file on day one -- the form owns the
+    // dialog (choose_open_doc(), async, one at a time), your half's clicked hook
+    // calls it, and on_open_doc_chosen(path) is where your app reads the file.
+    FileDef open_doc;
+    open_doc.name = "open_doc";
+    open_doc.mode = "open";
+    f.files = {open_doc};
     f.root = {"ApplicationWindow", "main_window",
               {{"title", Value(app.name)}, {"default_width", I(800)}, {"default_height", I(560)},
                {"remember", Value(true)}},   // s008: a new app comes back as it was left
@@ -586,7 +621,33 @@ std::string create_workspace(const AppInfo& app, const std::string& parent) {
     pr.forms = {"MainWindow"};
     save_project(pr, app_dir.string());
     fs::create_directories(app_dir / "forms");
-    save_form(starter_form(app), (app_dir / "forms" / "MainWindow.mort").string());
+    const Form main = starter_form(app);
+    save_form(main, (app_dir / "forms" / "MainWindow.mort").string());
+    // s023: your half of the main window, written here (once) rather than by
+    // generate -- its Open hook already calls the form's file dialog.
+    for (auto out : user_stubs(main, app)) {
+        if (out.path == "src/MainWindow.cpp") {
+            out.content = replace_all(out.content,
+                "void MainWindow::on_open_clicked() {\n"
+                "    if (auto lg = log::get(log::Area::Ui)) lg->info(\"MainWindow: open clicked\");\n",
+                "void MainWindow::on_open_clicked() {\n"
+                "    // open_doc is the form's file dialog (forms/MainWindow.mort, \"files\").\n"
+                "    // This opens it over the window and returns AT ONCE -- the dialog is\n"
+                "    // asynchronous, so the answer comes later, to on_open_doc_chosen()\n"
+                "    // below. Cancel delivers nothing. Clicked again while it's up: refused\n"
+                "    // and logged, so there is never more than one.\n"
+                "    choose_open_doc();\n");
+            out.content = replace_all(out.content,
+                "void MainWindow::on_open_doc_chosen(const std::string& path) {\n",
+                "void MainWindow::on_open_doc_chosen(const std::string& path) {\n"
+                "    // The file the user picked -- a full path. Read it here. (A file with\n"
+                "    // no local path, from a network share, arrives as its URI.)\n");
+            if (out.content.find("    choose_open_doc();") == std::string::npos ||
+                out.content.find("Read it here.") == std::string::npos)
+                throw std::runtime_error("starter stub: the Open hooks weren't where expected");
+        }
+        write_if_changed(app_dir / out.path, out.content);
+    }
     add_about(app_dir.string());   // s010: the starter's menu opens it
     generate_project(app_dir.string());
     return app_dir.string();

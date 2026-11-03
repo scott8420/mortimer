@@ -3,6 +3,9 @@
 // fact until a consumer exercises it).
 //
 //   ./build.sh && ./build/@BIN@_selftest
+//
+// The app's UNDO has a gate of its own: @BIN@_undo_gate (generated/UndoGate.cpp,
+// rewritten from your forms' models), which every build runs.
 #include "core/Version.hpp"
 
 #include <iostream>

@@ -72,3 +72,29 @@ target_include_directories(@BIN@ PRIVATE include "${CMAKE_CURRENT_SOURCE_DIR}" $
 target_link_libraries(@BIN@ PRIVATE ${GTKMM_LIBRARIES} @BIN@_core spdlog::spdlog)
 target_link_directories(@BIN@ PRIVATE ${GTKMM_LIBRARY_DIRS})
 target_compile_options(@BIN@ PRIVATE ${GTKMM_CFLAGS_OTHER})
+
+# ── @BIN@_undo_gate -- the app's undo, checked on EVERY build ─────────────────
+# generated/UndoGate.cpp walks each row type (your forms' models, the shared ones)
+# through the undo journal: add, each field alone, remove; undo, redo. It needs
+# no display, and the build RUNS it: a broken undo fails here, not for your user.
+# (The app's own glob takes UndoGate.cpp too; without MORTIMER_UNDO_GATE it's empty.)
+file(GLOB GATE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/generated/*Items.cpp")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/generated/Models.cpp")
+    list(APPEND GATE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/generated/Models.cpp")
+endif()
+add_executable(@BIN@_undo_gate generated/UndoGate.cpp generated/Undo.cpp src/Log.cpp ${GATE_SOURCES})
+target_compile_definitions(@BIN@_undo_gate PRIVATE MORTIMER_UNDO_GATE)
+target_include_directories(@BIN@_undo_gate PRIVATE include "${CMAKE_CURRENT_SOURCE_DIR}" ${GTKMM_INCLUDE_DIRS})
+target_link_libraries(@BIN@_undo_gate PRIVATE ${GTKMM_LIBRARIES} @BIN@_core spdlog::spdlog)
+target_link_directories(@BIN@_undo_gate PRIVATE ${GTKMM_LIBRARY_DIRS})
+target_compile_options(@BIN@_undo_gate PRIVATE ${GTKMM_CFLAGS_OTHER})
+# Run it: the stamp is written only when it passes, so a failed gate runs again
+# on the next build (and keeps the build red) until the undo is fixed.
+add_custom_command(
+    OUTPUT  "${CMAKE_CURRENT_BINARY_DIR}/undo_gate.passed"
+    COMMAND @BIN@_undo_gate
+    COMMAND ${CMAKE_COMMAND} -E touch "${CMAKE_CURRENT_BINARY_DIR}/undo_gate.passed"
+    DEPENDS @BIN@_undo_gate
+    COMMENT "Undo gate: walking the app's undo"
+    VERBATIM)
+add_custom_target(undo_gate ALL DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/undo_gate.passed")

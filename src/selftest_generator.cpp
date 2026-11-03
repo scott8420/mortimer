@@ -599,7 +599,9 @@ class X : public ui::XUi {
         const core::AppInfo app = core::derive_app("Probe Tool");
         const auto out = core::generate_form(f, app);
         const std::string& h = out[0].content;
+        // s024: the item definitions are in generated/<Form>Items.cpp, the third file.
         const std::string& c = out[1].content;
+        const std::string& ic = out.size() > 2 ? out[2].content : out[1].content;
         check("codegen models: a nested item class", has(h, "class NoteItem : public Glib::Object {"), "");
         check("codegen models: create(fields..., id = 0)",
               has(h, "static Glib::RefPtr<NoteItem> create(const std::string& title = {}, const std::string& due_date = {}, "
@@ -607,8 +609,8 @@ class X : public ui::XUi {
         check("codegen models: plain C++ fields", has(h, "std::int64_t count = 0;") && has(h, "bool         done = false;"), "");
         check("codegen models: the id is freed with the item", has(h, "~NoteItem() override { ids().erase(m_id); }"), "");
         check("codegen models: a taken id is refused (null + error)",
-              has(c, "if (id != 0 && ids().count(id))") && has(c, "is taken -- not created") && has(c, "return {};"), "");
-        check("codegen models: the counter goes on past yours", has(c, "next() = id + 1;"), "");
+              has(ic, "if (id != 0 && ids().count(id))") && has(ic, "is taken -- not created") && has(ic, "return {};"), "");
+        check("codegen models: the counter goes on past yours", has(ic, "next() = id + 1;"), "");
         check("codegen table: the store and selection are members",
               has(h, "Glib::RefPtr<Gio::ListStore<NoteItem>> m_notes_store;") &&
               has(h, "Glib::RefPtr<Gtk::SingleSelection> m_notes_selection;"), "");
@@ -888,6 +890,24 @@ class X : public ui::XUi {
                   has(slurp(ad / "generated" / "MainWindowUi.cpp"), "std::make_unique<::opener::ui::ShortcutsWindow>()") &&
                   has(slurp(ad / "generated" / "MainWindowUi.cpp"), "\"win.shortcuts\"") &&
                   has(slurp(ad / "generated" / "MainWindowUi.cpp"), "\"win.about\""), "");
+            // s023: the starter's Open button opens a file -- the form's dialog, your
+            // half's clicked hook calls it, the chosen hook is declared and logs.
+            {
+                const auto mf = core::load_form((ad / "forms" / "MainWindow.mort").string());
+                const std::string uc = slurp(ad / "src" / "MainWindow.cpp");
+                const auto at = uc.find("void MainWindow::on_open_clicked() {");
+                check("s023 starter: the form has file dialog open_doc (open)",
+                      mf.files.size() == 1 && mf.files[0].name == "open_doc" && mf.files[0].mode == "open" &&
+                      errors_of(mf).empty(), "");
+                check("s023 starter: your Open hook calls choose_open_doc()",
+                      at != std::string::npos && uc.find("    choose_open_doc();", at) != std::string::npos &&
+                      uc.find("    choose_open_doc();", at) < uc.find("\n}\n", at), "");
+                check("s023 starter: on_open_doc_chosen declared, logs the path",
+                      has(slurp(ad / "include" / "MainWindow.hpp"),
+                          "void on_open_doc_chosen(const std::string& path) override;") &&
+                      has(uc, "lg->info(\"MainWindow: open_doc chosen {}\", path);") &&
+                      has(slurp(ad / "generated" / "MainWindowUi.hpp"), "choose_open_doc("), "");
+            }
             check("s010 project: generated/Shortcuts lists the starter's keys",
                   has(slurp(ad / "generated" / "Shortcuts.cpp"), "{\"Opener\", \"<Control>h\", \"Say Hello\", \"\"}") &&
                   has(slurp(ad / "generated" / "Shortcuts.cpp"), "\"Keyboard Shortcuts\", \"\"}"), "");
@@ -1225,14 +1245,15 @@ class X : public ui::XUi {
         f.models = {m};
         f.root = {"Window", "main_window", {}, {}, {}, {}};
         const auto o = core::generate_form(f, core::derive_app("Undoer"));
+        const std::string items = o.size() > 2 ? o[2].content : std::string();   // s024: <Form>Items.cpp
         check("s014 items: find / snapshot / restore / undo_type / signal_changed, and they register",
               has(o[0].content, "static Glib::RefPtr<NoteItem> find(std::uint64_t id);") &&
               has(o[0].content, "sigc::signal<void()>& signal_changed() { return m_changed; }") &&
-              has(o[1].content, "::undoer::ui::undo::register_type(undo_type(), {") &&
-              has(o[1].content, "out_.str(title);") && has(o[1].content, "out_.num(n);") &&
-              has(o[1].content, "out_.dbl(w);") && has(o[1].content, "done = in_.flag();"), "");
+              has(items, "::undoer::ui::undo::register_type(undo_type(), {") &&
+              has(items, "out_.str(title);") && has(items, "out_.num(n);") &&
+              has(items, "out_.dbl(w);") && has(items, "done = in_.flag();"), "");
         check("s014 items: the undo type names the class where it lives",
-              has(o[1].content, "return \"MainWindowUi::NoteItem\";"), "");
+              has(items, "return \"MainWindowUi::NoteItem\";"), "");
         core::Form a;
         a.name = "X";
         a.root = {"Window", "x", {}, {}, {}, {}};
@@ -1269,7 +1290,7 @@ class X : public ui::XUi {
               has(o[1].content, "undo::register_list(\"MainWindow.notes\", {") &&
               has(o[1].content, "undo::unregister_list(\"MainWindow.notes\");"), "");
         check("s014 m2: an item can be made again (an undone delete): that id, those fields",
-              has(o[1].content, "auto x = create({}, {}, n);") && has(o[1].content, "if (x) x->restore(s);"), "");
+              o.size() > 2 && has(o[2].content, "auto x = create({}, {}, n);") && has(o[2].content, "if (x) x->restore(s);"), "");
         std::string uc;
         for (const auto& x : core::generate_support(core::derive_app("Rows"))) if (x.path == "generated/Undo.cpp") uc = x.content;
         check("s014 m2 runtime: a row record is (position, fields); absent = out of the list; made again on undo",
@@ -1555,5 +1576,53 @@ class X : public ui::XUi {
         const auto hoc = app_cpp.find("win->set_hide_on_close(true);");
         check("s022 m5 template App: hide on close, THEN delete on hide (GTK 4 destroys a closed window without a hide)",
               hoc != std::string::npos && hoc < app_cpp.find("win->signal_hide().connect([win] { delete win; });"), "");
+    }
+
+    // ── s024: the undo gate -- the app's undo, walked on every build ────────
+    {
+        core::Form f;
+        f.name = "MainWindow";
+        f.models = {{"Note", {{"title", "string", ""}, {"n", "int", ""}, {"w", "double", ""}, {"done", "bool", ""}}}};
+        f.root = {"Window", "main_window", {}, {}, {}, {}};
+        core::Form bare;
+        bare.name = "Plain";
+        bare.root = {"Window", "plain", {}, {}, {}, {}};
+        const auto app = core::derive_app("Gater");
+        const auto o = core::generate_form(f, app);
+        check("s024: a form's items in generated/<Form>Items.cpp, apart from the form",
+              o.size() == 3 && o[2].path == "generated/MainWindowItems.cpp" &&
+              has(o[2].content, "MainWindowUi::NoteItem::create(") && !has(o[1].content, "NoteItem::create("), "");
+        check("s024: a form with no models has no Items file", core::generate_form(bare, app).size() == 2, "");
+        const std::vector<core::ModelDef> shared = {{"Task", {{"label", "string", ""}}}};
+        const auto g = core::generate_undo_gate({f, bare}, shared, app);
+        const std::string& c = g.at(0).content;
+        check("s024: generated/UndoGate.cpp, empty but for the gate target",
+              g[0].path == "generated/UndoGate.cpp" && has(c, "#ifdef MORTIMER_UNDO_GATE") &&
+              has(c, "#endif  // MORTIMER_UNDO_GATE") && has(c, core::kGeneratedMarker), "");
+        check("s024: walks the gate's own type, each form's models, the shared ones",
+              has(c, "walk<::gater::ui::gate::GateItem>(") && has(c, "walk<::gater::ui::MainWindowUi::NoteItem>(") &&
+              has(c, "walk<::gater::model::TaskItem>(") && has(c, "#include \"generated/MainWindowUi.hpp\"") &&
+              has(c, "#include \"generated/Models.hpp\"") && !has(c, "PlainUi.hpp"), "");
+        check("s024: each field changed alone, to another value",
+              has(c, "x.title = \"gate: \\\"two\\\", line\\nnext\";") &&
+              has(c, "x.n = -42;") && has(c, "x.w = 0.25;") && has(c, "x.done = false;") &&
+              has(c, "::gater::ui::MainWindowUi::NoteItem::create(\"gate one\", 7, 2.5, true)"), "");
+        check("s024: add / each field / remove, undo and redo; the removed row destroyed first",
+              has(c, "undo::add(list, type, id, 0, \"Add\")") && has(c, "undo::remove(list, type, id, \"Remove\")") &&
+              has(c, "a.reset();") && has(c, "!Item::find(id)") && has(c, "undo::unregister_list(list);") &&
+              has(c, "typing folds into one step"), "");
+        check("s024: the gate's own type is made by the item generator", has(c, "class GateItem : public Glib::Object {") &&
+              has(c, "return \"gate::GateItem\";"), "");
+        std::string cm, bs;
+        for (const auto& t : core::project_templates()) {
+            if (std::string(t.path) == "@BIN@/CMakeLists.txt") cm = t.content;
+            if (std::string(t.path) == "@BIN@/build.sh") bs = t.content;
+        }
+        check("s024 template: the gate target, defined MORTIMER_UNDO_GATE, run by the build (stamp only on a pass)",
+              has(cm, "add_executable(@BIN@_undo_gate generated/UndoGate.cpp generated/Undo.cpp src/Log.cpp ${GATE_SOURCES})") &&
+              has(cm, "target_compile_definitions(@BIN@_undo_gate PRIVATE MORTIMER_UNDO_GATE)") &&
+              has(cm, "COMMAND @BIN@_undo_gate") && has(cm, "add_custom_target(undo_gate ALL") &&
+              has(cm, "generated/*Items.cpp"), "");
+        check("s024 template: build.sh says the gate passed", has(bs, "_undo_gate -v"), "");
     }
 }

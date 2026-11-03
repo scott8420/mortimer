@@ -12,6 +12,7 @@
 #   mark a hook REQUIRED -> MISSING: the build must FAIL (abstract class)
 #   write the override   -> builds
 #   regenerate again     -> writes nothing (only changes are written)
+#   break an item's undo -> the undo gate must FAIL the build (s024)
 #   drop a form          -> its generated files are pruned
 #   rename two forms     -> your halves follow (class inside); builds
 #   ...and your half (include/, src/) is never written by any of it.
@@ -73,6 +74,14 @@ check "selftest"                ./build/proofapp_selftest
 # now use generated/Models' NoteItem through a using; it must still build.
 check "share Note (s013)"       "$GEN" share KitchenSink Note .
 check "builds with Note shared" build
+# s024: the undo gate ran in those builds -- and a broken undo must fail one.
+check "undo gate: walked the shared Note" sh -c './build/proofapp_undo_gate -v | grep -q "PASS  model::NoteItem: undo brings the same row back"'
+cp generated/Models.cpp "$WORK/Models.cpp.good"
+sed -i '/^    weight = in_.dbl();$/d' generated/Models.cpp
+if build; then bad "undo gate: a field restore() forgets FAILS the build"; else ok "undo gate: a field restore() forgets FAILS the build"; fi
+if build; then bad "undo gate: ...and stays red on the next build"; else ok "undo gate: ...and stays red on the next build"; fi
+"$GEN" generate . > /dev/null
+check "undo gate: regenerated, green again" build
 H0=$(userhash)
 
 echo "== rename hello -> greet, add a save button"
