@@ -1,4 +1,7 @@
 #pragma once
+#include "designer/WidgetCard.hpp"
+#include <giomm/simpleactiongroup.h>
+#include <gtkmm/popovermenu.h>
 // designer::Canvas -- the live canvas: the form, built from the Design as REAL
 // gtkmm widgets, every time it changes.
 //
@@ -37,6 +40,7 @@ namespace mortimer::designer {
 class Canvas : public widgets::ScrolledWindow {
 public:
     Canvas();
+    ~Canvas() override;
 
     // Rebuild from the design and outline `sel`. A Stack shows the page that
     // holds the selection (else the page it showed before the rebuild).
@@ -110,6 +114,16 @@ private:
     std::optional<std::string>      m_css_preview;  // the editor's text, while it previews
     sigc::signal<void(const std::string&, int)> m_style_said;
     sigc::signal<void(const std::string&, int)> m_pick;
+
+    // s025 m5: the right-click menu (designer/WidgetMenu.hpp) and the card its
+    // "What is a <Type>?" opens -- both hang off the stage (a Box: it presents
+    // popovers), unparented in the destructor.
+    void popup_menu(const std::string& key, double x, double y);   // x, y on the stage
+    Gtk::PopoverMenu                     m_menu;
+    WidgetCard                           m_wcard;
+    Glib::RefPtr<Gio::SimpleActionGroup> m_menu_actions;   // "canvas.card"
+    std::string                          m_menu_type;
+    Gdk::Rectangle                       m_menu_at;
 };
 
 }  // namespace mortimer::designer

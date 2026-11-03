@@ -1,4 +1,8 @@
 #include "designer/Panes.hpp"
+#include "designer/WidgetMenu.hpp"
+#include <gdk/gdkkeysyms.h>
+#include <giomm/menu.h>
+#include <gtkmm/eventcontrollerkey.h>
 #include "core/Catalog.hpp"
 
 #include <gtkmm/button.h>
@@ -116,7 +120,40 @@ Palette::Palette()
         if (auto* l = dynamic_cast<Gtk::Label*>(b->get_child())) l->set_xalign(0);
         b->set_tooltip_text(w.doc);
         b->set_name("designer.palette." + w.type);
-        b->signal_clicked().connect([this, t = w.type] { m_add.emit(t); });
+        // s025: no signal_clicked -- a click would make a widget. The pointer
+        // is heard in CAPTURE (before the button's own gesture): one press
+        // picks, a second press of the same click makes it; the button 3
+        // press opens the menu. Not claimed: the drag source still sees the
+        // press and a drag still adds.
+        auto click = Gtk::GestureClick::create();
+        click->set_button(0);   // any button
+        click->set_propagation_phase(Gtk::PropagationPhase::CAPTURE);
+        click->signal_pressed().connect([this, b, g = click.get(), t = w.type](int n, double x, double y) {
+            if (g->get_current_button() == GDK_BUTTON_SECONDARY) {
+                g->set_state(Gtk::EventSequenceState::CLAIMED);
+                double px = x, py = y;
+                b->translate_coordinates(*this, x, y, px, py);
+                popup_menu(t, px, py);
+                return;
+            }
+            if (g->get_current_button() != GDK_BUTTON_PRIMARY) return;
+            pick(t);
+            if (n == 2) m_add.emit(t);
+        });
+        b->add_controller(click);
+        // The keyboard: Enter / Space on the focused type makes it (Tab
+        // reaches the palette; a key press is never a stray).
+        auto keys = Gtk::EventControllerKey::create();
+        keys->signal_key_pressed().connect([this, t = w.type](guint keyval, guint, Gdk::ModifierType state) {
+            const auto mods = state & (Gdk::ModifierType::CONTROL_MASK | Gdk::ModifierType::SHIFT_MASK |
+                                       Gdk::ModifierType::ALT_MASK);
+            if (mods != Gdk::ModifierType{}) return false;
+            if (keyval != GDK_KEY_Return && keyval != GDK_KEY_KP_Enter && keyval != GDK_KEY_space) return false;
+            pick(t);
+            m_add.emit(t);
+            return true;
+        }, false);
+        b->add_controller(keys);
         b->add_controller(string_source([p = "add:" + w.type] { return p; }));   // ...or drag it where it goes
         m_buttons[w.type] = b;
         m_docs[w.type] = w.doc;
@@ -130,17 +167,93 @@ Palette::Palette()
     for (const auto& w : core::catalog())
         if (!w.root && w.children == core::ChildKind::None) add(w);
 
+    // s025: Alt+click -> the type's card. Heard on the LIST in CAPTURE (a
+    // greyed type takes no clicks of its own) and claimed, so the type's own
+    // gesture never picks or adds; the type under the pointer is found by
+    // picking, greyed ones included.
+    auto alt = Gtk::GestureClick::create();
+    alt->set_button(GDK_BUTTON_PRIMARY);
+    alt->set_propagation_phase(Gtk::PropagationPhase::CAPTURE);
+    alt->signal_pressed().connect([this, g = alt.get()](int, double x, double y) {
+        const auto st = g->get_current_event_state();
+        if ((st & Gdk::ModifierType::ALT_MASK) != Gdk::ModifierType::ALT_MASK) return;
+        for (Gtk::Widget* w = m_list.pick(x, y, Gtk::PickFlags::INSENSITIVE); w && w != &m_list; w = w->get_parent())
+            for (const auto& [type, b] : m_buttons)
+                if (b == w) {
+                    g->set_state(Gtk::EventSequenceState::CLAIMED);
+                    pick(type);
+                    double bx = 0, by = 0;
+                    b->translate_coordinates(*this, 0, 0, bx, by);
+                    m_card.show_for(type, Gdk::Rectangle(static_cast<int>(bx), static_cast<int>(by),
+                                                         b->get_width(), b->get_height()));
+                    return;
+                }
+    });
+    m_list.add_controller(alt);
+
     m_scroll.set_child(m_list);
     m_scroll.set_policy(Gtk::PolicyType::NEVER, Gtk::PolicyType::AUTOMATIC);
     m_scroll.set_vexpand(true);
     append(m_scroll);
+    m_card.set_parent(*this);
+    m_card.set_position(Gtk::PositionType::RIGHT);   // beside the palette, over the canvas
+
+    // s025: the right-click menu -- "Add Box into “body”" (where it would go,
+    // named), as a double-click would.
+    m_actions = Gio::SimpleActionGroup::create();
+    m_actions->add_action("add", [this] { if (!m_menu_type.empty()) m_add.emit(m_menu_type); });
+    insert_action_group("palette", m_actions);
+    m_menu.set_parent(*this);   // a popover is a native: the box doesn't lay it out (s025 m1 found the ListBox won't present one)
+    m_menu.set_has_arrow(false);
+    m_menu.set_halign(Gtk::Align::START);
+}
+
+Palette::~Palette() {
+    m_menu.unparent();
+    m_card.unparent();
+}
+
+void Palette::pick(const std::string& type) {
+    // A press we CLAIM (Alt+click, right-click) never reaches the button's
+    // release, so it stays drawn pressed (:active) -- seen under Xvfb, four
+    // types dark at once. Let go of that state everywhere; the pick is the
+    // class below.
+    for (auto& [t, b] : m_buttons) {
+        b->unset_state_flags(Gtk::StateFlags::ACTIVE);
+        if (auto* cell = b->get_parent()) cell->unset_state_flags(Gtk::StateFlags::ACTIVE);
+    }
+    if (type == m_picked) return;
+    if (auto it = m_buttons.find(m_picked); it != m_buttons.end()) it->second->remove_css_class("mortimer-palette-picked");
+    m_picked = type;
+    if (auto it = m_buttons.find(type); it != m_buttons.end()) it->second->add_css_class("mortimer-palette-picked");
+}
+
+void Palette::popup_menu(const std::string& type, double x, double y) {
+    pick(type);
+    m_menu_type = type;
+    auto menu = Gio::Menu::create();
+    menu->append("Add " + type + " " + m_where[type], "palette.add");
+    m_menu.set_menu_model(menu);
+    m_menu.set_pointing_to(Gdk::Rectangle(static_cast<int>(x), static_cast<int>(y), 1, 1));
+    m_menu.popup();
 }
 
 void Palette::repaint(const core::Design& d, const std::string& sel) {
     for (auto& [type, b] : m_buttons) {
         const Drop drop = drop_for(d, sel, type);
         b->set_sensitive(!drop.parent.empty());
-        b->set_tooltip_text(drop.parent.empty() ? m_docs[type] + "\n\nNot here: " + drop.why : m_docs[type]);
+        // Where a double-click would put it, in words: into the parent, or
+        // just after the selection (when the parent isn't the selection).
+        std::string where;
+        if (!drop.parent.empty()) {
+            const auto p = d.get(drop.parent);
+            const auto s = d.get(sel);
+            where = drop.parent == sel || !s ? "into \u201c" + (p ? p->name : drop.parent) + "\u201d"
+                                             : "after \u201c" + s->name + "\u201d";
+        }
+        m_where[type] = where;
+        b->set_tooltip_text(drop.parent.empty() ? m_docs[type] + "\n\nNot here: " + drop.why
+                                                : m_docs[type] + "\n\nDouble-click to add it " + where + ".");
     }
 }
 
@@ -182,10 +295,52 @@ TreePane::TreePane()
         Glib::signal_idle().connect_once([this, key, how] { m_select_more.emit(key, how); });   // repaints us
     });
     m_list.add_controller(more);
+    // s025 m5: the RIGHT button -> the row's menu. The row is selected first
+    // (unless it's one of several selected -- the menu acts on them all); the
+    // menu pops after the repaint that causes.
+    auto right = Gtk::GestureClick::create();
+    right->set_button(GDK_BUTTON_SECONDARY);
+    right->signal_pressed().connect([this, g = right.get()](int, double x, double y) {
+        g->set_state(Gtk::EventSequenceState::CLAIMED);
+        auto* row = m_list.get_row_at_y(static_cast<int>(y));
+        if (!row) return;
+        const auto i = static_cast<std::size_t>(row->get_index());
+        if (i >= m_row_keys.size()) return;
+        const std::string key = m_row_keys[i];
+        const bool held = key == m_sel || std::find(m_also.begin(), m_also.end(), key) != m_also.end();
+        double px = x, py = y;
+        m_list.translate_coordinates(*this, x, y, px, py);
+        if (!held) m_select.emit(key);
+        Glib::signal_idle().connect_once([this, key, px, py] { popup_menu(key, px, py); });
+    });
+    m_list.add_controller(right);
     m_scroll.set_child(m_list);
     m_scroll.set_policy(Gtk::PolicyType::NEVER, Gtk::PolicyType::AUTOMATIC);
     m_scroll.set_vexpand(true);
     append(m_scroll);
+    m_menu_actions = Gio::SimpleActionGroup::create();
+    m_menu_actions->add_action("card", [this] { if (!m_menu_type.empty()) m_wcard.show_for(m_menu_type, m_menu_at); });
+    insert_action_group("tree", m_menu_actions);
+    m_menu.set_parent(*this);
+    m_menu.set_has_arrow(false);
+    m_menu.set_halign(Gtk::Align::START);
+    m_wcard.set_parent(*this);
+    m_wcard.set_position(Gtk::PositionType::RIGHT);
+}
+
+TreePane::~TreePane() {
+    m_menu.unparent();
+    m_wcard.unparent();
+}
+
+void TreePane::popup_menu(const std::string& key, double x, double y) {
+    const auto r = m_d ? m_d->get(key) : std::nullopt;
+    if (!r) return;
+    m_menu_type = r->type;
+    m_menu_at = Gdk::Rectangle(static_cast<int>(x), static_cast<int>(y), 1, 1);
+    m_menu.set_menu_model(widget_menu(r->type, "tree.card"));
+    m_menu.set_pointing_to(m_menu_at);
+    m_menu.popup();
 }
 
 void TreePane::repaint(const core::Design& d, const std::string& sel, const std::vector<std::string>& also) {

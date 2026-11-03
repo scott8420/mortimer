@@ -1,4 +1,7 @@
 #pragma once
+#include "designer/WidgetCard.hpp"
+#include <giomm/simpleactiongroup.h>
+#include <gtkmm/popovermenu.h>
 // designer::Palette and designer::TreePane -- the two left-hand panes.
 //
 // Both are thin views over the Design: repaint(design, sel) rebuilds them from
@@ -40,24 +43,40 @@ std::optional<Payload> parse_payload(const std::string& s);
 // A drop, already resolved: what, into which parent, at which index.
 using DropSignal = sigc::signal<void(const std::string& payload, const std::string& parent, int index)>;
 
+// s025 (Scott: "just clicking an item to create it is wrong"): a single click
+// only PICKS a type (it wears the highlight); a widget is made by a
+// double-click, Enter / Space on the focused type, the right-click menu, or
+// a drag onto the tree / canvas. Alt+click a type (greyed or not): its card --
+// a live picture, what it's for, More... for GTK's pages (WidgetCard.hpp).
 class Palette : public widgets::Box {
 public:
     Palette();
+    ~Palette() override;
     // Grey what can't go at the selection; the tooltip says why.
     void repaint(const core::Design& d, const std::string& sel);
     sigc::signal<void(const std::string&)>& signal_add() { return m_add; }
 
 private:
+    void pick(const std::string& type);                      // the highlight, no widget made
+    void popup_menu(const std::string& type, double x, double y);   // x, y in the pane's coordinates
+
     widgets::ScrolledWindow m_scroll;
     widgets::Box            m_list;
     std::map<std::string, Gtk::Button*> m_buttons;   // type -> its button
     std::map<std::string, std::string>  m_docs;      // type -> catalog doc
+    std::map<std::string, std::string>  m_where;     // type -> "into “body”" / "after “title”" (repaint)
+    std::string             m_picked;                // the highlighted type
+    std::string             m_menu_type;             // the type the open menu is about
+    Glib::RefPtr<Gio::SimpleActionGroup> m_actions;  // "palette.add"
+    Gtk::PopoverMenu        m_menu;                  // parented to the pane (unparented in the destructor)
+    WidgetCard              m_card;                  // s025: Alt+click -- the picture and the words (same)
     sigc::signal<void(const std::string&)> m_add;
 };
 
 class TreePane : public widgets::Box {
 public:
     TreePane();
+    ~TreePane() override;
     // `also`: the rest of a several-at-once selection (s018), marked beside `sel`.
     void repaint(const core::Design& d, const std::string& sel, const std::vector<std::string>& also = {});
     sigc::signal<void(const std::string&)>& signal_select() { return m_select; }
@@ -90,6 +109,14 @@ private:
     std::vector<std::string> m_also;
     sigc::signal<void(const std::string&)> m_refused;
     DropSignal m_drop;
+
+    // s025 m5: a row's right-click menu (designer/WidgetMenu.hpp) and its card.
+    void popup_menu(const std::string& key, double x, double y);   // x, y in the pane
+    Gtk::PopoverMenu                     m_menu;
+    WidgetCard                           m_wcard;
+    Glib::RefPtr<Gio::SimpleActionGroup> m_menu_actions;   // "tree.card"
+    std::string                          m_menu_type;
+    Gdk::Rectangle                       m_menu_at;
 };
 
 }  // namespace mortimer::designer

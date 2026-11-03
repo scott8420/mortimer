@@ -140,9 +140,13 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
 
         // ── Mouse ─────────────────────────────────────────────────────────────
         {"Mouse", "", {}, "Click on the canvas", "Select the widget under the pointer (it never sees the click)"},
-        {"Mouse", "", {}, "Click in the palette", "Add that widget into the selection, or just after it"},
+        {"Mouse", "", {}, "Click in the palette", "Pick a type (highlighted) -- it makes nothing"},
+        {"Mouse", "", {}, "Double-click in the palette", "Add that widget into the selection, or just after it (Enter / Space on a picked type too)"},
+        {"Mouse", "", {}, "Right-click in the palette", "Its menu: Add <Type> into / after -- where it would go, named"},
+        {"Mouse", "", {}, "Alt+click in the palette", "The type's card: a live picture, what it's for, More... for GTK's pages"},
         {"Mouse", "", {}, "Drag from the palette", "Drop on a tree row (top / middle / bottom = before / into / after) or on the canvas"},
         {"Mouse", "", {}, "Drag a tree row", "Reorder, or reparent into another container"},
+        {"Mouse", "", {}, "Right-click a widget", "On the canvas or in the tree: its menu -- the edit verbs, and What is a ...?"},
         {"Mouse", "", {}, "Right-click the project list", "A row's Open / Copy, Rename…, Remove… -- and Add a form or a resource"},
 
         // ── Project list ──────────────────────────────────────────────────────

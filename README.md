@@ -66,7 +66,7 @@ core API as `mortimer-gen`:
 
 - **Live canvas** -- the form as real gtkmm widgets, rebuilt on every change;
   hooks inert; click a widget to select it (it never sees the click).
-- **Palette** -- click to add into (or just after) the selection, or drag onto
+- **Palette** -- double-click (or right-click > Add) to add into (or just after) the selection; Alt+click for what a widget is; or drag onto
   the tree / canvas. **Tree** -- drag to reorder or reparent.
 - **Inspector** -- name, properties (set = bold + reset; unset shows GTK's own
   default), packing, signals (tick for a hook, mark required = pure virtual).

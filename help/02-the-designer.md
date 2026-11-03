@@ -18,8 +18,17 @@ direction -- a line shows the spot.
 ## The palette
 
 Every widget Mortimer knows, grouped by kind.
-**Click** one to add it into the selection (or just after it, when the
-selection can't hold children). **Drag** one onto the canvas or the tree.
+**Click** one to pick it -- it's highlighted, nothing is made. To add it,
+**double-click** it (or press Enter / Space on it): it goes into the
+selection, or just after it when the selection can't hold children. Its
+tooltip names where. **Right-click** one for a menu that says the same --
+"Add Label after “title”". Or **drag** one onto the canvas or the tree.
+
+**Alt+click** a type to see what it is: a live picture of the widget (in
+your theme), what it's for, and the one thing to know about it. **More...**
+links to its class page on docs.gtk.org and to GTK's gallery of every
+widget. Greyed types answer Alt+click too -- it's how to find out what they
+are before they can go anywhere.
 
 ## The project and the widgets tree
 
@@ -50,6 +59,13 @@ Remove are greyed.
 
 **Widgets** is the form as a tree. Drag a row to reorder or reparent it:
 the top, middle or bottom of a row means before, into or after.
+
+**Right-click** a widget -- on the canvas or its row in the tree -- for its
+menu: Cut, Copy, Paste, Duplicate, Delete, Move Up, Move Down (each with its
+key), and **What is a ...?**, which shows the same card as Alt+click in the
+palette. The widget is selected first, so the highlight shows what the menu
+will act on; right-click one of several selected widgets and the menu acts
+on all of them.
 
 ## The inspector
 

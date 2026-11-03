@@ -88,6 +88,7 @@ add_library(mortimer_core STATIC
     src/core/Help.cpp     # s024 m6: the user guide -- pages, blocks, search (GTK-free)
     src/core/ProjectUndo.cpp   # s025 m2: the project's files as an undo store
     src/core/DiskForm.cpp      # s025 m3: the open form vs its file (changed under us?)
+    src/core/WidgetAbout.cpp   # s025: what each widget type is for, and its GTK docs page
     ${MORTIMER_HELP_CPP}
     ${MORTIMER_TEMPLATES_CPP}
 )
@@ -157,6 +158,8 @@ add_executable(mortimer
     # palette + tree, the inspector, and the catalog<->GObject property bridge.
     src/designer/Canvas.cpp
     src/designer/Panes.cpp
+    src/designer/WidgetCard.cpp   # s025: Alt+click a palette type -- its picture and its words
+    src/designer/WidgetMenu.cpp   # s025 m5: a widget's right-click menu (canvas, tree)
     src/designer/Inspector.cpp
     src/designer/GProps.cpp
     src/designer/HooksPane.cpp

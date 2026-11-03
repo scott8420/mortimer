@@ -1,4 +1,5 @@
 #include "designer/Canvas.hpp"
+#include "designer/WidgetMenu.hpp"
 #include "core/Catalog.hpp"
 #include "designer/GProps.hpp"
 #include "core/CssScope.hpp"
@@ -119,6 +120,28 @@ Canvas::Canvas()
     // s019: a plain press on one of several selected waits for the release --
     // it may be the start of a drag that carries them all. Released without a
     // drag: it was a click, and it picks just that one.
+    // s025 m5: the RIGHT button -> the widget's menu. Selected first (unless
+    // it's one of several already selected: then the menu acts on them all);
+    // the menu pops after the repaint that selection causes.
+    auto right = Gtk::GestureClick::create();
+    right->set_button(GDK_BUTTON_SECONDARY);
+    right->set_propagation_phase(Gtk::PropagationPhase::CAPTURE);
+    right->signal_pressed().connect([this, g = right.get()](int, double x, double y) {
+        g->set_state(Gtk::EventSequenceState::CLAIMED);
+        const std::string key = key_at(x, y);
+        if (key.empty()) return;
+        if (std::find(m_selection.begin(), m_selection.end(), key) == m_selection.end()) m_pick.emit(key, 0);
+        Glib::signal_idle().connect_once([this, key, x, y] { popup_menu(key, x, y); });
+    });
+    m_stage.add_controller(right);
+    m_menu_actions = Gio::SimpleActionGroup::create();
+    m_menu_actions->add_action("card", [this] { if (!m_menu_type.empty()) m_wcard.show_for(m_menu_type, m_menu_at); });
+    insert_action_group("canvas", m_menu_actions);
+    m_menu.set_parent(m_stage);
+    m_menu.set_has_arrow(false);
+    m_menu.set_halign(Gtk::Align::START);
+    m_wcard.set_parent(m_stage);
+
     click->signal_released().connect([this](int, double, double) {
         if (m_pending.empty()) return;
         const std::string key = m_pending;
@@ -280,6 +303,21 @@ void Canvas::set_drop_mark(const std::string& key) {
         m_drop_marked = it->second;
         m_drop_marked->add_css_class("mortimer-drop-target");
     }
+}
+
+Canvas::~Canvas() {
+    m_menu.unparent();
+    m_wcard.unparent();
+}
+
+void Canvas::popup_menu(const std::string& key, double x, double y) {
+    const auto r = m_d ? m_d->get(key) : std::nullopt;
+    if (!r) return;
+    m_menu_type = r->type;
+    m_menu_at = Gdk::Rectangle(static_cast<int>(x), static_cast<int>(y), 1, 1);
+    m_menu.set_menu_model(widget_menu(r->type, "canvas.card"));
+    m_menu.set_pointing_to(m_menu_at);
+    m_menu.popup();
 }
 
 void Canvas::on_press(int, double x, double y, Gdk::ModifierType state) {

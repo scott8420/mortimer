@@ -56,6 +56,8 @@
 .mortimer-palette button { padding: 3px 8px; min-height: 24px; }
 .mortimer-palette flowboxchild { padding: 0; }
 .mortimer-palette button label { font-weight: normal; }
+/* s025: the picked type -- a click only picks; double-click / Enter / the menu adds. */
+.mortimer-palette button.mortimer-palette-picked { background-color: alpha(currentColor, 0.12); }
 .mortimer-tree row { padding: 2px 4px; min-height: 26px; }
 .mortimer-tree .type { opacity: 0.55; font-size: smaller; }
 .mortimer-tree .expander { min-width: 16px; min-height: 16px; padding: 0; }

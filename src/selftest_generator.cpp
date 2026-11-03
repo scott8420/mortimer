@@ -22,6 +22,7 @@
 #include "core/Project.hpp"
 #include "core/ProjectUndo.hpp"
 #include "core/DiskForm.hpp"
+#include "core/WidgetAbout.hpp"
 #include "core/Resources.hpp"
 #include "core/Templates.hpp"
 
@@ -1796,6 +1797,32 @@ class X : public ui::XUi {
         }
         check("s025 m1 project list: Delete / F2 / Menu on the keys page; the guide tells it", proj == 3 && guide,
               std::to_string(proj));
+        // s025: a palette click only picks -- the keys page and the guide say double-click.
+        bool dbl = false, pick_row = false;
+        for (const auto& r : core::shortcut_registry()) {
+            dbl = dbl || (r.keys == "Double-click in the palette");
+            pick_row = pick_row || (r.keys == "Click in the palette" && r.description.find("makes nothing") != std::string::npos);
+        }
+        bool guide_dbl = false;
+        for (const auto& p : core::help_pages()) {
+            const std::string t = p.text ? p.text : "";
+            guide_dbl = guide_dbl || (core::help_title(p) == "The designer" && t.find("**double-click** it") != std::string::npos);
+        }
+        check("s025 palette: a click picks, a double-click adds -- keys page and guide", dbl && pick_row && guide_dbl, "");
+        bool alt_row = false, alt_guide = false;
+        for (const auto& r : core::shortcut_registry()) alt_row = alt_row || r.keys == "Alt+click in the palette";
+        for (const auto& p : core::help_pages()) {
+            const std::string t = p.text ? p.text : "";
+            alt_guide = alt_guide || (core::help_title(p) == "The designer" && t.find("**Alt+click** a type") != std::string::npos);
+        }
+        check("s025 card: Alt+click on the keys page and in the guide", alt_row && alt_guide, "");
+        bool rc_row = false, rc_guide = false;
+        for (const auto& r : core::shortcut_registry()) rc_row = rc_row || r.keys == "Right-click a widget";
+        for (const auto& p : core::help_pages()) {
+            const std::string t = p.text ? p.text : "";
+            rc_guide = rc_guide || (core::help_title(p) == "The designer" && t.find("**What is a ...?**") != std::string::npos);
+        }
+        check("s025 m5 widget menu: on the keys page and in the guide", rc_row && rc_guide, "");
     }
 
     // ── s024: symbolic icons are FILLS ONLY ──────────────────────────────────
@@ -1970,5 +1997,18 @@ class X : public ui::XUi {
         fs::remove(path);
         check("s025 m3 disk: deleted -> Gone", core::look_at_disk(path, known, false).what == DC::Gone, "");
         fs::remove_all(tmp);
+    }
+
+    // ── s025: every palette type has its card (Alt+click) ───────────────────
+    {
+        std::string missing;
+        for (const auto& w : core::catalog())
+            if (core::widget_about(w.type).about.size() < 40) missing += w.type + " ";
+        check("s025 card: every catalog type says what it's for (a new widget can't ship without it)",
+              missing.empty(), missing);
+        check("s025 card: the docs link is GTK's class page (a Dialog is a GtkWindow)",
+              core::widget_doc_url("Button") == "https://docs.gtk.org/gtk4/class.Button.html" &&
+              core::widget_doc_url("Dialog") == "https://docs.gtk.org/gtk4/class.Window.html" &&
+              core::widget_doc_url("Nope").empty(), core::widget_doc_url("Button"));
     }
 }
