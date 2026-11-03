@@ -166,5 +166,6 @@ add_executable(mortimer
 )
 target_include_directories(mortimer PRIVATE include ${GTKMM_INCLUDE_DIRS})
 target_link_libraries(mortimer     PRIVATE ${GTKMM_LIBRARIES} mortimer_core spdlog::spdlog)
+target_compile_definitions(mortimer PRIVATE MORTIMER_VERSION="${PROJECT_VERSION}")   # About shows it (s024)
 target_link_directories(mortimer   PRIVATE ${GTKMM_LIBRARY_DIRS})
 target_compile_options(mortimer    PRIVATE ${GTKMM_CFLAGS_OTHER})

@@ -1780,4 +1780,24 @@ class X : public ui::XUi {
         for (const auto& r : core::shortcut_registry()) f1 = f1 || (r.action == "win.help" && !r.accels.empty() && r.accels[0] == "F1");
         check("s024 m6 help: F1 is Help", f1, "");
     }
+
+    // ── s024: symbolic icons are FILLS ONLY ──────────────────────────────────
+    // GTK 4.16+ draws a symbolic icon's fills and skips strokes and masks: a
+    // handle drawn as a stroke vanished on Fedora (s024). Mortimer's own and the
+    // one every new app gets must stay fill-only.
+    {
+        auto fills_only = [](const std::string& svg) {
+            for (const char* bad : {"stroke=", "stroke-width=", "mask=", "<mask", "clip-path="})
+                if (svg.find(bad) != std::string::npos) return false;
+            return !svg.empty();
+        };
+        std::ifstream in((std::filesystem::path(MORTIMER_SOURCE_DIR) / "resources/icons/scalable/apps/mortimer-logo-symbolic.svg").string());
+        std::stringstream mine;
+        mine << in.rdbuf();
+        std::string tmpl;
+        for (const auto& t : core::project_templates())
+            if (std::string(t.path).find("-logo-symbolic.svg") != std::string::npos) tmpl = t.content;
+        check("s024 icons: the symbolic icons are fills only (GTK 4.16+ skips strokes and masks)",
+              fills_only(mine.str()) && fills_only(tmpl), "");
+    }
 }
