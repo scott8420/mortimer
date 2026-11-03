@@ -65,7 +65,10 @@ void Shell::bind_model() {  // bindings: design <-> journal <-> panes
     m_design.set_door([this] { return m_journal.open(); });
     m_design.set_on_change([this] { queue_repaint(); });
     m_journal.set_selection_source([this] {
-        return m_sel.empty() ? std::vector<std::string>{} : std::vector<std::string>{m_sel};
+        if (m_sel.empty()) return std::vector<std::string>{};
+        // s018: the whole selection, so undo brings all of it back.
+        if (!m_sels.empty() && m_sels.front() == m_sel) return m_sels;
+        return std::vector<std::string>{m_sel};
     });
     m_journal.set_on_change([this] { update_undo_ui(); });
 
@@ -82,7 +85,8 @@ void Shell::bind_model() {  // bindings: design <-> journal <-> panes
         get_clipboard()->set_text(text);
         say(what.empty() ? text : "Copied the " + what + ": " + text);
     });
-    m_canvas.signal_pick().connect(sigc::mem_fun(*this, &Shell::on_select));
+    m_canvas.signal_pick().connect(sigc::mem_fun(*this, &Shell::on_pick));
+    m_tree.signal_select_more().connect(sigc::mem_fun(*this, &Shell::on_pick));
     m_tree.signal_drop().connect(sigc::mem_fun(*this, &Shell::on_drop));
     m_canvas.signal_drop().connect(sigc::mem_fun(*this, &Shell::on_drop));
     m_tree.signal_refused().connect([this](const std::string& s) { say("Can't drop there: " + s, 2); });
@@ -124,6 +128,12 @@ void Shell::bind_keys() {  // bindings: Ctrl+Z, Delete, Alt+arrows
             else if (keyval == GDK_KEY_Delete && mods == Gdk::ModifierType{}) act = "win.delete";
             else if (keyval == GDK_KEY_Up && mods == ALT)                    act = "win.move-up";
             else if (keyval == GDK_KEY_Down && mods == ALT)                  act = "win.move-down";
+            // s018: Escape lets go of the others -- the primary stays.
+            if (keyval == GDK_KEY_Escape && mods == Gdk::ModifierType{} && m_sels.size() > 1 && !focus_is_text()) {
+                m_sels = {m_sel};
+                repaint();
+                return true;
+            }
             if (!act || focus_is_text()) return false;
             if (auto lg = log::get(log::Area::Shell)) lg->debug("window key -> {}", act);
             activate_action(act);   // the FULL name: "undo" alone does nothing, silently

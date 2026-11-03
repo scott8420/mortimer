@@ -805,6 +805,80 @@ Landing landing_at(const Design& d, const std::string& type, const Design::Id& m
     return on;
 }
 
+std::vector<Design::Id> top_level(const Design& d, const std::vector<Design::Id>& ids) {
+    std::vector<Design::Id> keep;
+    for (const auto& id : ids) {
+        const auto r = d.get(id);
+        if (!r || id == Design::kForm || r->parent.empty()) continue;
+        if (std::find(keep.begin(), keep.end(), id) != keep.end()) continue;
+        keep.push_back(id);
+    }
+    std::vector<Design::Id> out;
+    for (const auto& k : d.all()) {   // the tree's order
+        if (std::find(keep.begin(), keep.end(), k) == keep.end()) continue;
+        bool inside = false;
+        for (const auto& o : keep)
+            if (o != k && d.is_under(k, o)) { inside = true; break; }
+        if (!inside) out.push_back(k);
+    }
+    return out;
+}
+
+std::vector<Design::Id> range(const Design& d, const Design::Id& a, const Design::Id& b) {
+    const auto all = d.all();
+    const auto ia = std::find(all.begin(), all.end(), a), ib = std::find(all.begin(), all.end(), b);
+    if (ia == all.end() || ib == all.end()) return ib != all.end() ? std::vector<Design::Id>{b} : std::vector<Design::Id>{};
+    if (ia == ib) return {a};
+    std::vector<Design::Id> out(std::min(ia, ib), std::max(ia, ib) + 1);
+    std::erase(out, d.root());
+    return out;
+}
+
+std::vector<Design::Id> toggle(const std::vector<Design::Id>& sel, const Design::Id& key) {
+    std::vector<Design::Id> out = sel;
+    if (const auto it = std::find(out.begin(), out.end(), key); it != out.end()) {
+        if (out.size() > 1) out.erase(it);   // the next one becomes primary if it was
+        return out;
+    }
+    out.insert(out.begin(), key);
+    return out;
+}
+
+bool remove_many(DesignJournal& j, Design& d, const std::vector<Design::Id>& ids, std::string* why) {
+    const auto top = top_level(d, ids);
+    if (top.empty()) {
+        say(why, ids.size() == 1 && d.get(ids.front()) && d.get(ids.front())->parent.empty()
+                     ? "the window is the form -- it can't be deleted" : "nothing selected");
+        return false;
+    }
+    if (top.size() == 1) return remove(j, d, top.front(), why);
+    std::vector<Design::Id> recs;
+    for (const auto& t : top)
+        for (const auto& k : d.subtree(t)) recs.push_back(k);
+    return j.run("Delete " + std::to_string(top.size()) + " widgets", recs, [&] {
+        // Every record of every subtree is in the step: one undo brings all back.
+        for (auto it = recs.rbegin(); it != recs.rend(); ++it) d.put(*it, std::nullopt);
+    });
+}
+
+Design::Id survivor(const Design& d, const std::vector<Design::Id>& going) {
+    const auto top = top_level(d, going);
+    if (top.empty()) return d.root();
+    auto gone = [&](const Design::Id& k) {
+        for (const auto& t : top) if (d.is_under(k, t)) return true;
+        return false;
+    };
+    // The first one's later siblings, then its earlier ones, then up.
+    const auto r = d.get(top.front());
+    const auto sib = d.children(r->parent);
+    const auto at = std::find(sib.begin(), sib.end(), top.front());
+    for (auto it = at; it != sib.end(); ++it) if (!gone(*it)) return *it;
+    for (auto it = std::make_reverse_iterator(at); it != sib.rend(); ++it) if (!gone(*it)) return *it;
+    for (Design::Id k = r->parent; !k.empty(); k = d.get(k) ? d.get(k)->parent : "")
+        if (!gone(k)) return k;
+    return d.root();
+}
+
 Design::Id neighbour(const Design& d, const Design::Id& id) {
     const auto r = d.get(id);
     if (!r) return {};

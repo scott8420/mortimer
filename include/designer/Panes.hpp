@@ -58,8 +58,11 @@ private:
 class TreePane : public widgets::Box {
 public:
     TreePane();
-    void repaint(const core::Design& d, const std::string& sel);
+    // `also`: the rest of a several-at-once selection (s018), marked beside `sel`.
+    void repaint(const core::Design& d, const std::string& sel, const std::vector<std::string>& also = {});
     sigc::signal<void(const std::string&)>& signal_select() { return m_select; }
+    // s018: a Ctrl (1) / Shift (2) click on a row -- the shell grows the selection.
+    sigc::signal<void(const std::string&, int)>& signal_select_more() { return m_select_more; }
     DropSignal& signal_drop() { return m_drop; }
     // A refused drop says why (the status line).
     sigc::signal<void(const std::string&)>& signal_refused() { return m_refused; }
@@ -83,6 +86,8 @@ private:
     std::string              m_sel;
     bool                     m_painting = false;
     sigc::signal<void(const std::string&)> m_select;
+    sigc::signal<void(const std::string&, int)> m_select_more;
+    std::vector<std::string> m_also;
     sigc::signal<void(const std::string&)> m_refused;
     DropSignal m_drop;
 };

@@ -522,6 +522,42 @@ void selftest_design(const Check& check_) {
         check("landing -> move: cancel now first", f.d.children(body).front() == cancel);
     }
 
+    // ── s018 m1: several selected ────────────────────────────────────────────
+    {
+        Fix f;
+        namespace dz = core::design;
+        const auto ok = f.d.find("ok"), cancel = f.d.find("cancel"), hint = f.d.find("hint"),
+                   body = f.d.find("body"), grid = f.d.find("grid"), cell = f.d.find("cell"),
+                   root = f.d.root();
+        auto t = dz::top_level(f.d, {hint, cell, grid, root, "nope", ok});
+        check("top_level: tree order, window + unknown dropped, cell goes with grid",
+              t == std::vector<std::string>{ok, hint, grid});
+        auto r = dz::range(f.d, hint, ok);
+        check("range: either way round, both ends", r == std::vector<std::string>{ok, cancel, hint});
+        check("range: one end alone", dz::range(f.d, ok, ok) == std::vector<std::string>{ok});
+        r = dz::range(f.d, root, cancel);
+        check("range: the window left out of a span", !r.empty() && r.front() != root && r.back() == cancel);
+        auto s = dz::toggle({ok}, hint);
+        check("toggle: adding makes it primary", s == std::vector<std::string>{hint, ok});
+        s = dz::toggle(s, hint);
+        check("toggle: taking the primary out hands it on", s == std::vector<std::string>{ok});
+        check("toggle: the last one stays", dz::toggle({ok}, ok) == std::vector<std::string>{ok});
+        check("survivor: past the deleted run", dz::survivor(f.d, {ok, cancel}) == hint);
+        check("survivor: the last ones -> an earlier sibling",
+              dz::survivor(f.d, {grid}) == f.d.find("pages"));
+        const auto before = f.d.all().size();
+        std::string why;
+        check("remove_many: three (and a child of one) in one step",
+              dz::remove_many(f.j, f.d, {ok, hint, grid, cell}, &why) && f.d.all().size() == before - 4, why);
+        check("remove_many: the step is named", f.j.undo_label() == "Delete 3 widgets", f.j.undo_label());
+        f.j.undo();
+        check("remove_many: one undo brings all back, in place",
+              f.d.all().size() == before && f.d.children(body).front() == ok && f.d.get(cell) &&
+              f.d.get(cell)->parent == grid);
+        check("remove_many: the window alone refused",
+              !dz::remove_many(f.j, f.d, {root}, &why) && why.find("window") != std::string::npos, why);
+    }
+
     // ── s002 m3: the window's project awareness ─────────────────────────────
     {
         const fs::path tmp = fs::temp_directory_path() / "mortimer_design_selftest";

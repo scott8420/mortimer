@@ -98,7 +98,7 @@ Canvas::Canvas()
     auto click = Gtk::GestureClick::create();
     click->set_propagation_phase(Gtk::PropagationPhase::CAPTURE);
     click->signal_pressed().connect([this, g = click.get()](int n, double x, double y) {
-        on_press(n, x, y);
+        on_press(n, x, y, g->get_current_event_state());
         g->set_state(Gtk::EventSequenceState::CLAIMED);
     });
     m_stage.add_controller(click);
@@ -252,14 +252,17 @@ void Canvas::set_drop_mark(const std::string& key) {
     }
 }
 
-void Canvas::on_press(int, double x, double y) {
+void Canvas::on_press(int, double x, double y, Gdk::ModifierType state) {
     const std::string key = key_at(x, y);
     if (key.empty()) return;
-    if (auto lg = log::get(log::Area::Canvas)) lg->debug("pick {}", key);
-    m_pick.emit(key);
+    // s018: Ctrl adds / takes out, Shift takes the range (the tree's order).
+    const int how = (state & Gdk::ModifierType::CONTROL_MASK) == Gdk::ModifierType::CONTROL_MASK ? 1
+                  : (state & Gdk::ModifierType::SHIFT_MASK) == Gdk::ModifierType::SHIFT_MASK     ? 2 : 0;
+    if (auto lg = log::get(log::Area::Canvas)) lg->debug("pick {} ({})", key, how);
+    m_pick.emit(key, how);
 }
 
-void Canvas::show(const core::Design& d, const std::string& sel) {
+void Canvas::show(const core::Design& d, const std::string& sel, const std::vector<std::string>& also) {
     m_design = &d;
     // Remember which page each Stack showed, so a rebuild doesn't flip it back.
     for (const auto& [key, w] : m_widgets)
@@ -308,6 +311,10 @@ void Canvas::show(const core::Design& d, const std::string& sel) {
     }
     if (const auto it = m_widgets.find(sel); it != m_widgets.end())
         it->second->add_css_class("mortimer-selected");
+    // s018: the rest of a several-at-once selection -- the same ring, dashed.
+    for (const auto& k : also)
+        if (const auto it = m_widgets.find(k); it != m_widgets.end())
+            it->second->add_css_class("mortimer-selected-also");
 }
 
 Gtk::Widget* Canvas::frame_for(const core::Design& d, const std::string& root) {

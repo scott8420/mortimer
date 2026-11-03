@@ -9,6 +9,8 @@
 #include <glibmm/main.h>
 #include <gtkmm/dragsource.h>
 #include <gtkmm/droptarget.h>
+#include <gtkmm/gestureclick.h>
+#include <algorithm>
 #include <gtkmm/widgetpaintable.h>
 #include <gdkmm/contentprovider.h>
 
@@ -160,14 +162,34 @@ TreePane::TreePane()
         const auto i = static_cast<std::size_t>(row->get_index());
         if (i < m_row_keys.size() && m_row_keys[i] != m_sel) m_select.emit(m_row_keys[i]);
     });
+    // s018: Ctrl / Shift + click grows the selection. Heard in CAPTURE and
+    // claimed, so the ListBox's own (one-row) selection never moves -- its
+    // selected row stays the primary, the others wear a class.
+    auto more = Gtk::GestureClick::create();
+    more->set_propagation_phase(Gtk::PropagationPhase::CAPTURE);
+    more->signal_pressed().connect([this, g = more.get()](int, double, double y) {
+        const auto st = g->get_current_event_state();
+        const int how = (st & Gdk::ModifierType::CONTROL_MASK) == Gdk::ModifierType::CONTROL_MASK ? 1
+                      : (st & Gdk::ModifierType::SHIFT_MASK) == Gdk::ModifierType::SHIFT_MASK     ? 2 : 0;
+        if (!how) return;   // a plain click: the ListBox's, as before
+        auto* row = m_list.get_row_at_y(static_cast<int>(y));
+        if (!row) return;
+        const auto i = static_cast<std::size_t>(row->get_index());
+        if (i >= m_row_keys.size()) return;
+        g->set_state(Gtk::EventSequenceState::CLAIMED);
+        const std::string key = m_row_keys[i];
+        Glib::signal_idle().connect_once([this, key, how] { m_select_more.emit(key, how); });   // repaints us
+    });
+    m_list.add_controller(more);
     m_scroll.set_child(m_list);
     m_scroll.set_policy(Gtk::PolicyType::NEVER, Gtk::PolicyType::AUTOMATIC);
     m_scroll.set_vexpand(true);
     append(m_scroll);
 }
 
-void TreePane::repaint(const core::Design& d, const std::string& sel) {
+void TreePane::repaint(const core::Design& d, const std::string& sel, const std::vector<std::string>& also) {
     m_painting = true;
+    m_also = also;
     m_d = &d;
     m_marked = nullptr;   // the rows are about to go
     // A selection that MOVES into a collapsed branch opens the branch. Only when
@@ -240,6 +262,7 @@ void TreePane::add_rows(const core::Design& d, const std::string& key, int depth
     auto* row = Gtk::make_managed<Gtk::ListBoxRow>();
     row->set_child(*line);
     row->set_name("designer.tree.row." + r.name);
+    if (std::find(m_also.begin(), m_also.end(), key) != m_also.end()) row->add_css_class("mortimer-also-selected");
     if (!r.parent.empty()) make_draggable(*row, key);
     make_drop_target(*row, key);
     m_list.append(*row);

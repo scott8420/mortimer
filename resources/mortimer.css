@@ -37,6 +37,15 @@
   border-radius: 4px;
 }
 
+/* s018: the rest of a several-at-once selection -- the same accent, dashed;
+   in the tree, a tint like the selected row's, lighter. */
+.mortimer-selected-also {
+  outline: 2px dashed #3584e4;
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+.mortimer-tree row.mortimer-also-selected { background-color: alpha(#3584e4, 0.18); }
+
 /* ── the side panes ──────────────────────────────────────────────────────── */
 .mortimer-pane-title {
   font-weight: bold;

@@ -95,6 +95,7 @@ private:
     void on_move_up();                           // category: handler
     void on_move_down();                         // category: handler
     void on_select(const std::string& key);      // category: handler: tree / canvas picked one
+    void on_pick(const std::string& key, int how);   // handler: s018 -- 0 just it, 1 Ctrl, 2 Shift
     void on_drop(const std::string& payload, const std::string& parent, int index);   // category: handler: a drag landed
     void on_recent_open(const std::string& p);   // category: handler
     void on_recent_clear();                      // category: handler
@@ -136,7 +137,8 @@ private:
     // that holds a reference to it, both before the inspector that holds both.
     core::Design        m_design;
     core::DesignJournal m_journal{m_design};
-    std::string         m_sel;                 // the selected widget's key
+    std::string         m_sel;                 // the selected widget's key (the primary)
+    std::vector<std::string> m_sels;           // s018: the whole selection, primary first
     std::string         m_path;                // "" = never saved
     std::string         m_app_dir;             // the project the form is in; "" = a loose form
     std::string         m_saved;               // form JSON as last saved / loaded

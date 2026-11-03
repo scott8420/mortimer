@@ -40,10 +40,11 @@ public:
 
     // Rebuild from the design and outline `sel`. A Stack shows the page that
     // holds the selection (else the page it showed before the rebuild).
-    void show(const core::Design& d, const std::string& sel);
+    void show(const core::Design& d, const std::string& sel, const std::vector<std::string>& also = {});
 
-    // A click on the stage picked a widget: its design key.
-    sigc::signal<void(const std::string&)>& signal_pick() { return m_pick; }
+    // A click on the stage picked a widget: its design key, and how (s018):
+    // 0 = just it, 1 = Ctrl (in / out of the selection), 2 = Shift (a range).
+    sigc::signal<void(const std::string&, int)>& signal_pick() { return m_pick; }
 
     // Something dragged from the palette, the tree or the canvas was dropped on
     // a widget: (payload, parent, index), resolved by core::design::landing_at
@@ -74,7 +75,7 @@ private:
     bool apply_one(Gtk::Widget& w, const core::Rec& r, const std::string& prop, const core::Value& v);
     void place(Gtk::Widget& parent, const core::Rec& prec, Gtk::Widget& child, const core::Rec& crec);
     Gtk::Widget* frame_for(const core::Design& d, const std::string& root);
-    void on_press(int n, double x, double y);
+    void on_press(int n, double x, double y, Gdk::ModifierType state);
     std::string key_at(double x, double y) const;   // the design key under a stage point
     void set_drop_mark(const std::string& key);   // also clears the line
     void set_drop_line(const std::string& key, bool before, bool across);
@@ -106,7 +107,7 @@ private:
     int                             m_css_error_line = 0;
     std::optional<std::string>      m_css_preview;  // the editor's text, while it previews
     sigc::signal<void(const std::string&, int)> m_style_said;
-    sigc::signal<void(const std::string&)> m_pick;
+    sigc::signal<void(const std::string&, int)> m_pick;
 };
 
 }  // namespace mortimer::designer

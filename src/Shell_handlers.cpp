@@ -383,6 +383,7 @@ void Shell::on_undo() {  // handler
     const auto r = m_journal.undo();
     if (!r.done) return;
     m_sel = r.selection.empty() ? m_design.root() : r.selection.front();
+    m_sels = r.selection;   // s018: all of it (repaint prunes what's gone)
     say("Undid: " + r.label);
 }
 
@@ -390,6 +391,7 @@ void Shell::on_redo() {  // handler
     const auto r = m_journal.redo();
     if (!r.done) return;
     m_sel = r.selection.empty() ? m_design.root() : r.selection.front();
+    m_sels = r.selection;
     say("Redid: " + r.label);
 }
 
@@ -406,6 +408,18 @@ void Shell::on_add(const std::string& type) {  // handler: palette -> design::ad
 }
 
 void Shell::on_delete() {  // handler: design::remove; neighbour selected
+    if (m_sels.size() > 1 && m_sels.front() == m_sel) {   // s018: all of them, one step
+        const std::string next = core::design::survivor(m_design, m_sels);
+        std::string why;
+        if (!core::design::remove_many(m_journal, m_design, m_sels, &why)) {
+            if (!why.empty()) say(why, 2);
+            return;
+        }
+        m_sel = next;
+        m_sels = {next};
+        m_journal.reselect({next});
+        return;
+    }
     const std::string gone = m_sel;
     const std::string next = core::design::neighbour(m_design, gone);
     std::string why;
@@ -449,6 +463,25 @@ void Shell::on_drop(const std::string& payload, const std::string& parent, int i
 void Shell::on_select(const std::string& key) {  // handler: tree / canvas picked one
     m_keys_to_tree = true;   // a pick is a pointing gesture: the keys follow it to the tree
     select(key);
+}
+
+void Shell::on_pick(const std::string& key, int how) {  // handler: s018 -- Ctrl / Shift grow the selection
+    if (how == 0 || !m_design.get(key)) { on_select(key); return; }
+    std::vector<std::string> cur = m_sels;
+    if (cur.empty() || cur.front() != m_sel) cur = {m_sel};
+    std::vector<std::string> next;
+    if (how == 1) next = core::design::toggle(cur, key);
+    else {
+        // The range, with the clicked one as primary (the inspector follows the click).
+        next = core::design::range(m_design, m_sel, key);
+        std::erase(next, key);
+        next.insert(next.begin(), key);
+    }
+    if (next.empty()) return;
+    m_sels = next;
+    m_sel = next.front();
+    m_keys_to_tree = true;
+    repaint();
 }
 
 // ── recents, about, shortcuts, registry ────────────────────────────────────

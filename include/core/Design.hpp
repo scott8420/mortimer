@@ -204,6 +204,27 @@ Landing landing_on(const Design& d, const std::string& type, const Design::Id& m
 Landing landing_at(const Design& d, const std::string& type, const Design::Id& moving,
                    const Design::Id& target, double pos, int extent, Zone* used = nullptr);
 
+// ── s018: several selected at once ─────────────────────────────────────────
+// The selection is a list, primary first (the inspector shows it). These are
+// its rules, pure so the selftest walks them.
+//
+// The ones a delete / move acts on: unknown ids and the window dropped, and
+// any widget inside another selected one (it goes with its ancestor) -- in
+// the tree's order.
+std::vector<Design::Id> top_level(const Design& d, const std::vector<Design::Id>& ids);
+// Shift+click: every widget from `a` to `b` in the tree's order (either way
+// round), both included; the window only when it is one of the ends alone.
+std::vector<Design::Id> range(const Design& d, const Design::Id& a, const Design::Id& b);
+// Ctrl+click: `key` in or out of `sel` (primary first). Taking out the last
+// one is refused (something is always selected); taking out the primary hands
+// it to the next. Adding makes `key` the primary.
+std::vector<Design::Id> toggle(const std::vector<Design::Id>& sel, const Design::Id& key);
+// Delete them all as ONE step ("Delete 3 widgets"); the window refused.
+bool remove_many(DesignJournal& j, Design& d, const std::vector<Design::Id>& ids, std::string* why = nullptr);
+// After that delete, who takes the selection: the first one's neighbour if it
+// stays, else the nearest ancestor that stays.
+Design::Id survivor(const Design& d, const std::vector<Design::Id>& going);
+
 // Who takes the selection when `id` goes: next sibling, else previous, else parent.
 Design::Id neighbour(const Design& d, const Design::Id& id);
 

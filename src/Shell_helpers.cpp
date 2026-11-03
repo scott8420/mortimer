@@ -197,6 +197,11 @@ void Shell::queue_repaint() {  // helper: one repaint per idle, after the writes
 
 void Shell::repaint() {  // helper: every pane from the model
     if (!m_design.get(m_sel)) m_sel = m_design.root();
+    // s018: the selection list follows m_sel (primary first); anything that
+    // set m_sel alone (an add, a pick) made it one again.
+    std::erase_if(m_sels, [this](const std::string& k) { return !m_design.get(k); });
+    if (m_sels.empty() || m_sels.front() != m_sel) m_sels = {m_sel};
+    const std::vector<std::string> also(m_sels.begin() + 1, m_sels.end());
     // The tree is rebuilt: if the keyboard was on it (or nowhere), it has to be
     // handed back to the selected row, or GTK drops it into the inspector's
     // first Entry and Ctrl+Z / Delete land in a text box (found driving s002).
@@ -208,8 +213,8 @@ void Shell::repaint() {  // helper: every pane from the model
                         (in_inspector && !focus_is_text());
     m_keys_to_tree = false;
     m_palette.repaint(m_design, m_sel);
-    m_tree.repaint(m_design, m_sel);
-    m_canvas.show(m_design, m_sel);
+    m_tree.repaint(m_design, m_sel, also);
+    m_canvas.show(m_design, m_sel, also);
     // A rebuild while the keyboard was in it (a rename committed with Enter)
     // destroyed the focused box: GTK would drop the keyboard into the first
     // Entry, text selected, and the next keys would rename the root.
@@ -223,12 +228,16 @@ void Shell::repaint() {  // helper: every pane from the model
     if (!m_design.root().empty()) m_hooks.show(core::live_report(m_app_dir, m_design.to_form()), m_app_dir);
     if (keys_to_tree) m_tree.focus_selection();
     if (m_said_recently) m_said_recently = false;   // the refusal stays up for this repaint
+    else if (m_sels.size() > 1)
+        say(std::to_string(m_sels.size()) + " selected -- the inspector shows “" + m_design.get(m_sel)->name +
+            "”; Delete removes them all, Escape keeps just it");
     else say_validation();
 }
 
 void Shell::select(const std::string& key) {  // helper: move the selection (not a step)
-    if (key == m_sel || !m_design.get(key)) return;
+    if ((key == m_sel && m_sels.size() <= 1) || !m_design.get(key)) return;
     m_sel = key;
+    m_sels = {key};
     repaint();
 }
 
