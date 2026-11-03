@@ -14,6 +14,11 @@
 #include <gtkmm/checkbutton.h>
 #include <gtkmm/dropdown.h>
 #include <gtkmm/expander.h>
+#include <gtkmm/calendar.h>
+#include <gtkmm/colordialog.h>
+#include <gtkmm/colordialogbutton.h>
+#include <gtkmm/fontdialog.h>
+#include <gtkmm/fontdialogbutton.h>
 #include <gtkmm/frame.h>
 #include <gtkmm/linkbutton.h>
 #include <gtkmm/progressbar.h>
@@ -445,6 +450,9 @@ Gtk::Widget* Canvas::make(const core::Rec& r) {
     if (t == "CenterBox")      return Gtk::make_managed<Gtk::CenterBox>();
     if (t == "ListBox")        return Gtk::make_managed<Gtk::ListBox>();
     if (t == "Entry")          return Gtk::make_managed<Gtk::Entry>();
+    if (t == "Calendar")       return Gtk::make_managed<Gtk::Calendar>();       // s022 m4
+    if (t == "ColorDialogButton") return Gtk::make_managed<Gtk::ColorDialogButton>(Gtk::ColorDialog::create());
+    if (t == "FontDialogButton")  return Gtk::make_managed<Gtk::FontDialogButton>(Gtk::FontDialog::create());
     if (t == "SearchEntry")    return Gtk::make_managed<Gtk::SearchEntry>();    // s022 m3
     if (t == "ProgressBar")    return Gtk::make_managed<Gtk::ProgressBar>();
     if (t == "Separator")      return Gtk::make_managed<Gtk::Separator>();
@@ -544,6 +552,24 @@ void Canvas::apply(Gtk::Widget& w, const core::Rec& r) {
 bool Canvas::apply_one(Gtk::Widget& w, const core::Rec& r, const std::string& p, const Value& v) {
     // The spelled-out few.
     if (p == "margin") { w.set_margin(static_cast<int>(dbl(v))); return true; }
+    // s022 m4: the dialog buttons -- their title / alpha live on the dialog; colour and font parsed.
+    if (auto* cb = dynamic_cast<Gtk::ColorDialogButton*>(&w)) {
+        if (p == "dialog_title" && std::holds_alternative<std::string>(v)) { cb->get_dialog()->set_title(std::get<std::string>(v)); return true; }
+        if (p == "with_alpha" && std::holds_alternative<bool>(v)) { cb->get_dialog()->set_with_alpha(std::get<bool>(v)); return true; }
+        if (p == "rgba" && std::holds_alternative<std::string>(v)) {
+            Gdk::RGBA c;
+            if (!c.set(std::get<std::string>(v))) return false;
+            cb->set_rgba(c);
+            return true;
+        }
+    }
+    if (auto* fb = dynamic_cast<Gtk::FontDialogButton*>(&w)) {
+        if (p == "dialog_title" && std::holds_alternative<std::string>(v)) { fb->get_dialog()->set_title(std::get<std::string>(v)); return true; }
+        if (p == "font" && std::holds_alternative<std::string>(v)) {
+            fb->set_font_desc(Pango::FontDescription(std::get<std::string>(v)));
+            return true;
+        }
+    }
     if (p == "text" && r.type == "TextView" && std::holds_alternative<std::string>(v)) {   // s022 m3
         auto* tv = dynamic_cast<Gtk::TextView*>(&w);
         if (!tv) return false;

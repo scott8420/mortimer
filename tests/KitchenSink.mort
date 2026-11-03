@@ -98,6 +98,16 @@
                     ] },
                   { "type": "ProgressBar", "id": "progress", "props": { "fraction": 0.4, "show_text": true, "text": "Loading" } }
                 ] },
+              { "type": "Box", "id": "pickers", "pack": { "name": "pickers", "title": "Pickers" },
+                "props": { "orientation": "vertical", "spacing": 6 },
+                "children": [
+                  { "type": "Calendar", "id": "due", "props": { "show_heading": true, "show_day_names": true, "show_week_numbers": true },
+                    "signals": [ "day_selected" ] },
+                  { "type": "ColorDialogButton", "id": "ink", "props": { "dialog_title": "Ink \"colour\"", "with_alpha": false, "rgba": "#3584e4" },
+                    "signals": [ "color_changed" ] },
+                  { "type": "FontDialogButton", "id": "face", "props": { "dialog_title": "Font", "font": "Sans 12", "use_font": true, "use_size": false },
+                    "signals": [ "font_changed" ] }
+                ] },
               { "type": "ScrolledWindow", "id": "scroller", "pack": { "name": "list", "title": "List" },
                 "props": { "hscrollbar": "never", "vscrollbar": "automatic", "has_frame": true,
                            "propagate_natural_width": false, "propagate_natural_height": false },

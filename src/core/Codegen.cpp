@@ -655,6 +655,8 @@ void build_node(const Form& f, const Node& n, bool is_root, std::vector<std::str
     Node bare = n;
     if (named_menu) bare.props.erase("menu");   // fill_<id>_menu() builds it
     auto props = prop_lines(bare, *w, obj);
+    if (!is_root)   // s022 m4: what it can't work without, before its properties
+        for (auto it = w->setup.rbegin(); it != w->setup.rend(); ++it) props.insert(props.begin(), obj + *it);
     if (named_menu) props.push_back("fill_" + n.id + "_menu();   // s016: its Undo / Redo rows name the step");
     for (auto& l : props) lines.push_back(l);
     for (auto& l : model_lines(f, n)) {   // a line may hold several (a sorter's lambda)

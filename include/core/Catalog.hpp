@@ -71,6 +71,9 @@ struct WidgetSpec {
     std::vector<SignalSpec> signals;
     std::vector<std::string> extra_headers;   // what a generated setter needs ("gtkmm/stringlist.h")
     std::string doc;
+    // s022 m4: calls on the widget before its properties, every time
+    // ("set_dialog(Gtk::ColorDialog::create())") -- what it can't work without.
+    std::vector<std::string> setup;
 };
 
 // Every placeable widget type, in palette order.

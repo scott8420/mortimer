@@ -229,6 +229,32 @@ std::vector<WidgetSpec> build() {
     c.push_back({"Separator", "Gtk::Separator", "gtkmm/separator.h", ChildKind::None, false,
                  {e("orientation", "set_orientation({v})", orient())},
                  {}, {}, "A thin line between things."});
+    // s022 m4: the pickers. GTK 4.10's dialog buttons open a dialog object the
+    // button doesn't make itself -- the generated code makes it (setup), so the
+    // button works on day one; its title / alpha live on that dialog.
+    c.push_back({"Calendar", "Gtk::Calendar", "gtkmm/calendar.h", ChildKind::None, false,
+                 {b("show_heading", "set_show_heading({v})"), b("show_day_names", "set_show_day_names({v})"),
+                  b("show_week_numbers", "set_show_week_numbers({v})")},
+                 {{"day_selected", "signal_day_selected()", "void", "", "", false,
+                   "A day was picked (get_date() has it)."}},
+                 {}, "A month to pick a day from."});
+    c.push_back({"ColorDialogButton", "Gtk::ColorDialogButton", "gtkmm/colordialogbutton.h", ChildKind::None, false,
+                 {s("dialog_title", "get_dialog()->set_title({v})", "The dialog's title; empty = GTK's own."),
+                  b("with_alpha", "get_dialog()->set_with_alpha({v})", "Offer transparency too."),
+                  s("rgba", "set_rgba(Gdk::RGBA({v}))", "The colour it starts with: \"#3584e4\", \"rgb(53,132,228)\", \"teal\".")},
+                 {{"color_changed", "property_rgba().signal_changed()", "void", "", "", false,
+                   "Another colour was picked (get_rgba() has it)."}},
+                 {"gtkmm/colordialog.h", "gdkmm/rgba.h"}, "A swatch; clicking it opens a colour dialog."});
+    c.back().setup = {"set_dialog(Gtk::ColorDialog::create());   // the dialog it opens"};
+    c.push_back({"FontDialogButton", "Gtk::FontDialogButton", "gtkmm/fontdialogbutton.h", ChildKind::None, false,
+                 {s("dialog_title", "get_dialog()->set_title({v})", "The dialog's title; empty = GTK's own."),
+                  s("font", "set_font_desc(Pango::FontDescription({v}))", "The font it starts with: \"Sans 12\"."),
+                  b("use_font", "set_use_font({v})", "Write its label in the chosen font."),
+                  b("use_size", "set_use_size({v})", "...at the chosen size.")},
+                 {{"font_changed", "property_font_desc().signal_changed()", "void", "", "", false,
+                   "Another font was picked (get_font_desc() has it)."}},
+                 {"gtkmm/fontdialog.h", "pangomm/fontdescription.h"}, "Shows a font; clicking it opens a font dialog."});
+    c.back().setup = {"set_dialog(Gtk::FontDialog::create());   // the dialog it opens"};
     c.push_back({"CheckButton", "Gtk::CheckButton", "gtkmm/checkbutton.h", ChildKind::None, false,
                  {s("label", "set_label({v})"), b("active", "set_active({v})")},
                  {{"toggled", "signal_toggled()", "void", "", "", false, "Ticked or unticked."}},

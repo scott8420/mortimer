@@ -1522,4 +1522,28 @@ class X : public ui::XUi {
         check("s022 m3 SearchEntry / ProgressBar",
               has(c, "m_find.signal_search_changed().connect(") && has(c, "m_bar.set_fraction(0.25);"), "");
     }
+
+    // ── s022 m4: the pickers ───────────────────────────────────────────────
+    {
+        using core::Value;
+        core::Form f;
+        f.name = "MainWindow";
+        core::Node cb{"ColorDialogButton", "ink", {{"rgba", Value(std::string("#ff0000"))},
+                                                   {"with_alpha", Value(false)}}, {}, {{"color_changed"}}, {}};
+        core::Node fb{"FontDialogButton", "face", {{"font", Value(std::string("Sans 12"))}}, {}, {}, {}};
+        f.root = {"Window", "main_window", {}, {}, {}, {core::Node{"Box", "body", {}, {}, {}, {cb, fb}}}};
+        const auto o = core::generate_form(f, core::derive_app("Pick"));
+        const std::string& c = o[1].content;
+        const auto dlg = c.find("m_ink.set_dialog(Gtk::ColorDialog::create());");
+        check("s022 m4: the dialog made first, then its props",
+              dlg != std::string::npos && dlg < c.find("m_ink.get_dialog()->set_with_alpha(false);") &&
+              has(c, "m_ink.set_rgba(Gdk::RGBA(\"#ff0000\"));") &&
+              has(c, "m_face.set_dialog(Gtk::FontDialog::create());") &&
+              has(c, "m_face.set_font_desc(Pango::FontDescription(\"Sans 12\"));"), "");
+        check("s022 m4: color_changed from the rgba property",
+              has(c, "m_ink.property_rgba().signal_changed().connect("), "");
+        const auto sup = core::generate_support(core::derive_app("Pick"));
+        check("s022 m4: Widgets.hpp has the dialog headers",
+              has(sup[0].content, "#include <gtkmm/colordialog.h>") && has(sup[0].content, "#include <pangomm/fontdescription.h>"), "");
+    }
 }
