@@ -46,6 +46,7 @@ struct Rec {
     std::vector<FileDef>         files;     // s005: on the kForm record only
     std::vector<ModelDef>        models;    // s006: on the kForm record only
     StringList                   keys;      // s016: on the kForm record only
+    std::string                  cls;       // s022: promoted to a class of yours ("" = plain)
     bool operator==(const Rec&) const = default;
 };
 
@@ -171,6 +172,11 @@ bool set_pack(DesignJournal& j, Design& d, const Design::Id& id, const std::stri
 // Signals: tick one (a hook), untick it, mark it required (pure virtual).
 bool tick(DesignJournal& j, Design& d, const Design::Id& id, const std::string& signal, bool on);
 bool require(DesignJournal& j, Design& d, const Design::Id& id, const std::string& signal, bool on);
+// s022 -- promote a widget to a class of yours ("MyChart"), or "" to make it
+// the plain widget again. The window itself can't be; a class another widget
+// of a different type already has is refused (one class, one base).
+bool promote(DesignJournal& j, Design& d, const Design::Id& id, const std::string& cls,
+             std::string* why = nullptr);
 
 // ── drag and drop: where a drop on a tree row lands ────────────────────────
 // A container's row has three zones (top quarter before, middle half INTO,

@@ -49,6 +49,7 @@ Node node_from(const json& j, const std::string& where) {
     Node n;
     n.type = j.value("type", "");
     n.id = j.value("id", "");
+    n.cls = j.value("class", "");   // s022
     const std::string here = where + "/" + (n.id.empty() ? "?" : n.id);
     if (j.contains("props")) n.props = map_from(j["props"], here + " props");
     if (j.contains("pack")) n.pack = map_from(j["pack"], here + " pack");
@@ -79,6 +80,7 @@ json node_to(const Node& n) {
     json j;
     j["type"] = n.type;
     j["id"] = n.id;
+    if (!n.cls.empty()) j["class"] = n.cls;   // s022
     if (!n.pack.empty()) {
         json p = json::object();
         for (const auto& [k, v] : n.pack) p[k] = value_to(v);
@@ -301,6 +303,20 @@ bool is_cpp_keyword(const std::string& s) {
         "throw", "true", "try", "typedef", "typeid", "typename", "union", "unsigned", "using",
         "virtual", "void", "volatile", "wchar_t", "while", "xor", "xor_eq"};
     return k.count(s) > 0;
+}
+
+// s022 -- a promoted widget's class lives in <ns>::widgets beside the Named<W>
+// aliases (widgets::Button ...) and include/widgets/Named.hpp, so those names
+// are taken. Everything else a C++ class may be called is fine.
+std::string class_problem(const std::string& cls) {
+    if (!is_identifier(cls) || is_cpp_keyword(cls))
+        return "\"" + cls + "\" isn't a C++ class name (letters, digits, _; not a keyword)";
+    if (cls == "Named" || cls == "unregistered_t")
+        return "\"" + cls + "\" is taken -- include/widgets/Named.hpp is the name wrapper every widget wears";
+    if (find_widget(cls))
+        return "\"" + cls + "\" is taken -- widgets::" + cls + " is the plain " + cls +
+               " (call yours My" + cls + ", Fancy" + cls + " ...)";
+    return {};
 }
 
 std::string snake(const std::string& pascal) {
@@ -721,6 +737,7 @@ std::vector<Issue> validate(const Form& f) {
             ids[n.id] = &n;
     });
 
+    std::map<std::string, const Node*> classes;   // s022: class -> its first widget
     walk(f.root, [&](const Node& n, const Node* parent) {
         const std::string where = n.id;
         const WidgetSpec* w = find_widget(n.type);
@@ -730,6 +747,17 @@ std::vector<Issue> validate(const Form& f) {
         }
         if (!parent && !w->root)
             err(where, "a form's root must be a window (ApplicationWindow or Window), not " + n.type);
+        // s022: promoted to a class of yours.
+        if (!n.cls.empty()) {
+            if (!parent)
+                err(where, "the window itself can't be promoted -- it IS the generated class; write yours in " +
+                               f.name + ".hpp");
+            else if (const auto why = class_problem(n.cls); !why.empty())
+                err(where, "class " + why);
+            else if (auto [it, fresh] = classes.emplace(n.cls, &n); !fresh && it->second->type != n.type)
+                err(where, "class " + n.cls + " is a " + it->second->type + " (" + it->second->id + ") -- " +
+                               n.id + " is a " + n.type + "; one class has one base");
+        }
         if (parent && w->root)
             err(where, n.type + " can only be a form's root");
         // A window's "visible" would SHOW it from inside build_ui() -- before

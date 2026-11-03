@@ -1014,12 +1014,16 @@ static std::string row_classes_header(const Form& f) {
         walk(row, [&](const Node& n, const Node* parent) { if (parent) ms.push_back(&n); });
         if (!ms.empty()) {
             std::size_t width = 0;
-            for (auto* m : ms) width = std::max(width, find_widget(m->type)->gtk_class.size());
+            // s022: a promoted one is the user's class (rows aren't registered, so no Named<>).
+            auto row_type = [](const Node& m) {
+                return m.cls.empty() ? find_widget(m.type)->gtk_class : "widgets::" + m.cls;
+            };
+            for (auto* m : ms) width = std::max(width, row_type(*m).size());
             h << "\n";
             std::size_t idw = 0;
             for (auto* m : ms) idw = std::max(idw, m->id.size());
             for (auto* m : ms) {
-                const std::string decl = "        " + pad(find_widget(m->type)->gtk_class, width) + " m_" + m->id + ";";
+                const std::string decl = "        " + pad(row_type(*m), width) + " m_" + m->id + ";";
                 h << (bound_field(*m).empty() ? decl : pad(decl, 8 + width + 4 + idw) + "   // shows " + bound_field(*m))
                   << "\n";
             }
@@ -1231,8 +1235,11 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
 
     // ── the header ──────────────────────────────────────────────────────────
     std::ostringstream h;
+    std::string promoted_includes;   // s022: the classes of yours this form's widgets are
+    for (const auto& [cls, type] : promoted_classes(f)) promoted_includes += "#include \"widgets/" + cls + ".hpp\"\n";
     h << header_banner(f, "The widgets and the hooks of " + f.name + ".") << "#pragma once\n"
-      << "#include \"generated/Widgets.hpp\"\n\n"
+      << "#include \"generated/Widgets.hpp\"\n"
+      << promoted_includes << "\n"
       << "#include <" << rootw->header << ">\n"
       << (f.actions.empty() ? "" : "#include <giomm/simpleactiongroup.h>\n")
       << (f.files.empty() ? "" : "#include <giomm/cancellable.h>\n")
@@ -1309,10 +1316,16 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
     }
     if (!members.empty()) {
         h << "    // ── widgets ── registry names \"" << reg << ".<id>\"\n";
+        // s022: a promoted widget is the user's class, still wearing Named<> for its name.
+        auto member_type = [](const Node& m) {
+            return m.cls.empty() ? m.type : "Named<widgets::" + m.cls + ">";
+        };
         std::size_t width = 0;
-        for (auto* m : members) width = std::max(width, m->type.size());
+        for (auto* m : members) width = std::max(width, member_type(*m).size());
         for (auto* m : members)
-            h << "    widgets::" << pad(m->type, width) << " m_" << m->id << ";\n";
+            h << "    widgets::" << pad(member_type(*m), width) << " m_" << m->id << ";"
+              << (m->cls.empty() ? "" : "   // a " + m->type + ", promoted: include/widgets/" + m->cls + ".hpp")
+              << "\n";
         h << "\n";
     }
     for (auto* m : members) {
@@ -2329,6 +2342,51 @@ std::vector<OutFile> generate_support(const AppInfo& app) {
             {"generated/Undo.hpp", fill(kUndoHpp)},
             {"generated/Undo.cpp", fill(kUndoCpp)},
             {"generated/README.md", rd.str()}};
+}
+
+std::vector<std::pair<std::string, std::string>> promoted_classes(const Form& f) {
+    std::vector<std::pair<std::string, std::string>> out;
+    walk(f.root, [&](const Node& n, const Node*) {
+        if (n.cls.empty()) return;
+        for (const auto& [c, t] : out) if (c == n.cls) return;
+        out.emplace_back(n.cls, n.type);
+    });
+    return out;
+}
+
+std::vector<OutFile> custom_widget_stubs(const std::string& cls, const std::string& type, const AppInfo& app) {
+    const WidgetSpec* w = find_widget(type);
+    if (!w) return {};
+    std::ostringstream h;
+    h << "#pragma once\n"
+      << "#include <" << w->header << ">\n\n"
+      << "// " << cls << " -- YOUR widget. Mortimer wrote this file once, because a " << type << " in\n"
+      << "// a form was promoted to " << cls << "; it will never write it again.\n"
+      << "//\n"
+      << "// Why a subclass? The designer still places, shows and edits it as a " << type << "\n"
+      << "// (its properties, signals and children all work), and the generated form\n"
+      << "// declares it as widgets::Named<widgets::" << cls << ">: Named<> gives it its\n"
+      << "// registry name, " << cls << " gives it YOUR behaviour -- drawing, state, extra\n"
+      << "// signals -- in one place instead of spread across the form's hooks.\n"
+      << "//\n"
+      << "// The one rule: keep a constructor that takes no arguments. The form builds\n"
+      << "// every widget it owns that way, then sets the properties you gave it.\n"
+      << "namespace " << app.ns << "::widgets {\n\n"
+      << "class " << cls << " : public " << w->gtk_class << " {\n"
+      << "public:\n"
+      << "    " << cls << "();\n"
+      << "};\n\n"
+      << "}  // namespace " << app.ns << "::widgets\n";
+    std::ostringstream c;
+    c << "#include \"widgets/" << cls << ".hpp\"\n\n"
+      << "namespace " << app.ns << "::widgets {\n\n"
+      << cls << "::" << cls << "() {\n"
+      << "    // Runs BEFORE the form sets this widget's properties (the form's values win),\n"
+      << "    // and before it has a parent. Set up what every " << cls << " needs here:\n"
+      << "    // a css class, a controller, a draw function, child widgets of its own.\n"
+      << "}\n\n"
+      << "}  // namespace " << app.ns << "::widgets\n";
+    return {{"include/widgets/" + cls + ".hpp", h.str()}, {"src/widgets/" + cls + ".cpp", c.str()}};
 }
 
 std::vector<OutFile> user_stubs(const Form& f, const AppInfo& app) {

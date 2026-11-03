@@ -93,6 +93,9 @@ void Shell::generate(const std::string& lead) {  // helper: the project, after a
         std::string s = (lead.empty() ? "" : lead + ". ") + "Saved and generated: " + std::to_string(r.written.size()) + " written, " +
                         std::to_string(r.unchanged.size()) + " unchanged";
         if (!r.stubs.empty()) s += ", " + std::to_string(r.stubs.size()) + " of yours started";
+        // s022: a promoted widget's class -- name it, so you know where to write it.
+        for (const auto& f : r.stubs)
+            if (f.rfind("include/widgets/", 0) == 0) s += " (" + f + ")";
         if (!r.pruned.empty()) s += ", " + std::to_string(r.pruned.size()) + " pruned";
         int level = 0;
         for (const auto& [form, issue] : r.issues)

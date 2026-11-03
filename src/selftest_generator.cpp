@@ -13,6 +13,7 @@
 #include "core/Catalog.hpp"
 #include "core/Codegen.hpp"
 #include "core/CssScope.hpp"
+#include "core/Design.hpp"
 #include "core/Form.hpp"
 #include "core/HookScan.hpp"
 #include "core/Project.hpp"
@@ -1347,5 +1348,99 @@ class X : public ui::XUi {
         { auto g = f; g.root.props.erase("remember");
           check("s016 m3: a form that doesn't remember says nothing of it",
                 !has(core::generate_form(g, core::derive_app("Cols"))[1].content, "notes.order"), ""); }
+    }
+
+    // ── s022: promote to a class of yours ─────────────────────────────────
+    {
+        using core::Value;
+        core::Form f;
+        f.name = "MainWindow";
+        core::Node chart{"Box", "chart", {}, {}, {}, {}};
+        chart.cls = "MyChart";
+        core::Node hint{"Label", "hint", {{"label", Value(std::string("hi"))}}, {}, {}, {}};
+        f.root = {"Window", "main_window", {}, {}, {}, {core::Node{"Box", "body", {}, {}, {}, {chart, hint}}}};
+        const std::string js = core::form_to_json(f);
+        check("s022 json: \"class\" on disk, round-trips",
+              has(js, "\"class\": \"MyChart\"") && core::form_from_json(js).root.children[0].children[0].cls == "MyChart" &&
+              !has(js.substr(js.find("\"hint\"")), "\"class\""), "");
+        { std::string e; for (const auto& i : core::validate(f)) if (i.error) e += i.where + ": " + i.what + "; ";
+          check("s022 validate: a promoted Box is fine", e.empty(), e); }
+        { auto g = f; g.root.cls = "Fancy";
+          check("s022 validate: the window can't be promoted", any_error_has(g, "can't be promoted"), ""); }
+        { auto g = f; g.root.children[0].children[0].cls = "Button";
+          check("s022 validate: a catalog type is taken", any_error_has(g, "widgets::Button is the plain Button"), ""); }
+        { auto g = f; g.root.children[0].children[0].cls = "Named";
+          check("s022 validate: Named is taken", any_error_has(g, "Named"), ""); }
+        { auto g = f; g.root.children[0].children[0].cls = "my chart";
+          check("s022 validate: not a class name", any_error_has(g, "isn't a C++ class name"), ""); }
+        { auto g = f; g.root.children[0].children[1].cls = "MyChart";
+          check("s022 validate: one class, one base", any_error_has(g, "one class has one base"), ""); }
+
+        const auto app = core::derive_app("Promo");
+        const auto o = core::generate_form(f, app);
+        const std::string& h = o[0].content;
+        check("s022 codegen: the member is Named<widgets::MyChart>; its header included",
+              has(h, "widgets::Named<widgets::MyChart> m_chart;") && has(h, "#include \"widgets/MyChart.hpp\"") &&
+              has(h, "widgets::Label") && has(h, " m_hint;"), "");
+        check("s022 codegen: built by name like any other", has(o[1].content, "m_chart(\"main_window.chart\")"), "");
+        const auto st = core::custom_widget_stubs("MyChart", "Box", app);
+        check("s022 stubs: a default-constructible Gtk::Box subclass in promo::widgets",
+              st.size() == 2 && st[0].path == "include/widgets/MyChart.hpp" && st[1].path == "src/widgets/MyChart.cpp" &&
+              has(st[0].content, "class MyChart : public Gtk::Box {") && has(st[0].content, "#include <gtkmm/box.h>") &&
+              has(st[0].content, "namespace promo::widgets {") && has(st[1].content, "MyChart::MyChart() {"), "");
+
+        // The verb: refused on the root and across bases; undo puts it back.
+        core::Design d;
+        core::DesignJournal j(d);
+        d.load(f);
+        std::string why;
+        check("s022 promote: the root refused",
+              !core::design::promote(j, d, d.root(), "Win", &why) && has(why, "can't be promoted"), why);
+        check("s022 promote: another base refused",
+              !core::design::promote(j, d, d.find("hint"), "MyChart", &why) && has(why, "one class has one base"), why);
+        const bool p1 = core::design::promote(j, d, d.find("hint"), "Banner");
+        check("s022 promote: a step; undo makes it plain again",
+              p1 && d.to_form().root.children[0].children[1].cls == "Banner" && j.undo().done && d.to_form().root.children[0].children[1].cls.empty(), "");
+
+        // The project: written once, CMake told, then let go.
+        const fs::path tmp = fs::temp_directory_path() / ("mortimer_s022_" + std::to_string(::getpid()));
+        fs::remove_all(tmp);
+        fs::create_directories(tmp);
+        std::string dir;
+        try { dir = core::create_workspace(app, tmp.string()); } catch (const std::exception& e) { check("s022 project", false, e.what()); }
+        if (!dir.empty()) {
+            const fs::path ad(dir);
+            const fs::path cm = ad / "CMakeLists.txt";
+            auto slurp = [](const fs::path& p) { std::ifstream in(p); std::stringstream ss; ss << in.rdbuf(); return ss.str(); };
+            check("s022 template: a new app's CMake globs src/widgets/", has(slurp(cm), "src/widgets/*.cpp"), "");
+            // An older app: the line as it was before s022.
+            { std::string t = slurp(cm);
+              const auto a = t.find("file(GLOB APP_SOURCES"), b = t.find('\n', t.find("src/widgets/*.cpp"));
+              t.replace(a, b - a, "file(GLOB APP_SOURCES CONFIGURE_DEPENDS \"${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp\")");
+              std::ofstream(cm) << t; }
+            auto mw = core::load_form((ad / "forms" / "MainWindow.mort").string());
+            mw.root.children.back().children.push_back(chart);
+            core::save_form(mw, (ad / "forms" / "MainWindow.mort").string());
+            const auto g = core::generate_project(dir);
+            const fs::path ch = ad / "include" / "widgets" / "MyChart.hpp";
+            check("s022 generate: valid; MyChart's two files written, named as yours",
+                  g.ok() && fs::exists(ch) && fs::exists(ad / "src" / "widgets" / "MyChart.cpp") &&
+                  std::count(g.stubs.begin(), g.stubs.end(), "include/widgets/MyChart.hpp") == 1,
+                  g.issues.empty() ? "" : g.issues.front().second.what);
+            check("s022 generate: an older app's CMake gains src/widgets/*.cpp, once",
+                  has(slurp(cm), "src/widgets/*.cpp") &&
+                  std::any_of(g.notes.begin(), g.notes.end(), [](const std::string& n) { return has(n, "src/widgets/*.cpp added"); }), "");
+            std::ofstream(ch, std::ios::app) << "// mine now\n";
+            const auto g2 = core::generate_project(dir);
+            check("s022 generate: then let go -- yours is never rewritten",
+                  g2.stubs.empty() && has(slurp(ch), "// mine now") && g2.notes.empty(), g2.notes.empty() ? "" : g2.notes.front());
+            // The same class, now a Label: the file says Gtk::Box -- a note, not an overwrite.
+            mw.root.children.back().children.back().type = "Label";
+            core::save_form(mw, (ad / "forms" / "MainWindow.mort").string());
+            const auto g3 = core::generate_project(dir);
+            check("s022 generate: a class whose file has another base -> a note",
+                  std::any_of(g3.notes.begin(), g3.notes.end(), [](const std::string& n) { return has(n, "doesn't mention Gtk::Label"); }), "");
+        }
+        fs::remove_all(tmp);
     }
 }

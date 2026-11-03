@@ -57,6 +57,7 @@ private:
     void section(const std::string& title, const std::string& doc = "");
     void prop_row(const std::string& type, const std::string& prop, bool pack);
     void signal_row(const std::string& type, const std::string& signal);
+    void class_row();   // s022: promote to a class of yours
     void name_row(bool form);
     void actions_rows();                                      // s003: the form's actions
     void keys_rows();                                         // s016: the shortcuts window's own rows

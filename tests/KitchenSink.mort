@@ -61,7 +61,7 @@
                     "signals": [ "row_activated", "row_selected" ],
                     "children": [
                       { "type": "Label", "id": "row_a", "props": { "label": "Alpha" } },
-                      { "type": "Box", "id": "row_b", "props": { "orientation": "horizontal", "spacing": 6, "homogeneous": false },
+                      { "type": "Box", "id": "row_b", "class": "BravoRow", "props": { "orientation": "horizontal", "spacing": 6, "homogeneous": false },
                         "children": [
                           { "type": "Image", "id": "row_b_icon", "props": { "icon_name": "starred-symbolic" } },
                           { "type": "Label", "id": "row_b_text", "props": { "label": "Bravo" } }
@@ -70,7 +70,7 @@
                 ] },
               { "type": "ScrolledWindow", "id": "table_scroller", "pack": { "name": "table", "title": "Table" },
                 "children": [
-                  { "type": "ColumnView", "id": "notes",
+                  { "type": "ColumnView", "id": "notes", "class": "NoteTable",
                     "props": { "model": "Note", "show_row_separators": true, "show_column_separators": true,
                                "reorderable": true, "editable": ["title", "count", "weight", "done"] },
                     "signals": [ "activated", "selected", "edited" ] }
@@ -96,7 +96,7 @@
                         "children": [
                           { "type": "CheckButton", "id": "task_done", "props": { "bind": "done" }, "signals": [ "toggled" ] },
                           { "type": "Image", "id": "task_icon", "props": { "bind": "title", "pixel_size": 16 } },
-                          { "type": "Label", "id": "task_title", "props": { "bind": "title", "hexpand": true, "xalign": 0 } },
+                          { "type": "Label", "id": "task_title", "class": "TaskTitle", "props": { "bind": "title", "hexpand": true, "xalign": 0 } },
                           { "type": "Label", "id": "task_count", "props": { "bind": "count", "css_classes": ["dim-label"] } },
                           { "type": "SpinButton", "id": "task_weight", "props": { "bind": "weight", "lower": 0, "upper": 100 } },
                           { "type": "Switch", "id": "task_on", "props": { "bind": "done" } },

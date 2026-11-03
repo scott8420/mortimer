@@ -43,7 +43,17 @@ struct Node {
     std::map<std::string, Value> pack;      // how it sits in its parent (slot, column, ...)
     std::vector<SignalHook> signals;
     std::vector<Node> children;
+    // s022 -- PROMOTED to a class of yours: "MyChart". The designer still shows
+    // and edits it as its `type` (props, signals, children all work), but the
+    // generated member is widgets::Named<widgets::MyChart>, and the project
+    // writes include/widgets/MyChart.hpp + src/widgets/MyChart.cpp ONCE -- a
+    // default-constructible subclass of the type's gtkmm class -- then lets go.
+    // "" = the plain widget. On disk "class", only when set.
+    std::string cls;
 };
+// s022 -- is `cls` a name a promoted widget's class may take? "" = yes, else why.
+// (A C++ class name, not a catalog type -- widgets::Button is ours -- nor Named.)
+std::string class_problem(const std::string& cls);
 
 // s003 -- an ACTION the window offers: a Gio action "win.<gio name>" (the
 // name with '_' as '-', GIO's spelling), a hook on_action_<name>() that runs

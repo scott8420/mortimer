@@ -35,7 +35,9 @@ void Design::load(const Form& f) {
     put(kForm, form);
     std::function<void(const Node&, const Id&, double)> add = [&](const Node& n, const Id& parent, double pos) {
         const Id key = fresh_key();
-        put(key, Rec{n.type, n.id, parent, pos, n.props, n.pack, n.signals, {}});
+        Rec r{n.type, n.id, parent, pos, n.props, n.pack, n.signals, {}};
+        r.cls = n.cls;   // s022
+        put(key, r);
         double p = 1;
         for (const auto& c : n.children) add(c, key, p++);
     };
@@ -48,6 +50,7 @@ Form Design::to_form() const {
     std::function<Node(const Id&)> build = [&](const Id& key) {
         const Rec& rec = m_recs.at(key);
         Node n{rec.type, rec.name, rec.props, rec.pack, rec.signals, {}};
+        n.cls = rec.cls;   // s022
         for (const auto& c : children(key)) n.children.push_back(build(c));
         return n;
     };
@@ -715,6 +718,31 @@ bool tick(DesignJournal& j, Design& d, const Design::Id& id, const std::string& 
                  [&] { d.put(id, *r); });
 }
 
+bool promote(DesignJournal& j, Design& d, const Design::Id& id, const std::string& cls,
+             std::string* why) {
+    auto r = d.get(id);
+    if (!r || id == Design::kForm) { say(why, "nothing selected"); return false; }
+    if (r->cls == cls) return false;
+    if (r->parent.empty()) {
+        say(why, "the window itself can't be promoted -- it IS the generated class");
+        return false;
+    }
+    if (!cls.empty()) {
+        if (const auto p = class_problem(cls); !p.empty()) { say(why, p); return false; }
+        for (const auto& k : d.all()) {
+            const auto o = *d.get(k);
+            if (k != id && o.cls == cls && o.type != r->type) {
+                say(why, cls + " is a " + o.type + " (" + o.name + ") -- one class has one base");
+                return false;
+            }
+        }
+    }
+    const std::string label = cls.empty() ? "Unpromote " + curly(r->name)
+                                          : "Promote " + curly(r->name) + " to " + cls;
+    r->cls = cls;
+    return j.run(label, {id}, [&] { d.put(id, *r); });
+}
+
 bool require(DesignJournal& j, Design& d, const Design::Id& id, const std::string& signal, bool on) {
     auto r = d.get(id);
     if (!r) return false;
@@ -1162,6 +1190,7 @@ const std::vector<Verb>& verbs() {
         {"move_down",    [](DesignJournal& j, Design& d) { move_down(j, d, d.find("ok")); }},
         {"rename",       [](DesignJournal& j, Design& d) { rename(j, d, d.find("pages"), "book"); }},
         {"rename_form",  [](DesignJournal& j, Design& d) { rename_form(j, d, "Renamed"); }},
+        {"promote",      [](DesignJournal& j, Design& d) { promote(j, d, d.find("hint"), "Banner"); }},
         {"set_prop",     [](DesignJournal& j, Design& d) { set_prop(j, d, d.find("ok"), "label", Value(S("Go"))); }},
         {"clear_prop",   [](DesignJournal& j, Design& d) { set_prop(j, d, d.find("ok"), "label", std::nullopt); }},
         {"set_pack",     [](DesignJournal& j, Design& d) { set_pack(j, d, d.find("cell"), "column", Value(std::int64_t{2})); }},

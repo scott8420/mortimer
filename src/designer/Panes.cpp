@@ -249,7 +249,7 @@ void TreePane::add_rows(const core::Design& d, const std::string& key, int depth
     auto* name = Gtk::make_managed<Gtk::Label>(r.name);
     name->set_xalign(0);
     line->append(*name);
-    std::string what = r.type;
+    std::string what = r.cls.empty() ? r.type : r.cls + " : " + r.type;   // s022: promoted
     if (const auto it = r.pack.find("slot"); it != r.pack.end() && std::holds_alternative<std::string>(it->second))
         what += " · " + std::get<std::string>(it->second);
     if (!r.signals.empty()) what += " · " + std::to_string(r.signals.size()) + " hook" + (r.signals.size() > 1 ? "s" : "");

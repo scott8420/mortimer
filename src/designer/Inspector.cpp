@@ -202,6 +202,13 @@ void Inspector::rebuild() {
     const bool is_root = r->parent.empty();
     section("Name", "The C++ name: member m_<name>, hooks on_<name>_<signal>.");
     name_row(false);
+    if (!is_root) {
+        section("Class", "Promote it to a class of yours (MyChart): still a " + r->type +
+                         " here, but the form declares widgets::Named<widgets::MyChart>, and Save "
+                         "writes include/widgets/MyChart.hpp + src/widgets/MyChart.cpp once -- then "
+                         "they're yours. Empty = the plain " + r->type + ".");
+        class_row();
+    }
     if (is_root) {
         section("Form", "The class this form becomes: <Name>Ui (generated) and <Name> (yours). "
                         "In a project, Save renames its files too -- your code follows; the originals go to removed/.");
@@ -308,6 +315,41 @@ void Inspector::name_row(bool form) {
         if (e->has_focus()) return;
         const std::string want = form ? m_d.form_name() : r.name;
         if (e->get_text().raw() != want) e->set_text(want);
+        why->set_visible(false);
+    }});
+}
+
+void Inspector::class_row() {
+    auto* e = Gtk::make_managed<Gtk::Entry>();
+    e->set_hexpand(true);
+    e->set_name("designer.inspector.class");
+    e->set_placeholder_text("(the plain widget)");
+    auto* why = Gtk::make_managed<Gtk::Label>();
+    why->add_css_class("why");
+    why->set_xalign(0);
+    why->set_wrap(true);
+    why->set_visible(false);
+    m_grid->attach(*e, 0, m_line++, 3, 1);
+    m_grid->attach(*why, 0, m_line++, 3, 1);
+    // Commits on Enter / leaving it, like the name -- bound to THIS row's widget.
+    auto commit = [this, e, why, key = m_key] {
+        if (m_painting || m_rebuilding) return;
+        const std::string text = e->get_text();
+        const auto r = m_d.get(key);
+        if (!r || text == r->cls) return;
+        std::string err;
+        const bool ok = core::design::promote(m_j, m_d, key, text, &err);
+        why->set_text(err);
+        why->set_visible(!ok && !err.empty());
+        if (!ok && !err.empty()) m_said.emit(err);
+    };
+    e->signal_activate().connect(commit);
+    auto focus = Gtk::EventControllerFocus::create();
+    focus->signal_leave().connect(commit);
+    e->add_controller(focus);
+    m_rows.push_back({[e, why](const core::Rec& r) {
+        if (e->has_focus()) return;
+        if (e->get_text().raw() != r.cls) e->set_text(r.cls);
         why->set_visible(false);
     }});
 }

@@ -1,4 +1,5 @@
 #include "core/Project.hpp"
+#include "core/Catalog.hpp"
 #include "core/Templates.hpp"
 
 #include "json.hpp"
@@ -134,6 +135,28 @@ std::string render_tokens(const std::string& text, const AppInfo& app) {
 
 // ── generate ───────────────────────────────────────────────────────────────
 
+// s022 -- an app made before s022 globs src/*.cpp only; its first promoted
+// widget adds src/widgets/*.cpp to that line, once. A CMakeLists you've
+// changed so the line isn't there is yours: the note says what to add.
+static void widgets_cmake(const fs::path& root, GenerateResult& r) {
+    const fs::path cm = root / "CMakeLists.txt";
+    if (!fs::exists(cm)) return;
+    std::string text = read_file(cm);
+    if (text.find("src/widgets/*.cpp") != std::string::npos) return;
+    const std::string line = "file(GLOB APP_SOURCES CONFIGURE_DEPENDS \"${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp\")";
+    const auto at = text.find(line);
+    if (at == std::string::npos) {
+        r.notes.push_back("CMakeLists.txt: add \"${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/*.cpp\" to the app's "
+                          "sources -- your promoted widgets live there");
+        return;
+    }
+    text.replace(at, line.size(),
+                 "file(GLOB APP_SOURCES CONFIGURE_DEPENDS \"${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp\"\n"
+                 "                                        \"${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/*.cpp\")");
+    write_if_changed(cm, text);
+    r.notes.push_back("CMakeLists.txt: src/widgets/*.cpp added to the app's sources (your promoted widgets)");
+}
+
 GenerateResult generate_project(const std::string& app_dir) {
     const fs::path root(app_dir);
     const Project pr = load_project(app_dir);
@@ -211,6 +234,23 @@ GenerateResult generate_project(const std::string& app_dir) {
         } else if (!fs::exists(uh) || !fs::exists(uc)) {
             r.notes.push_back(stem + ": only one of include/" + stem + ".hpp and src/" + stem +
                               ".cpp exists -- not writing the other (it may have been renamed)");
+        }
+
+        // s022: a promoted widget's class -- written ONCE (both files missing), then yours.
+        for (const auto& [cls, type] : promoted_classes(form)) {
+            const fs::path ch = root / "include" / "widgets" / (cls + ".hpp");
+            const fs::path cc = root / "src" / "widgets" / (cls + ".cpp");
+            if (!fs::exists(ch) && !fs::exists(cc)) {
+                for (const auto& f : custom_widget_stubs(cls, type, pr.app)) {
+                    write_if_changed(root / f.path, f.content);
+                    r.stubs.push_back(f.path);
+                }
+                widgets_cmake(root, r);
+            } else if (const WidgetSpec* w = find_widget(type);
+                       w && fs::exists(ch) && read_file(ch).find(w->gtk_class) == std::string::npos) {
+                r.notes.push_back(stem + ": include/widgets/" + cls + ".hpp doesn't mention " + w->gtk_class +
+                                  " -- the form has " + cls + " as a " + type + "; its base must be one");
+            }
         }
 
         const fs::path manifest = root / "generated" / (stem + ".hooks.json");

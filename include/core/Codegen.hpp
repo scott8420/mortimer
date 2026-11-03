@@ -70,6 +70,14 @@ std::vector<OutFile> generate_support(const AppInfo& app);
 // hook the form has today.
 std::vector<OutFile> user_stubs(const Form& f, const AppInfo& app);
 
+// s022 -- promoted widgets. The classes a form names, each with the type of the
+// first widget that names it (its base): "MyChart" -> "Box".
+std::vector<std::pair<std::string, std::string>> promoted_classes(const Form& f);
+// The two files of a promoted class -- include/widgets/<Cls>.hpp and
+// src/widgets/<Cls>.cpp -- a default-constructible subclass of the type's gtkmm
+// class, in <ns>::widgets. Written ONCE by the project, then yours.
+std::vector<OutFile> custom_widget_stubs(const std::string& cls, const std::string& type, const AppInfo& app);
+
 // The pieces a hooks report offers to paste, for one hook.
 std::string override_decl(const Hook& h);                 // "    void on_x() override;"
 std::string override_def(const Hook& h, const std::string& cls);  // the empty body

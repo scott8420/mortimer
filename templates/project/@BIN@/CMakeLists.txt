@@ -61,7 +61,9 @@ add_custom_command(
     VERBATIM)
 
 # ── @BIN@ -- the app ─────────────────────────────────────────────────────────
-file(GLOB APP_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
+# src/widgets/: your promoted widgets' classes (Mortimer writes each one once).
+file(GLOB APP_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
+                                        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/*.cpp")
 list(REMOVE_ITEM APP_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/selftest.cpp")
 file(GLOB GENERATED_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/generated/*.cpp")
 add_executable(@BIN@ ${RES_C} ${APP_SOURCES} ${GENERATED_SOURCES})

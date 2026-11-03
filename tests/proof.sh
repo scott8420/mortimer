@@ -61,6 +61,11 @@ check "add an icon"             "$GEN" add icon "$WORK/star-symbolic.svg" .
 check "add an image"            "$GEN" add image "$WORK/cover.svg" .
 check "add a data file"         "$GEN" add data "$HERE/README.md" .
 check "add the stylesheet"      "$GEN" add stylesheet .
+# s022: three promoted widgets -- a ColumnView (NoteTable), a ListBox row's Box
+# (BravoRow), a Label inside a ListView's row (TaskTitle): each class written once.
+check "promoted: NoteTable written"  test -f include/widgets/NoteTable.hpp -a -f src/widgets/NoteTable.cpp
+check "promoted: the member"         grep -q "widgets::Named<widgets::NoteTable> m_notes;" generated/KitchenSinkUi.hpp
+check "promoted: in a row, plain"    grep -q "widgets::TaskTitle .*m_task_title;" generated/KitchenSinkUi.hpp
 check "configure"               cmake -B build
 check "builds (every widget, property, signal)" build
 check "selftest"                ./build/proofapp_selftest
