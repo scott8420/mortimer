@@ -879,6 +879,127 @@ Design::Id survivor(const Design& d, const std::vector<Design::Id>& going) {
     return d.root();
 }
 
+std::string join_keys(const std::vector<Design::Id>& ids) {
+    std::string out;
+    for (const auto& k : ids) out += (out.empty() ? "" : ",") + k;
+    return out;
+}
+
+std::vector<Design::Id> split_keys(const std::string& s) {
+    std::vector<Design::Id> out;
+    std::size_t a = 0;
+    while (a <= s.size()) {
+        const std::size_t b = std::min(s.find(',', a), s.size());
+        if (b > a) out.push_back(s.substr(a, b - a));
+        a = b + 1;
+    }
+    return out;
+}
+
+namespace {
+// The new records for a move of several, or nullopt (and why). Placed in a
+// scratch copy one at a time, so each one's packing sees the ones before it.
+std::optional<std::vector<std::pair<Design::Id, Rec>>>
+plan_move(const Design& d, const std::vector<Design::Id>& tops, const Design::Id& parent, int index,
+          std::string* why) {
+    if (tops.empty()) { say(why, "nothing selected"); return std::nullopt; }
+    if (!d.get(parent) || parent == Design::kForm) { say(why, "nothing to put them in"); return std::nullopt; }
+    for (const auto& t : tops)
+        if (d.is_under(parent, t)) { say(why, "a widget can't go inside itself"); return std::nullopt; }
+    // Between which two staying siblings they go: positions spread evenly.
+    std::vector<Design::Id> stay = d.children(parent);
+    std::erase_if(stay, [&](const Design::Id& k) { return std::find(tops.begin(), tops.end(), k) != tops.end(); });
+    const auto n = static_cast<double>(tops.size());
+    const std::size_t at = (index < 0 || static_cast<std::size_t>(index) > stay.size()) ? stay.size()
+                                                                                        : static_cast<std::size_t>(index);
+    double lo = 0, hi = n + 1;
+    if (!stay.empty()) {
+        if (at == 0)               { hi = d.get(stay.front())->pos; lo = hi - (n + 1); }
+        else if (at == stay.size()) { lo = d.get(stay.back())->pos; hi = lo + n + 1; }
+        else                        { lo = d.get(stay[at - 1])->pos; hi = d.get(stay[at])->pos; }
+    }
+    Design s = d;          // scratch: no door, no repaint
+    s.set_door({});
+    s.set_on_change({});
+    std::vector<std::pair<Design::Id, Rec>> out;
+    for (std::size_t k = 0; k < tops.size(); ++k) {
+        Rec r = *s.get(tops[k]);
+        if (r.parent != parent) {
+            std::map<std::string, Value> pack;
+            if (auto no = can_hold(s, parent, r.type, &pack, tops[k]); !no.empty()) {
+                say(why, r.name + ": " + no);
+                return std::nullopt;
+            }
+            r.pack = std::move(pack);
+        }
+        r.parent = parent;
+        r.pos = lo + (hi - lo) * static_cast<double>(k + 1) / (n + 1);
+        s.put(tops[k], r);
+        out.emplace_back(tops[k], r);
+    }
+    return out;
+}
+}  // namespace
+
+bool move_many(DesignJournal& j, Design& d, const std::vector<Design::Id>& ids,
+               const Design::Id& parent, int index, std::string* why) {
+    const auto tops = top_level(d, ids);
+    if (tops.size() == 1) return move(j, d, tops.front(), parent, index, why);
+    const auto plan = plan_move(d, tops, parent, index, why);
+    if (!plan) return false;
+    return j.run("Move " + std::to_string(tops.size()) + " widgets", tops, [&] {
+        for (const auto& [id, r] : *plan) d.put(id, r);
+    });
+}
+
+Landing landing_many(const Design& d, const std::vector<Design::Id>& moving, const Design::Id& target, Zone z) {
+    Landing out;
+    const auto tops = top_level(d, moving);
+    const auto t = d.get(target);
+    if (!t || target == Design::kForm || tops.empty()) { out.why = "nowhere to drop"; return out; }
+    for (const auto& m : tops) {
+        if (target == m) { out.why = "that's where they are"; return out; }
+        if (d.is_under(target, m)) { out.why = "a widget can't go inside itself"; return out; }
+    }
+    Design::Id parent;
+    int index = -1;
+    if (z == Zone::Inside) parent = target;
+    else {
+        if (t->parent.empty()) { out.why = "nothing goes beside the window"; return out; }
+        parent = t->parent;
+        auto sib = d.children(parent);
+        std::erase_if(sib, [&](const Design::Id& k) { return std::find(tops.begin(), tops.end(), k) != tops.end(); });
+        for (std::size_t i = 0; i < sib.size(); ++i)
+            if (sib[i] == target) index = static_cast<int>(i) + (z == Zone::After ? 1 : 0);
+    }
+    if (!plan_move(d, tops, parent, index, &out.why)) return out;
+    out.parent = parent;
+    out.index = index;
+    out.why.clear();
+    return out;
+}
+
+Landing landing_at_many(const Design& d, const std::vector<Design::Id>& moving, const Design::Id& target,
+                        double pos, int extent, Zone* used) {
+    const auto t = d.get(target);
+    const WidgetSpec* w = t ? find_widget(t->type) : nullptr;
+    const bool container = w && w->children != ChildKind::None;
+    const bool root = !t || t->parent.empty();
+    const Zone z = zone_at(pos, extent, container, root);
+    Landing at = landing_many(d, moving, target, z);
+    if (!at.parent.empty() || at.why.find("inside itself") != std::string::npos ||
+        at.why.find("where they are") != std::string::npos) {
+        if (used) *used = z;
+        return at;
+    }
+    // Where the pointer says refused them: into, else after (landing_on's way).
+    Landing in = landing_many(d, moving, target, Zone::Inside);
+    if (!in.parent.empty() || root) { if (used) *used = Zone::Inside; return in.parent.empty() ? at : in; }
+    Landing after = landing_many(d, moving, target, Zone::After);
+    if (used) *used = Zone::After;
+    return after.parent.empty() ? at : after;
+}
+
 Design::Id neighbour(const Design& d, const Design::Id& id) {
     const auto r = d.get(id);
     if (!r) return {};

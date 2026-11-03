@@ -85,6 +85,8 @@ private:
     Gtk::Widget*        m_drop_marked = nullptr;
     Gtk::Widget*        m_line_marked = nullptr;   // s017 m2: wears the before / after line
     std::string         m_line_class;
+    std::vector<std::string> m_selection;    // s019: what show() was given, primary first
+    std::string         m_pending;           // a press on one of several: pick at release
     std::string         m_drag_key;          // s017: the widget a canvas drag carries
     double              m_drag_x = 0, m_drag_y = 0;   // where it was grabbed (stage coords)
     sigc::signal<void(const std::string&, const std::string&, int)> m_drop;

@@ -450,6 +450,15 @@ void Shell::on_drop(const std::string& payload, const std::string& parent, int i
         m_journal.reselect({made});
     } else if (payload.rfind("move:", 0) == 0) {
         const std::string key = payload.substr(5);
+        if (key.find(',') != std::string::npos) {   // s019: several, one step; the selection stays
+            if (!core::design::move_many(m_journal, m_design, core::design::split_keys(key), parent, index, &why)) {
+                if (!why.empty()) say("Can't drop there: " + why, 2);
+                return;
+            }
+            m_journal.reselect(m_sels);
+            m_keys_to_tree = true;
+            return;
+        }
         if (!core::design::move(m_journal, m_design, key, parent, index, &why)) {
             if (!why.empty()) say("Can't drop there: " + why, 2);
             return;

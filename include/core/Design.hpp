@@ -225,6 +225,23 @@ bool remove_many(DesignJournal& j, Design& d, const std::vector<Design::Id>& ids
 // stays, else the nearest ancestor that stays.
 Design::Id survivor(const Design& d, const std::vector<Design::Id>& going);
 
+// ── s019: a drag that carries several ────────────────────────────────────────
+// The payload of a several-at-once drag: "move:n3,n7" -- the keys, comma-joined.
+std::string join_keys(const std::vector<Design::Id>& ids);
+std::vector<Design::Id> split_keys(const std::string& s);
+// Move them all to (parent, index) as ONE step ("Move 3 widgets"), in the
+// tree's order, side by side; `index` counts the parent's children WITHOUT the
+// moving ones. A widget inside another moving one rides along with it. All or
+// nothing: each is packed in turn on a scratch copy first (a Paned's second
+// slot, a Grid's next row see the ones placed before), and one refusal refuses
+// the lot. One alone is plain `move`.
+bool move_many(DesignJournal& j, Design& d, const std::vector<Design::Id>& ids,
+               const Design::Id& parent, int index, std::string* why = nullptr);
+// Where a several-at-once drop lands: `landing` / `landing_at` for a group.
+Landing landing_many(const Design& d, const std::vector<Design::Id>& moving, const Design::Id& target, Zone z);
+Landing landing_at_many(const Design& d, const std::vector<Design::Id>& moving, const Design::Id& target,
+                        double pos, int extent, Zone* used = nullptr);
+
 // Who takes the selection when `id` goes: next sibling, else previous, else parent.
 Design::Id neighbour(const Design& d, const Design::Id& id);
 

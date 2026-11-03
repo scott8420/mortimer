@@ -101,6 +101,15 @@ Canvas::Canvas()
         on_press(n, x, y, g->get_current_event_state());
         g->set_state(Gtk::EventSequenceState::CLAIMED);
     });
+    // s019: a plain press on one of several selected waits for the release --
+    // it may be the start of a drag that carries them all. Released without a
+    // drag: it was a click, and it picks just that one.
+    click->signal_released().connect([this](int, double, double) {
+        if (m_pending.empty()) return;
+        const std::string key = m_pending;
+        m_pending.clear();
+        m_pick.emit(key, 0);
+    });
     m_stage.add_controller(click);
 
     // s017: drag FROM the canvas -- press a widget where you see it, move it.
@@ -122,11 +131,15 @@ Canvas::Canvas()
         const auto r = (m_d && !key.empty()) ? m_d->get(key) : std::nullopt;
         if (!r || r->parent.empty()) return {};   // nothing, or the window: no drag
         m_drag_key = key;
+        m_pending.clear();   // a drag, not a click
         m_drag_x = x;
         m_drag_y = y;
         Glib::Value<Glib::ustring> v;
         v.init(v.value_type());
-        v.set("move:" + key);
+        // s019: one of several selected carries them all (the primary first).
+        const bool several = m_selection.size() > 1 &&
+                             std::find(m_selection.begin(), m_selection.end(), key) != m_selection.end();
+        v.set("move:" + (several ? core::design::join_keys(m_selection) : key));
         if (auto lg = log::get(log::Area::Canvas)) lg->debug("drag {}", key);
         return Gdk::ContentProvider::create(v);
     }, false);
@@ -159,8 +172,9 @@ Canvas::Canvas()
         const bool add = s.rfind("add:", 0) == 0;
         if (!add && s.rfind("move:", 0) != 0) return none;
         const std::string what = s.substr(add ? 4 : 5);
+        const auto many = add ? std::vector<std::string>{} : core::design::split_keys(what);
         std::string type = what;
-        if (!add) {
+        if (!add && many.size() == 1) {
             const auto m = m_d->get(what);
             if (!m) return none;
             type = m->type;
@@ -168,7 +182,7 @@ Canvas::Canvas()
         const std::string key = key_at(x, y);
         if (key.empty()) return none;
         // Let go where it started (a drag that went nowhere): nothing to say.
-        if (!add && key == what) { none.why.clear(); return none; }
+        if (!add && std::find(many.begin(), many.end(), key) != many.end()) { none.why.clear(); return none; }
         double pos = 0;
         int extent = 0;
         bool across = false;   // the parent lays out left-to-right
@@ -183,7 +197,8 @@ Canvas::Canvas()
             }
         }
         core::design::Zone z = core::design::Zone::Inside;
-        auto at = core::design::landing_at(*m_d, type, add ? "" : what, key, pos, extent, &z);
+        auto at = many.size() > 1 ? core::design::landing_at_many(*m_d, many, key, pos, extent, &z)
+                                  : core::design::landing_at(*m_d, type, add ? "" : what, key, pos, extent, &z);
         if (!at.parent.empty()) {
             set_drop_mark(at.parent);
             if (z != core::design::Zone::Inside) set_drop_line(key, z == core::design::Zone::Before, across);
@@ -259,11 +274,19 @@ void Canvas::on_press(int, double x, double y, Gdk::ModifierType state) {
     const int how = (state & Gdk::ModifierType::CONTROL_MASK) == Gdk::ModifierType::CONTROL_MASK ? 1
                   : (state & Gdk::ModifierType::SHIFT_MASK) == Gdk::ModifierType::SHIFT_MASK     ? 2 : 0;
     if (auto lg = log::get(log::Area::Canvas)) lg->debug("pick {} ({})", key, how);
+    m_pending.clear();
+    if (how == 0 && m_selection.size() > 1 &&
+        std::find(m_selection.begin(), m_selection.end(), key) != m_selection.end()) {
+        m_pending = key;   // s019: decided at release (a click) or by the drag
+        return;
+    }
     m_pick.emit(key, how);
 }
 
 void Canvas::show(const core::Design& d, const std::string& sel, const std::vector<std::string>& also) {
     m_design = &d;
+    m_selection.assign(1, sel);
+    m_selection.insert(m_selection.end(), also.begin(), also.end());
     // Remember which page each Stack showed, so a rebuild doesn't flip it back.
     for (const auto& [key, w] : m_widgets)
         if (auto* st = dynamic_cast<Gtk::Stack*>(w))

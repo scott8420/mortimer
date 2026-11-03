@@ -11,6 +11,7 @@
 #include <gtkmm/droptarget.h>
 #include <gtkmm/gestureclick.h>
 #include <algorithm>
+#include <functional>
 #include <gtkmm/widgetpaintable.h>
 #include <gdkmm/contentprovider.h>
 
@@ -53,7 +54,7 @@ std::optional<Payload> parse_payload(const std::string& s) {
 namespace {
 // A drag source that carries one string (the payload). The drag icon is a
 // picture of the widget it started on (else GTK draws the payload text).
-Glib::RefPtr<Gtk::DragSource> string_source(const std::string& payload) {
+Glib::RefPtr<Gtk::DragSource> string_source(std::function<std::string()> payload) {
     auto src = Gtk::DragSource::create();
     src->set_actions(Gdk::DragAction::COPY | Gdk::DragAction::MOVE);
     src->signal_drag_begin().connect([s = src.get()](const Glib::RefPtr<Gdk::Drag>&) {
@@ -62,7 +63,7 @@ Glib::RefPtr<Gtk::DragSource> string_source(const std::string& payload) {
     src->signal_prepare().connect([payload](double, double) {
         Glib::Value<Glib::ustring> v;
         v.init(v.value_type());
-        v.set(payload);
+        v.set(payload());
         return Gdk::ContentProvider::create(v);
     }, false);
     return src;
@@ -116,7 +117,7 @@ Palette::Palette()
         b->set_tooltip_text(w.doc);
         b->set_name("designer.palette." + w.type);
         b->signal_clicked().connect([this, t = w.type] { m_add.emit(t); });
-        b->add_controller(string_source("add:" + w.type));   // ...or drag it where it goes
+        b->add_controller(string_source([p = "add:" + w.type] { return p; }));   // ...or drag it where it goes
         m_buttons[w.type] = b;
         m_docs[w.type] = w.doc;
         flow->append(*b);
@@ -272,7 +273,15 @@ void TreePane::add_rows(const core::Design& d, const std::string& key, int depth
 }
 
 void TreePane::make_draggable(Gtk::Widget& row, const std::string& key) {
-    row.add_controller(string_source("move:" + key));
+    // s019: a row that is one of several selected carries them all -- read at
+    // drag time, the selection may have grown since the row was built.
+    row.add_controller(string_source([this, key] {
+        std::vector<std::string> sel{m_sel};
+        sel.insert(sel.end(), m_also.begin(), m_also.end());
+        if (sel.size() > 1 && std::find(sel.begin(), sel.end(), key) != sel.end())
+            return "move:" + core::design::join_keys(sel);
+        return "move:" + key;
+    }));
 }
 
 core::design::Landing TreePane::resolve(const Payload& p, const std::string& key, double y, int height) const {
@@ -280,6 +289,12 @@ core::design::Landing TreePane::resolve(const Payload& p, const std::string& key
     if (!m_d) return none;
     const auto t = m_d->get(key);
     if (!t) return none;
+    if (!p.add && p.what.find(',') != std::string::npos) {   // s019: several
+        const auto many = core::design::split_keys(p.what);
+        const auto* tw = core::find_widget(t->type);
+        const bool cont = tw && tw->children != core::ChildKind::None;
+        return core::design::landing_many(*m_d, many, key, core::design::zone_at(y, height, cont, t->parent.empty()));
+    }
     std::string type = p.what;
     if (!p.add) {
         const auto m = m_d->get(p.what);

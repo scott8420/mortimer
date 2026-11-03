@@ -558,6 +558,48 @@ void selftest_design(const Check& check_) {
               !dz::remove_many(f.j, f.d, {root}, &why) && why.find("window") != std::string::npos, why);
     }
 
+    // ── s019 m1: a drag that carries several ──────────────────────────────────
+    {
+        Fix f;
+        namespace dz = core::design;
+        using core::design::Zone;
+        const auto ok = f.d.find("ok"), cancel = f.d.find("cancel"), hint = f.d.find("hint"),
+                   body = f.d.find("body"), grid = f.d.find("grid"), cell = f.d.find("cell"),
+                   pages = f.d.find("pages"), side = f.d.find("side");
+        check("keys: join / split", dz::split_keys(dz::join_keys({ok, hint})) == std::vector<std::string>{ok, hint} &&
+                                    dz::split_keys("a,,b,") == std::vector<std::string>{"a", "b"});
+        // body: ok, cancel, hint, side, pages, grid. ok + hint after grid.
+        auto l = dz::landing_many(f.d, {hint, ok}, grid, Zone::After);
+        check("landing_many: after the last -> index counted without them", l.parent == body && l.index == 4,
+              std::to_string(l.index) + " " + l.why);
+        l = dz::landing_many(f.d, {ok, grid}, cell, Zone::Before);
+        check("landing_many: into one of their own -> refused", l.parent.empty() && l.why.find("itself") != std::string::npos, l.why);
+        l = dz::landing_many(f.d, {ok, hint}, hint, Zone::Before);
+        check("landing_many: onto one of them -> refused", l.parent.empty());
+        std::string why;
+        check("move_many: ok + hint to the end, one step",
+              dz::move_many(f.j, f.d, {hint, ok}, body, 4, &why), why);
+        check("move_many: their order kept, side by side",
+              f.d.children(body) == std::vector<std::string>{cancel, side, pages, grid, ok, hint});
+        check("move_many: the step is named", f.j.undo_label() == "Move 2 widgets", f.j.undo_label());
+        f.j.undo();
+        check("move_many: one undo puts both back",
+              f.d.children(body) == std::vector<std::string>{ok, cancel, hint, side, pages, grid});
+        check("move_many: into a Grid, each packed in turn (next rows)",
+              dz::move_many(f.j, f.d, {ok, cancel}, grid, -1, &why) && f.d.get(ok)->parent == grid &&
+              f.d.get(cancel)->parent == grid && f.d.get(ok)->pack != f.d.get(cancel)->pack, why);
+        f.j.undo();
+        // A Paned holds two: start + end. Three refused, all or nothing.
+        const auto paned = dz::add(f.j, f.d, "Paned", body, -1);
+        const auto before = f.d.children(body);
+        check("move_many: more than a Paned holds -> refused, nothing moved",
+              !dz::move_many(f.j, f.d, {ok, cancel, hint}, paned, -1, &why) && f.d.children(body) == before, why);
+        l = dz::landing_at_many(f.d, {ok, cancel}, hint, 35, 40);
+        check("landing_at_many: a leaf's second half -> after it", l.parent == body && l.index == 1,
+              std::to_string(l.index));
+        (void)pages;
+    }
+
     // ── s002 m3: the window's project awareness ─────────────────────────────
     {
         const fs::path tmp = fs::temp_directory_path() / "mortimer_design_selftest";
