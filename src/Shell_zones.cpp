@@ -147,6 +147,7 @@ Glib::RefPtr<Gio::Menu> Shell::build_menu() {  // zone: hamburger model
     menu->append_section(widget);
 
     auto app = Gio::Menu::create();
+    app->append("Help", "win.help");   // s024 m6: the user guide (F1)
     app->append("Keyboard Shortcuts", "win.shortcuts");
     app->append("Dump Widget Registry", "win.dump-registry");
     app->append("About Mortimer", "win.about");

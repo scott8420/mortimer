@@ -10,6 +10,7 @@
 #include "core/Catalog.hpp"
 #include "core/Project.hpp"
 #include "core/UiFile.hpp"
+#include "core/Help.hpp"
 #include "core/Resources.hpp"
 
 #include <filesystem>
@@ -35,6 +36,7 @@ int usage() {
         "  mortimer-gen import-ui FILE.ui [Name] [APP_DIR]    a .ui as a new form of the project (Name: from the file)\n"
         "  mortimer-gen import-ui FILE.ui --to OUT.mort       ...or as a loose form\n"
         "  mortimer-gen catalog [Type]                        widgets, properties, signals\n"
+        "  mortimer-gen help [page or words]                  the user guide (the designer's F1, too)\n"
         "  mortimer-gen resources [APP_DIR]                   the bundle: kind, file, what code names\n"
         "  mortimer-gen add icon|image|data FILE [APP_DIR]    copy into resources/ and bundle it\n"
         "  mortimer-gen add stylesheet [APP_DIR]              resources/<bin>.css, loaded for every window\n"
@@ -157,6 +159,25 @@ int main(int argc, char** argv) {
         if (cmd == "generate") return cmd_generate(a.size() > 1 ? a[1] : ".");
         if (cmd == "hooks") {
             print_hooks(core::hook_reports(a.size() > 1 ? a[1] : "."));
+            return 0;
+        }
+        if (cmd == "help") {   // s024 m6: the user guide, the same pages as the designer's Help
+            const auto& pages = core::help_pages();
+            std::string q;
+            for (std::size_t i = 1; i < a.size(); ++i) q += (i > 1 ? " " : "") + a[i];
+            if (q.empty()) {
+                std::cout << "Mortimer help -- mortimer-gen help <page or words>\n\n";
+                for (const auto& p : pages)
+                    std::cout << "  " << std::string(p.file).substr(0, 2) << "  " << core::help_title(p) << "\n";
+                return 0;
+            }
+            const auto hits = core::help_search(q);
+            if (hits.empty()) { std::cout << "Nothing in the guide mentions \"" << q << "\".\n"; return 1; }
+            if (hits.size() == 1 || hits[0].hits >= 1000) { std::cout << pages[hits[0].page].text; return 0; }
+            std::cout << "Pages that mention \"" << q << "\" (mortimer-gen help <number> to read one):\n\n";
+            for (const auto& h : hits)
+                std::cout << "  " << std::string(pages[h.page].file).substr(0, 2) << "  " << core::help_title(pages[h.page])
+                          << "  (" << h.hits << ")\n";
             return 0;
         }
         if (cmd == "import-ui") {   // s024 m4

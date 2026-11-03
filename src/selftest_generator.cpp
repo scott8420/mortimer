@@ -10,6 +10,8 @@
 // tests/KitchenSink.mort (or the starter form). proof.sh compiles that form, so
 // an entry added here without being exercised fails HERE, and an entry spelled
 // wrong fails THERE. (CANON: a claim isn't a fact until a consumer exercises it.)
+#include "core/Shortcuts.hpp"
+#include "core/Help.hpp"
 #include "core/UiFile.hpp"
 #include "core/Catalog.hpp"
 #include "core/Codegen.hpp"
@@ -1741,5 +1743,32 @@ class X : public ui::XUi {
               has(c, "on_tabs_switch_page(page, page_number);"), "");
         check("s024 m5: an unhooked default stays quiet when a slot is wired",
               has(c, "    if (!on_go_clicked_slot)   // a slot is wired: not unhooked (s024 m5)\n        hooks::unhooked("), "");
+    }
+
+    // ── s024 m6: the user guide, compiled in ─────────────────────────────────
+    {
+        const auto& pages = core::help_pages();
+        bool titled = !pages.empty();
+        for (const auto& p : pages) titled = titled && core::help_title(p) != p.file;
+        check("s024 m6 help: the pages are compiled in, each with a # title", titled && pages.size() >= 5,
+              std::to_string(pages.size()) + " pages");
+        using K = core::HelpBlock::Kind;
+        const auto b = core::help_blocks("# T\n\nOne\nline.\n\n## S\n- a\n  more\n1. n\n\n```\nx  y\n```\n| A | B |\n|---|---|\n| 1 | 2 \\| 3 |\n");
+        check("s024 m6 help: blocks -- headings, a joined paragraph, a bullet's continuation, a code block kept, a table",
+              b.size() == 7 && b[0].kind == K::H1 && b[1].kind == K::Para && b[1].text == "One line." &&
+              b[2].kind == K::H2 && b[3].kind == K::Bullet && b[3].text == "a more" && b[4].kind == K::Number &&
+              b[5].kind == K::Code && b[5].text == "x  y" && b[6].kind == K::Table && b[6].rows.size() == 2 &&
+              b[6].rows[1][1] == "2 | 3", std::to_string(b.size()));
+        const auto sp = core::help_spans("a **b** `c*d` *e* f * g");
+        check("s024 m6 help: spans -- bold, code (marks inside it plain), italic; a lone star is a star",
+              sp.size() == 7 && sp[1].bold && sp[1].text == "b" && sp[3].code && sp[3].text == "c*d" && sp[5].italic &&
+              sp[5].text == "e" && sp[6].text == " f * g", std::to_string(sp.size()));
+        const auto hits = core::help_search("undo gate");
+        check("s024 m6 help: search -- pages with every word, most hits first; a page by its number",
+              !hits.empty() && std::string(pages[hits[0].page].file).find("building") != std::string::npos &&
+              core::help_search("03").size() == 1 && core::help_search("zzqqxx").empty(), "");
+        bool f1 = false;
+        for (const auto& r : core::shortcut_registry()) f1 = f1 || (r.action == "win.help" && !r.accels.empty() && r.accels[0] == "F1");
+        check("s024 m6 help: F1 is Help", f1, "");
     }
 }

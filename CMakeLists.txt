@@ -39,6 +39,19 @@ add_custom_command(
     COMMENT "Embedding the new-project template"
     VERBATIM)
 
+# ── the user guide, compiled in (s024 m6) ───────────────────────────────────
+# help/*.md -- ONE source: GitHub shows the pages, the designer's Help window and
+# `mortimer-gen help` show them from the binary (core::help_pages()).
+file(GLOB MORTIMER_HELP_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/help/*.md")
+set(MORTIMER_HELP_CPP "${CMAKE_CURRENT_BINARY_DIR}/mortimer-help.cpp")
+add_custom_command(
+    OUTPUT  "${MORTIMER_HELP_CPP}"
+    COMMAND "${CMAKE_COMMAND}" -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/help -DOUT=${MORTIMER_HELP_CPP}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_help.cmake
+    DEPENDS ${MORTIMER_HELP_FILES} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_help.cmake"
+    COMMENT "Embedding the user guide (help/)"
+    VERBATIM)
+
 # ── mortimer_core -- the GTK-free core (the model side of the one real seam) ──────
 # No gtkmm on this library's link line, BY DESIGN: a stray UI include under
 # core/ fails to compile, so the seam is enforced by the build graph and the
@@ -72,6 +85,8 @@ add_library(mortimer_core STATIC
     src/core/Design.cpp
     src/core/Xml.cpp      # s024 m4: just enough XML for a .ui (no new dependency)
     src/core/UiFile.cpp   # s024 m3: a form as a GtkBuilder .ui (export; what it can't say, named)
+    src/core/Help.cpp     # s024 m6: the user guide -- pages, blocks, search (GTK-free)
+    ${MORTIMER_HELP_CPP}
     ${MORTIMER_TEMPLATES_CPP}
 )
 target_include_directories(mortimer_core PUBLIC include)
@@ -135,6 +150,7 @@ add_executable(mortimer
     src/Shell_helpers.cpp
     src/AboutWindow.cpp
     src/ShortcutsDialog.cpp
+    src/HelpWindow.cpp      # s024 m6: the user guide (help/*.md, compiled in)
     # s002 -- the designer's panes: the live canvas (real widgets, hooks inert),
     # palette + tree, the inspector, and the catalog<->GObject property bridge.
     src/designer/Canvas.cpp

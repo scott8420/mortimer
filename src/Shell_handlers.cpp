@@ -2,6 +2,7 @@
 #include "core/Resources.hpp"
 #include "AboutWindow.hpp"
 #include "ShortcutsDialog.hpp"
+#include "HelpWindow.hpp"
 #include "Log.hpp"
 #include "Registry.hpp"
 #include "core/Project.hpp"
@@ -760,6 +761,11 @@ void Shell::on_dump_registry() { registry::dump(); }   // handler
 void Shell::on_about() {  // handler: hide-on-close singleton, built on first open
     if (!m_about) m_about = std::make_unique<AboutWindow>(*this);
     m_about->present();
+}
+
+void Shell::on_help() {  // handler: s024 m6 -- the user guide, built once
+    if (!m_help) m_help = std::make_unique<HelpWindow>();
+    m_help->show(*this);
 }
 
 void Shell::on_shortcuts() {  // handler: renders from core::shortcut_registry()

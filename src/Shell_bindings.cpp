@@ -34,6 +34,7 @@ void Shell::bind_actions() {  // bindings: win.* + recents group
     add_action("dump-registry", sigc::mem_fun(*this, &Shell::on_dump_registry));
     add_action("about",         sigc::mem_fun(*this, &Shell::on_about));
     add_action("shortcuts",     sigc::mem_fun(*this, &Shell::on_shortcuts));
+    add_action("help",          sigc::mem_fun(*this, &Shell::on_help));   // s024 m6
     add_action("quit",          [this] { close(); });
     m_act_undo   = add_action("undo",      sigc::mem_fun(*this, &Shell::on_undo));
     m_act_redo   = add_action("redo",      sigc::mem_fun(*this, &Shell::on_redo));

@@ -14,6 +14,11 @@ tests/proof.sh                   # end to end: make an app, build it, walk the h
 ./install.sh                     # ~/.local (no sudo); --system for /usr/local
 ```
 
+## Help
+
+The user guide is [`help/`](help/) -- the same pages Mortimer shows under
+**F1** (searchable) and `mortimer-gen help [page or words]` prints.
+
 ## The split
 
 | | Written by | Holds |

@@ -49,6 +49,7 @@ namespace mortimer {
 
 class AboutWindow;
 class ShortcutsDialog;
+class HelpWindow;
 
 class Shell : public Gtk::ApplicationWindow {
 public:
@@ -111,6 +112,7 @@ private:
     void on_dump_registry();                     // category: handler
     void on_about();                             // category: handler
     void on_shortcuts();                         // category: handler
+    void on_help();                              // category: handler: hide-on-close singleton (s024 m6)
     bool on_close();                             // category: handler: unsaved changes?
 
     // ── helpers ────────────────────────────────────────────────────────────
@@ -188,6 +190,7 @@ private:
 
     std::unique_ptr<AboutWindow>     m_about;
     std::unique_ptr<ShortcutsDialog> m_shortcuts;
+    std::unique_ptr<HelpWindow>      m_help;   // s024 m6
     std::unique_ptr<designer::NewProjectDialog> m_new_project;
     std::unique_ptr<designer::NameDialog>       m_name_dialog;
     std::unique_ptr<designer::ModelDialog>      m_model_dialog;   // s013 m3
