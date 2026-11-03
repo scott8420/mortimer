@@ -1546,4 +1546,14 @@ class X : public ui::XUi {
         check("s022 m4: Widgets.hpp has the dialog headers",
               has(sup[0].content, "#include <gtkmm/colordialog.h>") && has(sup[0].content, "#include <pangomm/fontdescription.h>"), "");
     }
+
+    // ── s022 m5: the template App deletes its window when it's closed ──────
+    {
+        std::string app_cpp;
+        for (const auto& t : core::project_templates())
+            if (std::string(t.path) == "@BIN@/src/App.cpp") app_cpp = t.content;
+        const auto hoc = app_cpp.find("win->set_hide_on_close(true);");
+        check("s022 m5 template App: hide on close, THEN delete on hide (GTK 4 destroys a closed window without a hide)",
+              hoc != std::string::npos && hoc < app_cpp.find("win->signal_hide().connect([win] { delete win; });"), "");
+    }
 }

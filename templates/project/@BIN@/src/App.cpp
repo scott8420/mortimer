@@ -39,8 +39,14 @@ void App::on_activate() {
 
     // The window is the application's: it goes when it's closed (its hooks are
     // cut first -- see the generated destructor).
+    //
+    // Why hide_on_close: in GTK 4 the X DESTROYS a window outright -- no hide --
+    // so a delete hung on signal_hide alone never ran, and the C++ destructor
+    // (which cuts the hooks and saves the window's state) was skipped. Closing
+    // now hides it, the hide deletes it, and with no window left the app ends.
     auto* win = new MainWindow();
     add_window(*win);
+    win->set_hide_on_close(true);
     win->signal_hide().connect([win] { delete win; });
     win->present();
     if (auto lg = log::get(log::Area::App)) lg->info("@APP@ activated");
