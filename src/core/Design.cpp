@@ -29,6 +29,7 @@ void Design::load(const Form& f) {
     m_next = 1;
     Rec form{"", f.name, "", 0, {}, {}, {}, {}};
     form.actions = f.actions;
+    form.keys = f.keys;   // s016
     form.files = f.files;
     form.models = f.models;
     put(kForm, form);
@@ -53,6 +54,7 @@ Form Design::to_form() const {
     Form f{form_name(), build(r), {}};
     if (const auto it = m_recs.find(kForm); it != m_recs.end()) {
         f.actions = it->second.actions;
+        f.keys = it->second.keys;   // s016
         f.files = it->second.files;
         f.models = it->second.models;
     }
@@ -498,6 +500,19 @@ bool remove_file(DesignJournal& j, Design& d, const std::string& name) {
     return j.run("Delete file dialog " + curly(name), {Design::kForm}, [&] { d.put(Design::kForm, *r); });
 }
 
+bool set_keys(DesignJournal& j, Design& d, const StringList& now) {
+    auto r = d.get(Design::kForm);
+    if (!r || r->keys == now) return false;
+    std::string merge;
+    if (now.size() == r->keys.size())
+        for (std::size_t i = 0; i < now.size(); ++i)
+            if (now[i] != r->keys[i]) { merge = "keys:" + std::to_string(i); break; }
+    const std::string label = now.size() > r->keys.size() ? "Add a key row"
+                              : now.size() < r->keys.size() ? "Delete a key row" : "Key row";
+    r->keys = now;
+    return j.run(label, {Design::kForm}, [&] { d.put(Design::kForm, *r); }, merge);
+}
+
 bool set_file(DesignJournal& j, Design& d, const std::string& name, const FileDef& now, std::string* why) {
     auto r = d.get(Design::kForm);
     if (!r) return false;
@@ -833,6 +848,7 @@ const std::vector<Verb>& verbs() {
         {"opens_action", [](DesignJournal& j, Design& d) { set_action(j, d, "save", {"save", "<Control>s", false, "", "@shortcuts"}); }},
         {"title_action", [](DesignJournal& j, Design& d) { set_action(j, d, "save", {"save", "<Control>s", false, "Save it"}); }},
         {"does_action",  [](DesignJournal& j, Design& d) { set_action(j, d, "save", {"save", "<Control>z", false, "", "", "undo"}); }},
+        {"set_keys",     [](DesignJournal& j, Design& d) { set_keys(j, d, {"Ctrl+scroll=Zoom"}); }},
         {"add_file",     [](DesignJournal& j, Design& d) { add_file(j, d, "export_pdf"); }},
         {"add_model",    [](DesignJournal& j, Design& d) { add_model(j, d, "Patient"); }},
         {"remove_model", [](DesignJournal& j, Design& d) { remove_model(j, d, "Note"); }},

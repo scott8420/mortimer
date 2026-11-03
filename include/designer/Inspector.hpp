@@ -59,6 +59,7 @@ private:
     void signal_row(const std::string& type, const std::string& signal);
     void name_row(bool form);
     void actions_rows();                                      // s003: the form's actions
+    void keys_rows();                                         // s016: the shortcuts window's own rows
     void files_rows();                                        // s005: the form's file dialogs
     void models_rows();                                       // s006: the form's models
     void menu_rows(Gtk::Label* label, Gtk::Button* reset);    // s003: a MenuButton's menu

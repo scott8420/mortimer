@@ -849,10 +849,10 @@ class X : public ui::XUi {
         const std::string scc = sc.size() == 2 ? sc[1].content : "";
         check("s010 shortcuts: two files", sc.size() == 2 && sc[0].path == "generated/Shortcuts.hpp" &&
               sc[1].path == "generated/Shortcuts.cpp" && has(sc[0].content, "class ShortcutsWindow : public Gtk::Window"), "");
-        const auto r1 = scc.find("{\"Opener\", \"<Control>s\", \"Save the Thing\"}");
-        const auto r2 = scc.find("{\"Opener\", \"<Control>question\", \"Show the keys\"}");
-        const auto r3 = scc.find("{\"Opener\", \"<Control><Shift>s\", \"Save as\"}");
-        const auto r4 = scc.find("{\"Prefs\", \"<Control>r\", \"Reset \\\"all\\\"\"}");
+        const auto r1 = scc.find("{\"Opener\", \"<Control>s\", \"Save the Thing\", \"\"}");
+        const auto r2 = scc.find("{\"Opener\", \"<Control>question\", \"Show the keys\", \"\"}");
+        const auto r3 = scc.find("{\"Opener\", \"<Control><Shift>s\", \"Save as\", \"\"}");
+        const auto r4 = scc.find("{\"Prefs\", \"<Control>r\", \"Reset \\\"all\\\"\", \"\"}");
         check("s010 shortcuts: each key a row, sectioned by window title / name, in order",
               r1 != std::string::npos && r1 < r2 && r2 < r3 && r3 < r4 && r4 != std::string::npos, "");
         check("s010 shortcuts: an action without a key has no row", !has(scc, "nokey") && !has(scc, "\"About\""), "");
@@ -860,7 +860,7 @@ class X : public ui::XUi {
               has(scc, "->to_label(get_display())") && has(scc, "set_hide_on_close(true)") &&
               has(scc, "NamedAction::create(\"window.close\")"), "");
         check("s010 shortcuts: none -> still compiles (a sentinel row) and says so",
-              has(core::generate_shortcuts({}, app)[1].content, "{nullptr, nullptr, nullptr}") &&
+              has(core::generate_shortcuts({}, app)[1].content, "{nullptr, nullptr, nullptr, nullptr}") &&
               has(core::generate_shortcuts({}, app)[1].content, "No keys yet"), "");
 
         // The project: a new one has About + both openers; add_about; bad targets refused.
@@ -888,8 +888,8 @@ class X : public ui::XUi {
                   has(slurp(ad / "generated" / "MainWindowUi.cpp"), "\"win.shortcuts\"") &&
                   has(slurp(ad / "generated" / "MainWindowUi.cpp"), "\"win.about\""), "");
             check("s010 project: generated/Shortcuts lists the starter's keys",
-                  has(slurp(ad / "generated" / "Shortcuts.cpp"), "{\"Opener\", \"<Control>h\", \"Say Hello\"}") &&
-                  has(slurp(ad / "generated" / "Shortcuts.cpp"), "\"Keyboard Shortcuts\"}"), "");
+                  has(slurp(ad / "generated" / "Shortcuts.cpp"), "{\"Opener\", \"<Control>h\", \"Say Hello\", \"\"}") &&
+                  has(slurp(ad / "generated" / "Shortcuts.cpp"), "\"Keyboard Shortcuts\", \"\"}"), "");
             bool twice = false;
             try { core::add_about(dir); } catch (const std::exception&) { twice = true; }
             check("s010 project: a second About refused", twice, "");
@@ -1274,5 +1274,78 @@ class X : public ui::XUi {
         check("s014 m2 runtime: a row record is (position, fields); absent = out of the list; made again on undo",
               has(uc, "row_get(") && has(uc, "if (!it) it = t->make(n, fields);   // an undone delete") &&
               has(uc, "if (!row_get(list, type + \"#\" + std::to_string(id))) return false;   // not in it: not a step"), "");
+    }
+
+    // ── s016: the shortcuts window's other rows ────────────────────────────
+    {
+        using core::Value;
+        core::Form f;
+        f.name = "MainWindow";
+        f.models = {{"Note", {{"title", "string", ""}}}};
+        core::Node cv{"ColumnView", "notes", {{"model", Value(std::string("Note"))},
+                                              {"selection", Value(std::string("multiple"))},
+                                              {"editable", Value(core::StringList{"title"})}},
+                      {}, {{"activated", false, ""}}, {}};
+        f.root = {"Window", "main_window", {{"title", Value(std::string("Notes"))}}, {}, {}, {cv}};
+        f.keys = {"Ctrl+scroll=Zoom"};
+        const auto autos = core::automatic_key_notes(f);
+        check("s016 automatic rows: open, pick several, edit, Escape",
+              autos == core::StringList{"Double-click, Enter=Open a row", "Ctrl+click, Shift+click=Pick several rows",
+                                        "Double-click a cell, Enter=Edit it", "Escape=Put an edited cell back"},
+              autos.empty() ? "(none)" : autos.front());
+        check("s016 json: keys round-trip, absent when none",
+              core::form_from_json(core::form_to_json(f)).keys == f.keys &&
+              !has(core::form_to_json(core::Form{"X", {"Window", "x", {}, {}, {}, {}}, {}, {}, {}, {}, {}}), "\"keys\""), "");
+        { auto g = f; g.keys = {"no equals"};
+          check("s016 validate: a row without Keys=What -> error", !errors_of(g).empty(), ""); }
+        const auto sc = core::generate_shortcuts({f}, core::derive_app("Keys"));
+        check("s016 shortcuts: automatic and own rows, written out (no accel)",
+              sc.size() == 2 && has(sc[1].content, "{\"Notes\", \"\", \"Open a row\", \"Double-click, Enter\"}") &&
+              has(sc[1].content, "{\"Notes\", \"\", \"Zoom\", \"Ctrl+scroll\"}") &&
+              has(sc[1].content, ": Glib::ustring(*r.accel ? r.accel : r.keys)"), "");
+    }
+
+    // ── s016 m2: the menu names the undo step ──────────────────────────────
+    {
+        using core::Value;
+        core::Form f;
+        f.name = "MainWindow";
+        f.actions = {{"undo", "<Control>z", false, "", "", "undo"}, {"hello", "", false}};
+        core::Node mb{"MenuButton", "menu", {{"menu", Value(core::StringList{"Undo=win.undo", "-", "Hi=win.hello"})}}, {}, {}, {}};
+        core::Node plain{"MenuButton", "other", {{"menu", Value(core::StringList{"Hi=win.hello"})}}, {}, {}, {}};
+        core::Node box{"Box", "box", {}, {}, {}, {mb, plain}};
+        f.root = {"Window", "main_window", {}, {}, {}, {box}};
+        const auto o = core::generate_form(f, core::derive_app("Named"));
+        check("s016 m2: a menu with an Undo row is built by fill_<id>_menu(), the row naming the step",
+              has(o[0].content, "void fill_menu_menu();") && has(o[1].content, "    fill_menu_menu();") &&
+              has(o[1].content, "section->append(undo::can_undo() ? \"Undo \" + undo::undo_label() : std::string(\"Undo\"), \"win.undo\");"), "");
+        check("s016 m2: rebuilt at idle when the undo changes; a menu without one stays inline",
+              has(o[1].content, "Glib::signal_idle().connect_once(sigc::mem_fun(*this, &MainWindowUi::fill_menu_menu));") &&
+              !has(o[0].content, "fill_other_menu") && has(o[1].content, "#include <glibmm/main.h>"), "");
+    }
+
+    // ── s016 m3: a table's columns remembered ──────────────────────────────
+    {
+        using core::Value;
+        core::Form f;
+        f.name = "MainWindow";
+        f.models = {{"Note", {{"title", "string", ""}, {"n", "int", ""}}}};
+        core::Node cv{"ColumnView", "notes", {{"model", Value(std::string("Note"))}}, {}, {}, {}};
+        f.root = {"Window", "main_window", {{"remember", Value(true)}}, {}, {}, {cv}};
+        const auto o = core::generate_form(f, core::derive_app("Cols"));
+        const std::string& c = o[1].content;
+        check("s016 m3: each column has its field as id",
+              has(c, "column->set_id(\"title\");") && has(c, "column->set_id(\"n\");"), "");
+        check("s016 m3: restore -- order, widths, sort",
+              has(c, "state::get_string(k + \"notes.order\")") && has(c, "m_notes.insert_column(at++, c);") &&
+              has(c, "state::get_int(k + \"notes.title.width\")") &&
+              has(c, "m_notes.sort_by_column(c, state::get_bool(k + \"notes.sort_desc\")"), "");
+        check("s016 m3: save -- order, dragged widths, the sort",
+              has(c, "state::put_string(k + \"notes.order\", order);") &&
+              has(c, "std::dynamic_pointer_cast<Gtk::ColumnViewSorter>(m_notes.get_sorter())") &&
+              has(c, "c->get_id().raw() == id") && has(c, "#include <gtkmm/columnviewsorter.h>"), "");
+        { auto g = f; g.root.props.erase("remember");
+          check("s016 m3: a form that doesn't remember says nothing of it",
+                !has(core::generate_form(g, core::derive_app("Cols"))[1].content, "notes.order"), ""); }
     }
 }

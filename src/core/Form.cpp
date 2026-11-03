@@ -211,6 +211,10 @@ Form form_from_json(const std::string& text) {
         }
     }
     if (j.contains("models")) f.models = models_from(j["models"]);
+    if (j.contains("keys")) {   // s016
+        if (!j["keys"].is_array()) throw std::runtime_error("keys must be a list of \"Keys=What\" rows");
+        for (const auto& k : j["keys"]) if (k.is_string()) f.keys.push_back(k.get<std::string>());
+    }
     return f;
 }
 
@@ -249,6 +253,7 @@ std::string form_to_json(const Form& f) {
         j["files"] = a;
     }
     if (!f.models.empty()) j["models"] = models_to(f.models);
+    if (!f.keys.empty()) j["keys"] = f.keys;   // s016
     return j.dump(2) + "\n";
 }
 
@@ -485,6 +490,37 @@ std::string bind_refusal(const std::string& type, const std::string& ft) {
     return "a " + type + " can't show a field";
 }
 
+KeyNote parse_key_note(const std::string& s) {
+    KeyNote k;
+    const auto eq = s.find('=');
+    if (eq == std::string::npos) return k;
+    k.keys = s.substr(0, eq);
+    k.what = s.substr(eq + 1);
+    k.ok = !k.keys.empty() && !k.what.empty();
+    return k;
+}
+
+StringList automatic_key_notes(const Form& f) {
+    StringList out;
+    auto add = [&](const std::string& row) {
+        if (std::find(out.begin(), out.end(), row) == out.end()) out.push_back(row);
+    };
+    walk_members(f.root, [&](const Node& n, const Node*) {
+        if (n.type != "ColumnView" && n.type != "ListView") return;
+        bool activated = false;
+        for (const auto& h : n.signals) activated = activated || h.signal == "activated";
+        const auto sca = n.props.find("single_click_activate");
+        const bool single = sca != n.props.end() && std::holds_alternative<bool>(sca->second) && std::get<bool>(sca->second);
+        if (activated) add(single ? "Click=Open a row" : "Double-click, Enter=Open a row");
+        if (view_selection(n) == "multiple") add("Ctrl+click, Shift+click=Pick several rows");
+        if (n.type == "ColumnView" && !view_editable(n).empty()) {
+            add("Double-click a cell, Enter=Edit it");
+            add("Escape=Put an edited cell back");
+        }
+    });
+    return out;
+}
+
 bool bind_writes(const std::string& type, const std::string& ft) {
     if (type == "CheckButton" || type == "Switch" || type == "Scale" || type == "SpinButton") return true;
     return type == "Entry" && ft == "string";
@@ -655,6 +691,9 @@ std::vector<Issue> validate(const Form& f) {
         if (d.mode == "folder" && !d.filters.empty())
             warn(where, "a folder dialog shows folders only -- its filters are ignored");
     }
+    // s016: the shortcuts window's own rows.
+    for (const auto& k : f.keys)
+        if (!parse_key_note(k).ok) err("keys", "\"" + k + "\" -- a row is Keys=What it does (\"Ctrl+scroll=Zoom\")");
     // s006: models -- a class name each, fields that are C++ members.
     for (const auto& i : validate_models(f.models, f.name)) out.push_back(i);
     // s013: a form's own model can't take a shared one's name -- which would its

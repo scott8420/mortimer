@@ -126,6 +126,7 @@ bool Inspector::show(const std::string& sel) {
     if (const auto f = m_d.get(core::Design::kForm))
     {
         for (const auto& a : f->actions) sig += a.name + ">" + a.opens + "!" + a.does + ",";   // s010 / s014: and what it opens / does
+        sig += "#keys" + std::to_string(f->keys.size());                         // s016: the key rows' count
         for (const auto& m : m_d.shared()) {                                    // s013: and the project's models
             sig += "^" + m.name + ":";
             for (const auto& x : m.fields) sig += x.name + "/" + x.type + ",";
@@ -208,6 +209,10 @@ void Inspector::rebuild() {
                            "on_action_<name>(), or opens a window (built once, hides on close). The second "
                            "line's words are its row in the keyboard-shortcuts window.");
         actions_rows();
+        section("Other keys", "Rows the keyboard-shortcuts window lists that aren't actions: a gesture, a key a "
+                              "widget handles itself. (Double-click / Ctrl+click on a list and editing a cell "
+                              "are listed for you.)");
+        keys_rows();
         section("File dialogs", "Gtk::FileDialog: call choose_<name>() from a hook; it returns at once, and "
                                 "the answer arrives at on_<name>_chosen(path) -- Cancel at "
                                 "on_<name>_cancelled() if ticked.");
@@ -708,6 +713,67 @@ void Inspector::actions_rows() {
     add->set_child(*add_in);
     add->set_halign(Gtk::Align::START);
     add->signal_clicked().connect([this] { core::design::add_action(m_j, m_d); });
+    m_grid->attach(*add, 0, m_line++, 3, 1);
+}
+
+// ── s016: the shortcuts window's own rows ───────────────────────────────────
+// A line per row: what you press (Ctrl+scroll), what it does, delete; Add row.
+// The whole list is set_keys; typing in one row folds into one step.
+void Inspector::keys_rows() {
+    const auto f = m_d.get(core::Design::kForm);
+    if (!f) return;
+    auto now = [this]() -> core::StringList {
+        const auto r = m_d.get(core::Design::kForm);
+        return r ? r->keys : core::StringList{};
+    };
+    for (std::size_t i = 0; i < f->keys.size(); ++i) {
+        auto* k = Gtk::make_managed<Gtk::Entry>();
+        k->set_placeholder_text("Ctrl+scroll");
+        k->set_width_chars(10);
+        auto* w = Gtk::make_managed<Gtk::Entry>();
+        w->set_placeholder_text("what it does");
+        w->set_hexpand(true);
+        auto* del = Gtk::make_managed<Gtk::Button>();
+        del->set_icon_name("user-trash-symbolic");
+        del->set_has_frame(false);
+        del->set_tooltip_text("Delete the row");
+        m_grid->attach(*k, 0, m_line);
+        m_grid->attach(*w, 1, m_line);
+        m_grid->attach(*del, 2, m_line++);
+        auto write = [this, i, k, w, now] {
+            if (m_painting || m_rebuilding) return;
+            auto l = now();
+            if (i >= l.size()) return;
+            l[i] = std::string(k->get_text()) + "=" + std::string(w->get_text());
+            core::design::set_keys(m_j, m_d, l);
+        };
+        k->signal_changed().connect(write);
+        w->signal_changed().connect(write);
+        del->signal_clicked().connect([this, i, now] {
+            auto l = now();
+            if (i < l.size()) { l.erase(l.begin() + static_cast<long>(i)); core::design::set_keys(m_j, m_d, l); }
+        });
+        m_rows.push_back({[i, k, w, now](const core::Rec&) {
+            const auto l = now();
+            if (i >= l.size()) return;
+            const auto eq = l[i].find('=');
+            const std::string keys = eq == std::string::npos ? l[i] : l[i].substr(0, eq);
+            const std::string what = eq == std::string::npos ? std::string() : l[i].substr(eq + 1);
+            if (!k->has_focus() && k->get_text().raw() != keys) k->set_text(keys);
+            if (!w->has_focus() && w->get_text().raw() != what) w->set_text(what);
+        }});
+    }
+    auto* add = Gtk::make_managed<Gtk::Button>();
+    auto* add_in = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 6);
+    add_in->append(*Gtk::make_managed<Gtk::Image>(Glib::ustring("list-add-symbolic")));
+    add_in->append(*Gtk::make_managed<Gtk::Label>("Add a key row"));
+    add->set_child(*add_in);
+    add->set_halign(Gtk::Align::START);
+    add->signal_clicked().connect([this, now] {
+        auto l = now();
+        l.push_back("Keys=What it does");
+        core::design::set_keys(m_j, m_d, l);
+    });
     m_grid->attach(*add, 0, m_line++, 3, 1);
 }
 

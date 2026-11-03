@@ -112,7 +112,17 @@ struct Form {
     // s013: the PROJECT's models (mortimer.json), filled by whoever loads the form
     // in a project -- never saved with it. A view may show one of these too.
     std::vector<ModelDef>  shared;
+    // s016: rows the keyboard-shortcuts window lists that AREN'T actions -- a
+    // gesture, a key a widget handles itself: "Ctrl+scroll=Zoom the page".
+    // On disk only when there are any.
+    StringList             keys;
 };
+// s016 -- one "Keys=What" row; ok=false when either side is empty.
+struct KeyNote { bool ok = false; std::string keys, what; };
+KeyNote parse_key_note(const std::string& s);
+// s016 -- the rows the generator adds on its own for what a form's widgets do
+// (a ColumnView's editable cells, a picked row, Ctrl+click), as "Keys=What".
+StringList automatic_key_notes(const Form& f);
 
 // s006 -- models.
 inline const StringList& field_types() {

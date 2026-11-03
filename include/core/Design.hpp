@@ -45,6 +45,7 @@ struct Rec {
     std::vector<ActionDef>       actions;   // s003: on the kForm record only
     std::vector<FileDef>         files;     // s005: on the kForm record only
     std::vector<ModelDef>        models;    // s006: on the kForm record only
+    StringList                   keys;      // s016: on the kForm record only
     bool operator==(const Rec&) const = default;
 };
 
@@ -145,6 +146,9 @@ bool set_action(DesignJournal& j, Design& d, const std::string& name, const Acti
 // field folds into one step ("file:<name>").
 std::string add_file(DesignJournal& j, Design& d, const std::string& name = {}, std::string* why = nullptr);
 bool remove_file(DesignJournal& j, Design& d, const std::string& name);
+// s016 -- the shortcuts window's own rows ("Keys=What"), the whole list at
+// once. Typing in one row folds into one step; a row added / removed is its own.
+bool set_keys(DesignJournal& j, Design& d, const StringList& now);
 bool set_file(DesignJournal& j, Design& d, const std::string& name, const FileDef& now,
               std::string* why = nullptr);
 // s006 -- the form's models (on the kForm record). add_model names it

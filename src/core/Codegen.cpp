@@ -425,6 +425,7 @@ std::vector<std::string> model_lines(const Form& f, const Node& n) {
         out.push_back("    });");
         out.push_back("    auto column = Gtk::ColumnViewColumn::create(" + cpp_string(field_title(x)) + ", factory);");
         out.push_back("    column->set_resizable(true);");
+        out.push_back("    column->set_id(" + cpp_string(x.name) + ");   // s016: how window state finds it again");
         if (x.type == "string") out.push_back("    column->set_expand(true);");
         if (x.type == "string")
             out.push_back("    column->set_sorter(Gtk::StringSorter::create(Gtk::ClosureExpression<Glib::ustring>::create(\n"
@@ -499,12 +500,23 @@ std::string parse_helpers(const Form& f) {
 // Stack's page, under "<Form>.<what>" in generated/WindowState's file.
 std::string state_functions(const Form& f, const std::string& ui) {
     if (!remembers(f)) return "";
-    std::vector<const Node*> paneds, stacks;
+    std::vector<const Node*> paneds, stacks, tables;
     walk_members(f.root, [&](const Node& n, const Node* parent) {
         if (!parent) return;
         if (n.type == "Paned") paneds.push_back(&n);
         if (n.type == "Stack") stacks.push_back(&n);
+        if (n.type == "ColumnView" && model_of(f, n)) tables.push_back(&n);   // s016
     });
+    // s016: a table's column -- by its id (the field) -- out of m_<id>.get_columns().
+    auto col_of = [](const std::string& v) {
+        return "    auto cols = m_" + v + ".get_columns();\n"
+               "    auto col_of = [&](const std::string& id) -> Glib::RefPtr<Gtk::ColumnViewColumn> {\n"
+               "        for (guint i = 0, n = cols->get_n_items(); i < n; ++i)\n"
+               "            if (auto c = std::dynamic_pointer_cast<Gtk::ColumnViewColumn>(cols->get_object(i)); c && c->get_id().raw() == id)\n"
+               "                return c;\n"
+               "        return {};\n"
+               "    };\n";
+    };
     const std::string k = cpp_string(f.name + ".");
     std::ostringstream c;
     c << "// ── window state ── as it was left (generated/WindowState.cpp keeps the file)\n"
@@ -521,6 +533,28 @@ std::string state_functions(const Form& f, const std::string& ui) {
         c << "    if (const auto page = state::get_string(k + \"" << s->id << ".page\"); page && m_" << s->id
           << ".get_child_by_name(*page))\n"
           << "        m_" << s->id << ".set_visible_child(*page);\n";
+    for (const Node* t : tables) {
+        const std::string v = t->id;
+        c << "    {   // s016: " << v << "'s columns as they were left -- order, widths, sort\n"
+          << col_of(v)
+          << "    if (const auto order = state::get_string(k + \"" << v << ".order\")) {   // \"title,done,count\"\n"
+          << "        guint at = 0;\n"
+          << "        std::string id;\n"
+          << "        for (const char ch : *order + \",\") {\n"
+          << "            if (ch != ',') { id += ch; continue; }\n"
+          << "            if (auto c = col_of(id)) m_" << v << ".insert_column(at++, c);   // an existing column moves\n"
+          << "            id.clear();\n"
+          << "        }\n"
+          << "    }\n";
+        for (const auto& x : model_of(f, *t)->fields)
+          c << "    if (const auto w = state::get_int(k + \"" << v << "." << x.name << ".width\"); w && *w > 0 && *w < 30000)\n"
+            << "        if (auto c = col_of(\"" << x.name << "\")) c->set_fixed_width(static_cast<int>(*w));\n";
+        c << "    if (const auto by = state::get_string(k + \"" << v << ".sort\"); by && !by->empty())\n"
+          << "        if (auto c = col_of(*by))\n"
+          << "            m_" << v << ".sort_by_column(c, state::get_bool(k + \"" << v << ".sort_desc\").value_or(false)\n"
+          << "                                         ? Gtk::SortType::DESCENDING : Gtk::SortType::ASCENDING);\n"
+          << "    }\n";
+    }
     c << "}\n\n"
       << "void " << ui << "::save_window_state() {\n"
       << "    const std::string k = " << k << ";\n"
@@ -536,7 +570,70 @@ std::string state_functions(const Form& f, const std::string& ui) {
     for (const Node* s : stacks)
         c << "    if (const auto page = m_" << s->id << ".get_visible_child_name(); !page.empty())\n"
           << "        state::put_string(k + \"" << s->id << ".page\", page);\n";
+    for (const Node* t : tables) {
+        const std::string v = t->id;
+        c << "    {   // s016: " << v << "'s columns -- order, the widths you dragged, the sort\n"
+          << "        auto cols = m_" << v << ".get_columns();\n"
+          << "        std::string order;\n"
+          << "        for (guint i = 0, n = cols->get_n_items(); i < n; ++i) {\n"
+          << "            auto c = std::dynamic_pointer_cast<Gtk::ColumnViewColumn>(cols->get_object(i));\n"
+          << "            if (!c) continue;\n"
+          << "            order += (order.empty() ? \"\" : \",\") + std::string(c->get_id());\n"
+          << "            if (c->get_fixed_width() > 0)\n"
+          << "                state::put_int(k + \"" << v << ".\" + std::string(c->get_id()) + \".width\", c->get_fixed_width());\n"
+          << "        }\n"
+          << "        state::put_string(k + \"" << v << ".order\", order);\n"
+          << "        auto sorter = std::dynamic_pointer_cast<Gtk::ColumnViewSorter>(m_" << v << ".get_sorter());\n"
+          << "        auto by = sorter ? sorter->get_primary_sort_column() : Glib::RefPtr<Gtk::ColumnViewColumn>();\n"
+          << "        state::put_string(k + \"" << v << ".sort\", by ? std::string(by->get_id()) : std::string());\n"
+          << "        state::put_bool(k + \"" << v << ".sort_desc\", by && sorter->get_primary_sort_order() == Gtk::SortType::DESCENDING);\n"
+          << "    }\n";
+    }
     c << "    state::save();\n"
+      << "}\n\n";
+    return c.str();
+}
+
+// s016 -- a menu with an Undo / Redo row (its action does undo / redo) names
+// the step: "Undo Delete Task". Such a menu is built by fill_<id>_menu(), again
+// whenever the app's undo changes.
+bool menu_names_steps(const Form& f, const Node& n) {
+    const auto it = n.props.find("menu");
+    if (it == n.props.end() || !std::holds_alternative<StringList>(it->second)) return false;
+    for (const auto& row : std::get<StringList>(it->second)) {
+        const MenuEntry e = parse_menu_entry(row);
+        for (const auto& a : f.actions)
+            if (!a.does.empty() && e.action == "win." + gio_action_name(a.name)) return true;
+    }
+    return false;
+}
+
+std::string fill_menu_def(const Form& f, const Node& n, const std::string& ui) {
+    const WidgetSpec* w = find_widget(n.type);
+    const PropSpec* p = find_prop(*w, "menu");
+    std::ostringstream c;
+    c << "// " << n.id << "'s menu: its Undo / Redo rows say what they'd undo / redo (s016).\n"
+      << "void " << ui << "::fill_" << n.id << "_menu() {\n"
+      << "    auto menu = Gio::Menu::create();\n"
+      << "    auto section = Gio::Menu::create();\n";
+    for (const auto& row : std::get<StringList>(n.props.at("menu"))) {
+        const MenuEntry e = parse_menu_entry(row);
+        if (e.separator) {
+            c << "    menu->append_section(section);\n"
+              << "    section = Gio::Menu::create();\n";
+            continue;
+        }
+        std::string does;
+        for (const auto& a : f.actions)
+            if (!a.does.empty() && e.action == "win." + gio_action_name(a.name)) does = a.does;
+        if (does.empty())
+            c << "    section->append(" << cpp_string(e.label) << ", " << cpp_string(e.action) << ");\n";
+        else
+            c << "    section->append(undo::can_" << does << "() ? " << cpp_string(e.label + " ") << " + undo::" << does
+              << "_label() : std::string(" << cpp_string(e.label) << "), " << cpp_string(e.action) << ");\n";
+    }
+    c << "    menu->append_section(section);\n"
+      << "    m_" << n.id << "." << replace(p->setter, "{menu}", "menu") << ";\n"
       << "}\n\n";
     return c.str();
 }
@@ -544,7 +641,11 @@ std::string state_functions(const Form& f, const std::string& ui) {
 void build_node(const Form& f, const Node& n, bool is_root, std::vector<std::string>& lines) {
     const WidgetSpec* w = find_widget(n.type);
     const std::string obj = is_root ? "" : "m_" + n.id + ".";
-    auto props = prop_lines(n, *w, obj);
+    const bool named_menu = !is_root && menu_names_steps(f, n);
+    Node bare = n;
+    if (named_menu) bare.props.erase("menu");   // fill_<id>_menu() builds it
+    auto props = prop_lines(bare, *w, obj);
+    if (named_menu) props.push_back("fill_" + n.id + "_menu();   // s016: its Undo / Redo rows name the step");
     for (auto& l : props) lines.push_back(l);
     for (auto& l : model_lines(f, n)) {   // a line may hold several (a sorter's lambda)
         std::stringstream ss(l);
@@ -1230,6 +1331,13 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
     h << "private:\n"
       << "    void build_ui();     // construct: properties, then packing, top-down\n"
       << "    void bind_hooks();   // every ticked signal -> its hook (last, so no setter fires one)\n"
+      << [&] {   // s016
+             std::string o;
+             for (auto* m : members)
+                 if (menu_names_steps(f, *m))
+                     o += "    void fill_" + m->id + "_menu();   // its Undo / Redo rows name the step\n";
+             return o;
+         }()
       << (remembers(f) ? "    void restore_window_state();   // s008: after build_ui, before the hooks\n" : "")
       << "    std::vector<sigc::connection> m_hooks;   // cut first in the destructor\n"
       << edited_members(f, members)
@@ -1257,9 +1365,15 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << "#include \"generated/Style.hpp\"\n"
       << "#include \"generated/Undo.hpp\"\n"
       << (remembers(f) ? "#include \"generated/WindowState.hpp\"\n" : "")
+      << (remembers(f) ? "#include <gtkmm/columnviewsorter.h>\n" : "")   // s016: a table's sort, remembered
       << "#include \"Registry.hpp\"\n"
       << opens_includes(f)
       << (list_views(f).empty() ? "" : "\n#include <cmath>\n#include <cstdint>\n")
+      << [&] {   // s016: a menu naming the undo step rebuilds at idle
+             bool any = false;
+             walk_members(f.root, [&](const Node& n, const Node* parent) { any = any || (parent && menu_names_steps(f, n)); });
+             return any ? std::string("\n#include <giomm/menu.h>\n#include <glibmm/main.h>\n") : std::string();
+         }()
       << (f.actions.empty() ? "" :
           "\n#include <giomm/simpleaction.h>\n#include <gtkmm/shortcut.h>\n#include <gtkmm/shortcutaction.h>\n"
           "#include <gtkmm/shortcutcontroller.h>\n#include <gtkmm/shortcuttrigger.h>\n")
@@ -1307,6 +1421,8 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << state_functions(f, ui);
     for (const auto& m : f.models) c << item_def(m, ui + "::", app.ns, ui + "::");
     c << row_classes_source(f, ui);
+    for (auto* m : members)
+        if (menu_names_steps(f, *m)) c << fill_menu_def(f, *m, ui);
     c << "void " << ui << "::build_ui() {\n";
     std::vector<std::string> lines;
     build_node(f, f.root, true, lines);
@@ -1372,6 +1488,13 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
               << (s->before ? ", false" : "") << "));\n";
         }
     });
+    for (auto* m : members)   // s016: a menu naming the undo step follows the journal
+        if (menu_names_steps(f, *m))
+            c << "    // (at idle: the Undo row may be the very click that changed it -- don't swap the\n"
+              << "    // menu under its own activation; a trackable slot dies with the window)\n"
+              << "    m_hooks.push_back(undo::on_change([this] {\n"
+              << "        Glib::signal_idle().connect_once(sigc::mem_fun(*this, &" << ui << "::fill_" << m->id << "_menu));\n"
+              << "    }));\n";
     if (!f.actions.empty()) {
         // s003: the form's actions. Each is a Gio action "win.<name>" whose
         // activate runs its hook; the keys go on a ShortcutController in the
@@ -2028,7 +2151,7 @@ std::vector<OutFile> generate_shortcuts(const std::vector<Form>& forms, const Ap
       << "};\n\n"
       << "}  // namespace " << app.ns << "::ui\n";
 
-    struct Row { std::string section, accel, what; };
+    struct Row { std::string section, accel, what, keys; };   // keys: written out, for a row with no accel (s016)
     std::vector<Row> rows;
     for (const auto& f : forms) {
         std::string section = readable(f.name);
@@ -2038,6 +2161,10 @@ std::vector<OutFile> generate_shortcuts(const std::vector<Form>& forms, const Ap
             section = std::get<std::string>(t->second);
         for (const auto& a : f.actions)
             if (!a.accel.empty()) rows.push_back({section, a.accel, action_title(f, a)});
+        // s016: what its widgets do that no action says, then the form's own rows.
+        for (const auto& k : automatic_key_notes(f)) { const auto n = parse_key_note(k); rows.push_back({section, "", n.what, n.keys}); }
+        for (const auto& k : f.keys)
+            if (const auto n = parse_key_note(k); n.ok) rows.push_back({section, "", n.what, n.keys});
     }
 
     std::ostringstream c;
@@ -2052,14 +2179,16 @@ std::vector<OutFile> generate_shortcuts(const std::vector<Form>& forms, const Ap
       << "namespace {\n"
       << "struct Row {\n"
       << "    const char* section;   // the window it works in (its title)\n"
-      << "    const char* accel;     // GTK's spelling -- the same string the window wires\n"
+      << "    const char* accel;     // GTK's spelling -- the same string the window wires (\"\" = not a key GTK wires)\n"
       << "    const char* what;      // what it does\n"
+      << "    const char* keys;      // s016: written out, for a gesture or a key a widget handles itself\n"
       << "};\n"
       << "// In the project's order, the main window first. Empty until an action has a key.\n"
       << "const Row kRows[] = {\n";
     for (const auto& r : rows)
-        c << "    {" << cpp_string(r.section) << ", " << cpp_string(r.accel) << ", " << cpp_string(r.what) << "},\n";
-    if (rows.empty()) c << "    {nullptr, nullptr, nullptr},   // (none yet -- C++ has no empty arrays)\n";
+        c << "    {" << cpp_string(r.section) << ", " << cpp_string(r.accel) << ", " << cpp_string(r.what) << ", "
+          << cpp_string(r.keys) << "},\n";
+    if (rows.empty()) c << "    {nullptr, nullptr, nullptr, nullptr},   // (none yet -- C++ has no empty arrays)\n";
     c << "};\n"
       << "}  // namespace\n\n"
       << "ShortcutsWindow::ShortcutsWindow() {\n"
@@ -2087,8 +2216,9 @@ std::vector<OutFile> generate_shortcuts(const std::vector<Form>& forms, const Ap
       << "        }\n"
       << "        // The key as GTK writes it for this desktop (\"Ctrl+S\"), from the same\n"
       << "        // string the window's ShortcutController parsed.\n"
-      << "        auto trigger = Gtk::ShortcutTrigger::parse_string(r.accel);\n"
-      << "        auto* key = Gtk::make_managed<Gtk::Label>(trigger ? trigger->to_label(get_display()) : r.accel);\n"
+      << "        auto trigger = *r.accel ? Gtk::ShortcutTrigger::parse_string(r.accel) : Glib::RefPtr<Gtk::ShortcutTrigger>();\n"
+      << "        auto* key = Gtk::make_managed<Gtk::Label>(trigger ? trigger->to_label(get_display())\n"
+      << "                                                          : Glib::ustring(*r.accel ? r.accel : r.keys));\n"
       << "        key->set_halign(Gtk::Align::START);\n"
       << "        key->add_css_class(\"monospace\");\n"
       << "        auto* what = Gtk::make_managed<Gtk::Label>(r.what);\n"

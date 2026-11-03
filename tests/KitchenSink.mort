@@ -124,6 +124,7 @@
     { "name": "keys", "accel": "F1", "title": "Every key", "opens": "@shortcuts" },
     { "name": "about", "opens": "About" }
   ],
+  "keys": [ "Ctrl+scroll=Zoom the canvas", "Middle-drag=Pan" ],
   "files": [
     { "name": "open_doc", "mode": "open", "title": "Open Document", "accept": "Open",
       "filters": ["Text=*.txt;*.md", "Images=image/*"], "cancel": true },
