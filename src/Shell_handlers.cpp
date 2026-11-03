@@ -139,8 +139,11 @@ void Shell::on_add_form(const std::string& root_type) {  // handler: ask a name 
         [this, dir, root_type](const std::string& n) {
             confirm_discard([this, dir, n, root_type] {
                 try {
-                    const std::string path = core::add_form(dir, n, root_type);
-                    core::generate_project(dir);
+                    std::string path;
+                    project_step("Add " + std::string(root_type == "Dialog" ? "dialog " : "window ") + n, [&] {
+                        path = core::add_form(dir, n, root_type);
+                        core::generate_project(dir);
+                    });
                     open_path(path);
                     say("Added " + n + " -- generated/" + n + "Ui.* and your include/" + n + ".hpp, src/" + n +
                         ".cpp. " + (root_type == "Dialog"
@@ -156,8 +159,10 @@ void Shell::on_add_form(const std::string& root_type) {  // handler: ask a name 
 void Shell::on_add_about() {  // handler: s010 + ▸ About dialog -> add_about -> generate
     if (m_app_dir.empty()) { say("An About dialog belongs to a project -- open one, or File ▸ New Project.", 1); return; }
     try {
-        core::add_about(m_app_dir);
-        core::generate_project(m_app_dir);
+        project_step("Add About", [this] {
+            core::add_about(m_app_dir);
+            core::generate_project(m_app_dir);
+        });
         rebuild_forms_menu();
         repaint();
         say("Added About (forms/About.mort; your src/About.cpp shows the version). To show it: select the "
@@ -173,7 +178,7 @@ void Shell::on_edit_style() {  // handler: s012 the stylesheet editor -- makes r
         const auto pr = core::load_project(m_app_dir);
         const auto path = std::filesystem::path(m_app_dir) / "resources" / (pr.app.bin + ".css");
         if (!std::filesystem::exists(path)) {
-            core::add_stylesheet(m_app_dir);
+            project_step("Add the stylesheet", [this] { core::add_stylesheet(m_app_dir); });
             rebuild_forms_menu();
             say("Added resources/" + pr.app.bin + ".css -- every window of the app loads it (generated/Style.cpp).");
         }
@@ -194,8 +199,11 @@ void Shell::on_share_model(const std::string& name) {  // handler: s013 the form
     const std::string dir = m_app_dir, path = m_path;
     const std::string stem = std::filesystem::path(path).stem().string();
     try {
-        const auto changed = core::share_model(dir, stem, name);
-        core::generate_project(dir);
+        std::vector<std::string> changed;
+        project_step("Share model " + name, [&] {
+            changed = core::share_model(dir, stem, name);
+            core::generate_project(dir);
+        });
         load_form(core::load_form(path), path);   // reopened as it is now (the journal starts fresh)
         std::string out;
         for (const auto& c : changed) out += (out.empty() ? "" : ", ") + c;
@@ -223,8 +231,11 @@ void Shell::on_edit_shared(const std::string& name) {  // handler: s013 m3 the d
     const std::string dir = m_app_dir, path = m_path;
     m_model_dialog->ask(m, [this, dir, path, name](const core::ModelDef& now) {
         try {
-            const auto changed = core::set_shared_model(dir, name, now);
-            core::generate_project(dir);
+            std::vector<std::string> changed;
+            project_step("Edit shared model " + name, [&] {
+                changed = core::set_shared_model(dir, name, now);
+                core::generate_project(dir);
+            });
             load_form(core::load_form(path), path);
             std::string out;
             for (const auto& c : changed) out += (out.empty() ? "" : ", ") + c;
@@ -240,8 +251,11 @@ void Shell::on_unshare(const std::string& name) {  // handler: s013 m3 each user
     if (!save_then("Unsharing a model")) return;
     const std::string dir = m_app_dir, path = m_path;
     try {
-        const auto users = core::unshare_model(dir, name);
-        core::generate_project(dir);
+        std::vector<std::string> users;
+        project_step("Unshare model " + name, [&] {
+            users = core::unshare_model(dir, name);
+            core::generate_project(dir);
+        });
         load_form(core::load_form(path), path);
         std::string out;
         for (const auto& c : users) out += (out.empty() ? "" : ", ") + c;
@@ -273,7 +287,11 @@ void Shell::on_add_resource(const std::string& kind, std::function<void(const st
             say("Added resources/" + r.file + " -- load it from " + r.path + "; rebuild the app to bundle it.");
     };
     if (kind == "stylesheet") {
-        try { done(core::add_stylesheet(dir)); } catch (const std::exception& e) { say(e.what(), 2); }
+        try {
+            core::Resource r;
+            project_step("Add the stylesheet", [&] { r = core::add_stylesheet(dir); });
+            done(r);
+        } catch (const std::exception& e) { say(e.what(), 2); }
         return;
     }
     auto dialog = Gtk::FileDialog::create();
@@ -289,7 +307,10 @@ void Shell::on_add_resource(const std::string& kind, std::function<void(const st
         try {
             auto file = dialog->open_finish(result);
             if (!file) return;
-            done(core::add_resource(dir, kind, file->get_path()));
+            core::Resource r;
+            const std::string what = kind == "icon" ? "icon " : kind == "image" ? "image " : "data file ";
+            project_step("Add " + what + file->get_basename(), [&] { r = core::add_resource(dir, kind, file->get_path()); });
+            done(r);
         } catch (const Glib::Error& e) {
             if (auto lg = log::get(log::Area::Io)) lg->info("add {}: dismissed ({})", kind, e.what());
         } catch (const std::exception& e) {
@@ -315,8 +336,11 @@ void Shell::on_remove_form(const std::string& stem) {  // handler: trash on a fo
         try { which = alert->choose_finish(result); } catch (const Glib::Error&) { return; }
         if (which != 1) return;
         try {
-            const std::string went = core::remove_form(dir, stem);
-            core::generate_project(dir);
+            std::string went;
+            project_step("Remove form " + stem, [&] {
+                went = core::remove_form(dir, stem);
+                core::generate_project(dir);
+            });
             if (open) {   // the open form went: show the main one (its changes were warned about)
                 m_saved = core::form_to_json(m_design.to_form());
                 const auto pr = core::load_project(dir);
@@ -345,7 +369,8 @@ void Shell::on_remove_resource(const std::string& file) {  // handler: trash on 
         try { which = alert->choose_finish(result); } catch (const Glib::Error&) { return; }
         if (which != 1) return;
         try {
-            const std::string went = core::remove_resource(dir, file);
+            std::string went;
+            project_step("Remove " + name, [&] { went = core::remove_resource(dir, file); });
             rebuild_forms_menu();
             say("Removed " + name + " from the bundle -- the file is in " + went + ".");
         } catch (const std::exception& e) {
@@ -385,8 +410,12 @@ void Shell::on_rename_form(const std::string& stem) {  // handler: ask a name ->
             if (!save_then("Renaming a form")) return;   // this form may open it: saved, then reloaded
             const std::string path = m_path;
             try {
-                const auto r = core::rename_project_form(dir, stem, n);
-                const auto g = core::generate_project(dir);
+                core::RenamedForm r;
+                core::GenerateResult g;
+                project_step("Rename form " + stem + " -> " + n, [&] {
+                    r = core::rename_project_form(dir, stem, n);
+                    g = core::generate_project(dir);
+                });
                 load_form(core::load_form(path), path);
                 std::string s = "Renamed " + stem + " -> " + n;
                 if (!r.edited.empty()) s += " (" + std::to_string(r.edited.size()) + " file" + (r.edited.size() == 1 ? "" : "s") +
@@ -426,8 +455,11 @@ void Shell::on_rename_resource(const std::string& file) {  // handler: ask a nam
         },
         [this, dir, path, file](const std::string& n) {
             try {
-                const auto r = core::rename_resource(dir, file, n);
-                if (!r.forms.empty()) core::generate_project(dir);
+                core::RenamedResource r;
+                project_step("Rename " + std::filesystem::path(file).filename().string() + " -> " + n, [&] {
+                    r = core::rename_resource(dir, file, n);
+                    if (!r.forms.empty()) core::generate_project(dir);
+                });
                 load_form(core::load_form(path), path);   // its icon_name may have followed
                 std::string s = "Renamed " + r.was + " -> " + r.now.use;
                 if (!r.forms.empty()) {
@@ -519,8 +551,11 @@ void Shell::import_ui_from(const std::string& path) {  // handler: core::import_
                 load_form(r.form, "");
                 say("Imported " + file + " as " + name + " (unsaved: Save keeps it)" + tail);
             } else {
-                const std::string at = core::add_form_as(dir, r.form);
-                core::generate_project(dir);
+                std::string at;
+                project_step("Import " + file + " as " + name, [&] {
+                    at = core::add_form_as(dir, r.form);
+                    core::generate_project(dir);
+                });
                 open_path(at);
                 say("Imported " + file + " as the project's form " + name + tail);
             }
@@ -573,7 +608,12 @@ bool Shell::on_close() {  // handler: unsaved changes?
 
 // ── undo ───────────────────────────────────────────────────────────────────
 
-void Shell::on_undo() {  // handler
+void Shell::on_undo() {  // handler: the one history's last -- a form step or a project step (s025 m2)
+    if (m_journal.in_gesture()) m_journal.commit();   // a drag in progress is a step first
+    if (m_done.empty()) return;
+    if (m_done.back() == 'P') { project_undo(true); return; }
+    m_done.pop_back();
+    m_undone.push_back('F');
     const auto r = m_journal.undo();
     if (!r.done) return;
     m_sel = r.selection.empty() ? m_design.root() : r.selection.front();
@@ -582,6 +622,11 @@ void Shell::on_undo() {  // handler
 }
 
 void Shell::on_redo() {  // handler
+    if (m_journal.in_gesture()) m_journal.commit();   // (a new step: the redo is gone, as anywhere)
+    if (m_undone.empty()) return;
+    if (m_undone.back() == 'P') { project_undo(false); return; }
+    m_undone.pop_back();
+    m_done.push_back('F');
     const auto r = m_journal.redo();
     if (!r.done) return;
     m_sel = r.selection.empty() ? m_design.root() : r.selection.front();

@@ -47,6 +47,7 @@
 //     ONE-DOOR guarantee checks it in put() and counts a write made outside --
 //     the selftest walks every verb and fails on a stray (the gate).
 // ─────────────────────────────────────────────────────────────────────────────
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <functional>
@@ -87,6 +88,10 @@ public:
 
     static constexpr std::size_t kMax = 500;   // Curvz's limit
     std::chrono::milliseconds merge_window{1500};
+    // A store with many records that a verb MIGHT touch (Mortimer's project
+    // files, s025: a step names every file, keeps only the ones that changed)
+    // sets this: the records that came out the same are dropped from the step.
+    bool prune_unchanged = false;
 
     explicit Journal(Store& s) : m_store(s) {}
 
@@ -122,6 +127,10 @@ public:
             if (!has(st, id)) st.entries.push_back({id, std::nullopt, std::nullopt});
         for (auto& e : st.entries) e.after = m_store.get(e.id);
         st.sel_after = selection();
+        if (prune_unchanged)
+            st.entries.erase(std::remove_if(st.entries.begin(), st.entries.end(),
+                                            [](const Entry& e) { return e.before == e.after; }),
+                             st.entries.end());
         if (unchanged(st)) return false;
 
         // Merge: same key, same records, inside the window, nothing undone in
@@ -214,6 +223,20 @@ public:
     std::string undo_label() const { return can_undo() ? m_steps[m_at - 1].label : std::string{}; }
     std::string redo_label() const { return can_redo() ? m_steps[m_at].label : std::string{}; }
     std::size_t size()       const { return m_steps.size(); }
+    std::size_t done()       const { return m_at; }   // steps that can be undone (the rest redo)
+    std::size_t kept()       const { return m_kept; } // steps ever kept (merges aren't new steps)
+    const Store& store()     const { return m_store; }
+    // The step an undo / redo would apply (nullptr: none) -- to look before
+    // leaping (s025: has a file it puts back been changed since?).
+    const Step* undo_step()  const { return can_undo() ? &m_steps[m_at - 1] : nullptr; }
+    const Step* redo_step()  const { return can_redo() ? &m_steps[m_at] : nullptr; }
+    // Forget what could be redone. A NEW step does this itself; a window with
+    // two journals in one history calls it on the OTHER one (s025).
+    void drop_redo() {
+        if (!can_redo()) return;
+        m_steps.resize(m_at);
+        notify();
+    }
 
     // A different document / folder: no step carries over.
     void clear() { m_steps.clear(); m_at = 0; notify(); }
@@ -226,6 +249,7 @@ private:
     Store&                            m_store;
     std::vector<Step>                 m_steps;
     std::size_t                       m_at = 0;      // [0, m_at) done; the rest redoable
+    std::size_t                       m_kept = 0;    // keep() calls, ever (s025: who acted last)
     int                               m_depth = 0;   // >0: inside the door
     bool                              m_gesture = false;
     Step                              m_open;        // the gesture being recorded
@@ -265,6 +289,7 @@ private:
     void keep(Step&& st) {
         m_steps.resize(m_at);                 // a new step forgets what was undone
         m_steps.push_back(std::move(st));
+        ++m_kept;
         if (m_steps.size() > kMax) m_steps.erase(m_steps.begin());
         m_at = m_steps.size();
         notify();

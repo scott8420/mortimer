@@ -1,5 +1,7 @@
 #include "Shell.hpp"
 
+#include <giomm/menuitem.h>
+#include <glibmm/variant.h>
 #include <gtkmm/headerbar.h>
 #include <gtkmm/separator.h>
 
@@ -105,6 +107,20 @@ void Shell::build_body() {  // zone: the panes + status line
     set_child(m_root);
 }
 
+// A menu row that SHOWS its key without owning it (s025, Scott: "why not add
+// DEL hotkey on Delete Widget menuitem"). The edit keys aren't accelerators
+// on purpose -- an accelerator fires before the focused widget and would take
+// Delete / Ctrl+Z / Ctrl+C from every text box in the inspector; the window
+// hears them instead (Shell_bindings.cpp, bind_keys). The menu's "accel"
+// attribute only DRAWS the key beside the label (GTK reads it for display;
+// nothing is bound), so the row tells the truth and the text boxes keep theirs.
+void append_keyed(const Glib::RefPtr<Gio::Menu>& menu, const Glib::ustring& label, const Glib::ustring& action,
+                  const Glib::ustring& accel) {
+    auto item = Gio::MenuItem::create(label, action);
+    item->set_attribute_value("accel", Glib::Variant<Glib::ustring>::create(accel));
+    menu->append_item(item);
+}
+
 Glib::RefPtr<Gio::Menu> Shell::build_menu() {  // zone: hamburger model
     auto menu = Gio::Menu::create();
 
@@ -132,18 +148,18 @@ Glib::RefPtr<Gio::Menu> Shell::build_menu() {  // zone: hamburger model
 
     // Undo / Redo re-labelled live ("Undo Delete “ok”"), greyed when there's nothing.
     m_edit_menu = Gio::Menu::create();
-    m_edit_menu->append("Undo", "win.undo");
-    m_edit_menu->append("Redo", "win.redo");
+    append_keyed(m_edit_menu, "Undo", "win.undo", "<Ctrl>z");
+    append_keyed(m_edit_menu, "Redo", "win.redo", "<Ctrl><Shift>z");
     menu->append_section(m_edit_menu);
 
     auto widget = Gio::Menu::create();
-    widget->append("Cut", "win.cut");             // s020
-    widget->append("Copy", "win.copy");
-    widget->append("Paste", "win.paste");
-    widget->append("Duplicate", "win.duplicate");
-    widget->append("Delete Widget", "win.delete");
-    widget->append("Move Up", "win.move-up");
-    widget->append("Move Down", "win.move-down");
+    append_keyed(widget, "Cut", "win.cut", "<Ctrl>x");             // s020
+    append_keyed(widget, "Copy", "win.copy", "<Ctrl>c");
+    append_keyed(widget, "Paste", "win.paste", "<Ctrl>v");
+    append_keyed(widget, "Duplicate", "win.duplicate", "<Ctrl>d");
+    append_keyed(widget, "Delete Widget", "win.delete", "Delete");
+    append_keyed(widget, "Move Up", "win.move-up", "<Alt>Up");
+    append_keyed(widget, "Move Down", "win.move-down", "<Alt>Down");
     menu->append_section(widget);
 
     auto app = Gio::Menu::create();

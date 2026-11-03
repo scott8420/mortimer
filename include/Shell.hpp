@@ -1,6 +1,8 @@
 #pragma once
 #include "widgets/Widgets.hpp"
 #include "core/Design.hpp"
+#include "core/ProjectUndo.hpp"
+#include "core/DiskForm.hpp"
 #include "designer/ProjectPane.hpp"
 #include "designer/StyleEditor.hpp"
 #include "designer/Canvas.hpp"
@@ -12,6 +14,8 @@
 #include <gtkmm/applicationwindow.h>
 #include <giomm/menu.h>
 #include <giomm/simpleaction.h>
+#include <giomm/filemonitor.h>
+#include <sigc++/connection.h>
 
 #include <functional>
 #include <memory>
@@ -46,6 +50,10 @@
 //   "Who repaints what?"              -> Shell_helpers.cpp  (repaint)
 // ─────────────────────────────────────────────────────────────────────────────
 namespace mortimer {
+
+// s025: a menu row that shows a key it doesn't own (Shell_zones.cpp).
+void append_keyed(const Glib::RefPtr<Gio::Menu>& menu, const Glib::ustring& label, const Glib::ustring& action,
+                  const Glib::ustring& accel);
 
 class AboutWindow;
 class ShortcutsDialog;
@@ -125,6 +133,13 @@ private:
     void repaint();                              // category: helper: every pane from the model
     void select(const std::string& key);         // category: helper: move the selection (not a step)
     void update_undo_ui();                       // category: helper: labels + greying
+    bool project_step(const std::string& label, const std::function<void()>& op);   // category: helper: s025 m2 a project verb, one undo step
+    void reconcile_history();                    // category: helper: s025 m2 the one history <- both journals
+    bool project_undo(bool undo);                // category: helper: s025 m2 check, put the files back, follow
+    void watch_form();                           // category: helper: s025 m3 watch m_path and mortimer.json
+    void check_disk();                           // category: helper: s025 m3 the file changed? reload / ask / say
+    void ask_disk(const core::DiskLook& look, std::function<void()> after_keep = {});   // category: helper: s025 m3 reload or keep mine
+    void reload_from_disk();                     // category: helper: s025 m3 the file's form, the selection kept by name
     void update_title();                         // category: helper: name, file, dirty dot
     bool dirty() const;                          // category: helper
     void say(const std::string& text, int level = 0);   // category: helper: status line (0 info, 1 warn, 2 error)
@@ -154,6 +169,29 @@ private:
     std::string         m_path;                // "" = never saved
     std::string         m_app_dir;             // the project the form is in; "" = a loose form
     std::string         m_saved;               // form JSON as last saved / loaded
+
+    // s025 m2: the PROJECT's verbs as undo steps -- the same journal over the
+    // app folder's files (core/ProjectUndo.hpp). It outlives a form switch
+    // (the form's journal doesn't) and starts fresh with another project.
+    core::ProjectFiles   m_files;
+    core::ProjectJournal m_pjournal{m_files};
+    // ONE history over the two journals, in the order things happened: 'F'
+    // a form step, 'P' a project step. Ctrl+Z takes m_done's last; what it
+    // undid goes to m_undone (the last of it is the next redo). Kept in step
+    // with the journals by reconcile_history() on every change of either.
+    std::vector<char>    m_done, m_undone;
+    std::size_t          m_kept_f = 0, m_kept_p = 0;   // each journal's kept() when last seen
+    bool                 m_reconciling = false;
+
+    // s025 m3: the open form vs its file. m_disk is the form's JSON as last
+    // READ from or WRITTEN to m_path (core/DiskForm.hpp); the watches say
+    // when to look again. mortimer.json is watched too: a form added or
+    // removed under us (git) shows in the list and the Forms menu.
+    std::string                    m_disk;
+    Glib::RefPtr<Gio::FileMonitor> m_form_watch, m_forms_dir_watch;
+    std::string                    m_watched_path, m_watched_dir;
+    sigc::connection               m_disk_later, m_dir_later;
+    bool                           m_disk_asking = false;   // the "changed on disk" alert is up
     bool                m_repaint_queued = false;
     bool                m_keys_to_tree = false;    // the next repaint gives the tree the keyboard
     bool                m_said_recently = false;   // a refusal is on the status line: keep it one repaint

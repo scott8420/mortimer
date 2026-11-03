@@ -116,9 +116,9 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
         // Doc-only ON PURPOSE: an accelerator would take these keys from every
         // text box in the inspector. The window hears them instead
         // (Shell_bindings.cpp, bind_keys).
-        {"Edit", "", {}, "Ctrl+Z", "Undo -- anywhere but a text box (which keeps its own)"},
+        {"Edit", "", {}, "Ctrl+Z", "Undo -- a widget edit or a project change, whichever came last (a text box keeps its own)"},
         {"Edit", "", {}, "Ctrl+Shift+Z  /  Ctrl+Y", "Redo"},
-        {"Edit", "", {}, "Delete", "Delete the selected widget (and what it holds)"},
+        {"Edit", "", {}, "Delete  /  Backspace", "Delete the selected widget (and what it holds)"},
         {"Edit", "", {}, "Ctrl+C  /  Ctrl+X", "Copy / cut the selected widgets (and what they hold)"},
         {"Edit", "", {}, "Ctrl+V", "Paste -- into the selection if it takes it, else after it"},
         {"Edit", "", {}, "Ctrl+D", "Duplicate the selected widgets, right after them"},
@@ -143,6 +143,14 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
         {"Mouse", "", {}, "Click in the palette", "Add that widget into the selection, or just after it"},
         {"Mouse", "", {}, "Drag from the palette", "Drop on a tree row (top / middle / bottom = before / into / after) or on the canvas"},
         {"Mouse", "", {}, "Drag a tree row", "Reorder, or reparent into another container"},
+        {"Mouse", "", {}, "Right-click the project list", "A row's Open / Copy, Rename…, Remove… -- and Add a form or a resource"},
+
+        // ── Project list ──────────────────────────────────────────────────────
+        // s025 m1. Doc-only: the LIST hears these, and only while it has the
+        // focus (ProjectPane.cpp) -- elsewhere Delete is the canvas's.
+        {"Project list", "", {}, "Delete  /  Backspace", "Remove the selected form or resource (asks first; the file goes to removed/)"},
+        {"Project list", "", {}, "F2", "Rename the selected form or resource"},
+        {"Project list", "", {}, "Menu  /  Shift+F10", "The selected row's menu, as a right-click"},
 
     };
     return kReg;

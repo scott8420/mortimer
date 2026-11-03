@@ -20,6 +20,9 @@
 #include "core/Form.hpp"
 #include "core/HookScan.hpp"
 #include "core/Project.hpp"
+#include "core/ProjectUndo.hpp"
+#include "core/DiskForm.hpp"
+#include "core/Resources.hpp"
 #include "core/Templates.hpp"
 
 #include <algorithm>
@@ -1779,6 +1782,20 @@ class X : public ui::XUi {
         bool f1 = false;
         for (const auto& r : core::shortcut_registry()) f1 = f1 || (r.action == "win.help" && !r.accels.empty() && r.accels[0] == "F1");
         check("s024 m6 help: F1 is Help", f1, "");
+        // s025 m1: the project list's keys are on the keys page (doc-only rows:
+        // the list hears them, not an accelerator) and the guide says so.
+        int proj = 0;
+        for (const auto& r : core::shortcut_registry())
+            if (r.section == "Project list" && r.action.empty() &&
+                (r.keys.rfind("Delete", 0) == 0 || r.keys == "F2" || r.keys.rfind("Menu", 0) == 0)) ++proj;
+        bool guide = false;
+        for (const auto& p : core::help_pages()) {
+            const std::string t = p.text ? p.text : "";
+            guide = guide || (core::help_title(p) == "The designer" && t.find("Right-click") != std::string::npos &&
+                              t.find("| F2 |") != std::string::npos);
+        }
+        check("s025 m1 project list: Delete / F2 / Menu on the keys page; the guide tells it", proj == 3 && guide,
+              std::to_string(proj));
     }
 
     // ── s024: symbolic icons are FILLS ONLY ──────────────────────────────────
@@ -1799,5 +1816,159 @@ class X : public ui::XUi {
             if (std::string(t.path).find("-logo-symbolic.svg") != std::string::npos) tmpl = t.content;
         check("s024 icons: the symbolic icons are fills only (GTK 4.16+ skips strokes and masks)",
               fills_only(mine.str()) && fills_only(tmpl), "");
+    }
+
+    // ── s025 m2: the PROJECT's verbs are undo steps ──────────────────────────
+    // The gate, as for the design's verbs: every project verb through the one
+    // door (project_run), as the window runs it (the verb + generate). Undo puts
+    // the app folder back BYTE FOR BYTE; redo makes it again. Then: a file
+    // changed under a step refuses the undo, naming it.
+    {
+        namespace fs = std::filesystem;
+        const fs::path tmp = fs::temp_directory_path() / ("mortimer_s025_" + std::to_string(::getpid()));
+        fs::remove_all(tmp);
+        fs::create_directories(tmp);
+        std::string dir;
+        try { dir = core::create_workspace(core::derive_app("Undo Probe"), tmp.string()); }
+        catch (const std::exception& e) { check("s025 project undo: a project", false, e.what()); }
+        if (!dir.empty()) {
+            const fs::path ad(dir);
+            core::ProjectFiles files;
+            files.root = dir;
+            core::ProjectJournal pj(files);
+            pj.prune_unchanged = true;
+            // The whole folder as the gate sees it: path -> bytes.
+            auto tree = [&] {
+                std::map<std::string, std::string> t;
+                for (const auto& f : core::project_files(dir)) t[f] = files.get(f).value_or("");
+                return t;
+            };
+            std::ofstream(tmp / "star-symbolic.svg") << "<svg xmlns=\"http://www.w3.org/2000/svg\"/>\n";
+            std::ofstream(tmp / "notes.txt") << "data\n";
+            // A model in MainWindow, so share / edit / unshare have one.
+            {
+                auto mw = core::load_form((ad / "forms" / "MainWindow.mort").string());
+                mw.models = {core::ModelDef{"Task", {{"title", "string", ""}, {"done", "bool", ""}}}};
+                mw.root.children.back().children.push_back(
+                    core::Node{"ColumnView", "tasks", {{"model", core::Value(std::string("Task"))}}, {}, {}, {}});
+                core::save_form(mw, (ad / "forms" / "MainWindow.mort").string());
+                core::generate_project(dir);
+            }
+            struct Verb { std::string name; std::function<void()> op; };
+            const std::vector<Verb> verbs = {
+                {"add icon", [&] { core::add_resource(dir, "icon", (tmp / "star-symbolic.svg").string()); }},
+                {"add data", [&] { core::add_resource(dir, "data", (tmp / "notes.txt").string()); }},
+                {"add stylesheet", [&] { core::add_stylesheet(dir); }},
+                {"rename resource", [&] { core::rename_resource(dir, "icons/scalable/apps/star-symbolic.svg", "sun-symbolic.svg");
+                                          core::generate_project(dir); }},
+                {"remove resource", [&] { core::remove_resource(dir, "icons/scalable/apps/sun-symbolic.svg"); }},
+                {"add window", [&] { core::add_form(dir, "Prefs", "Window"); core::generate_project(dir); }},
+                {"add dialog", [&] { core::add_form(dir, "Pick", "Dialog"); core::generate_project(dir); }},
+                {"remove about", [&] { core::remove_form(dir, "About"); core::generate_project(dir); }},   // a new app has one
+                {"add about", [&] { core::add_about(dir); core::generate_project(dir); }},
+                {"rename form", [&] { core::rename_project_form(dir, "Prefs", "Settings"); core::generate_project(dir); }},
+                {"remove form", [&] { core::remove_form(dir, "Settings"); core::generate_project(dir); }},
+                {"share model", [&] { core::share_model(dir, "MainWindow", "Task"); core::generate_project(dir); }},
+                {"edit shared model", [&] {
+                     core::set_shared_model(dir, "Task", core::ModelDef{"Task", {{"title", "string", ""}, {"done", "bool", ""},
+                                                                                  {"due", "string", ""}}});
+                     core::generate_project(dir); }},
+                {"unshare model", [&] { core::unshare_model(dir, "Task"); core::generate_project(dir); }},
+                {"import .ui", [&] {
+                     core::Form f = core::load_form((ad / "forms" / "Pick.mort").string());
+                     f.name = "Imported";
+                     core::add_form_as(dir, f);
+                     core::generate_project(dir); }},
+            };
+            for (const auto& v : verbs) {
+                const auto before = tree();
+                bool kept = false;
+                std::string err;
+                try { kept = core::project_run(pj, v.name, v.op); } catch (const std::exception& e) { err = e.what(); }
+                const auto after = tree();
+                check("s025 project undo/" + v.name + ": a step", kept && err.empty() && after != before, err);
+                const auto& st = *pj.undo_step();
+                check("s025 project undo/" + v.name + ": only the files it changed", !st.entries.empty() &&
+                          std::all_of(st.entries.begin(), st.entries.end(), [](const auto& e) { return !(e.before == e.after); }),
+                      std::to_string(st.entries.size()));
+                check("s025 project undo/" + v.name + ": nothing changed since", core::project_conflict(pj, true).empty(),
+                      core::project_conflict(pj, true));
+                pj.undo();
+                check("s025 project undo/" + v.name + ": undo puts the folder back byte for byte", tree() == before, "");
+                pj.redo();
+                check("s025 project undo/" + v.name + ": redo makes it again", tree() == after, "");
+            }
+            // A step's file changed under it (your editor, a git pull): refused, named.
+            core::project_run(pj, "add window", [&] { core::add_form(dir, "Later", "Window"); core::generate_project(dir); });
+            std::ofstream(ad / "src" / "Later.cpp", std::ios::app) << "// yours\n";
+            const std::string c = core::project_conflict(pj, true);
+            check("s025 project undo: a file changed since refuses, naming it", c == "src/Later.cpp", c);
+            // ...but generated/ is Mortimer's own -- a build may have rewritten it.
+            {
+                auto t = pj.undo_step()->entries;
+                std::string orig;
+                for (const auto& e : t) if (e.id == "src/Later.cpp" && e.after) orig = *e.after;
+                std::ofstream(ad / "src" / "Later.cpp", std::ios::trunc) << orig;
+            }
+            std::ofstream(ad / "generated" / "LaterUi.hpp", std::ios::app) << "// rebuilt\n";
+            check("s025 project undo: generated/ changed since is no conflict", core::project_conflict(pj, true).empty(),
+                  core::project_conflict(pj, true));
+            // Folders: an undone remove leaves no empty removed/<Form>/ behind.
+            check("s025 project undo: the walk skips build/ and dot folders", [&] {
+                fs::create_directories(ad / "build" / "x");
+                std::ofstream(ad / "build" / "x" / "a.o") << "o";
+                fs::create_directories(ad / ".git");
+                std::ofstream(ad / ".git" / "HEAD") << "ref";
+                for (const auto& f : core::project_files(dir))
+                    if (f.rfind("build/", 0) == 0 || f.rfind(".git/", 0) == 0) return false;
+                return true;
+            }(), "");
+            core::project_run(pj, "remove form", [&] { core::remove_form(dir, "Later"); core::generate_project(dir); });
+            const bool went = fs::exists(ad / "removed" / "Later");
+            pj.undo();
+            check("s025 project undo: an undone remove takes removed/Later/ away again",
+                  went && !fs::exists(ad / "removed" / "Later") && fs::exists(ad / "forms" / "Later.mort"), "");
+            // The journal's own: the step NAMES every file, keeps only the changed.
+            check("s025 journal: done / kept / drop_redo", [&] {
+                const auto k = pj.kept();
+                pj.undo();                       // the add of Later
+                const bool r1 = pj.can_redo();
+                pj.drop_redo();
+                return r1 && !pj.can_redo() && pj.kept() == k && pj.done() == pj.size();
+            }(), "");
+        }
+        fs::remove_all(tmp);
+    }
+
+    // ── s025 m3: the open form vs its file ──────────────────────────────────
+    {
+        namespace fs = std::filesystem;
+        const fs::path tmp = fs::temp_directory_path() / ("mortimer_s025m3_" + std::to_string(::getpid()));
+        fs::remove_all(tmp);
+        fs::create_directories(tmp);
+        const std::string path = (tmp / "Main.mort").string();
+        core::Form f;
+        f.name = "Main";
+        f.root = core::Node{"ApplicationWindow", "main", {}, {}, {}, {}};
+        core::save_form(f, path);
+        const std::string known = core::form_to_json(core::load_form(path));
+        using DC = core::DiskChange;
+        check("s025 m3 disk: as we left it -> Same", core::look_at_disk(path, known, true).what == DC::Same, "");
+        { std::ifstream in(path); std::stringstream ss; ss << in.rdbuf();
+          std::ofstream(path, std::ios::trunc) << "\n\n" << ss.str() << "\n"; }
+        check("s025 m3 disk: re-spaced by hand, the same form -> Same", core::look_at_disk(path, known, false).what == DC::Same, "");
+        auto g = f;
+        g.root.children.push_back(core::Node{"Label", "hello", {}, {}, {}, {}});
+        core::save_form(g, path);
+        const auto r = core::look_at_disk(path, known, false);
+        check("s025 m3 disk: changed, nothing unsaved here -> Reload (with its form)",
+              r.what == DC::Reload && r.json == core::form_to_json(g), "");
+        check("s025 m3 disk: changed, edits unsaved here -> Ask", core::look_at_disk(path, known, true).what == DC::Ask, "");
+        std::ofstream(path, std::ios::trunc) << "<<<<<<< HEAD\n{ \"name\": ";
+        const auto b = core::look_at_disk(path, known, false);
+        check("s025 m3 disk: doesn't parse -> Broken, with why", b.what == DC::Broken && !b.error.empty(), b.error);
+        fs::remove(path);
+        check("s025 m3 disk: deleted -> Gone", core::look_at_disk(path, known, false).what == DC::Gone, "");
+        fs::remove_all(tmp);
     }
 }

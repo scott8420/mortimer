@@ -14,6 +14,7 @@
 #include <glibmm/variant.h>
 #include <giomm/menuitem.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <set>
 
@@ -32,8 +33,14 @@ void Shell::load_form(const core::Form& f, const std::string& path) {  // helper
     m_design.load(f);           // a load is not a user choice: no step
     m_path = path;
     m_app_dir = path.empty() ? std::string{} : core::project_of(path);
+    if (m_files.root != m_app_dir) {   // s025 m2: another project (or none) -- its own history
+        m_files.root = m_app_dir;
+        m_pjournal.clear();
+    }
     rebuild_forms_menu();
     m_saved = core::form_to_json(m_design.to_form());
+    m_disk = path.empty() ? std::string{} : m_saved;   // s025 m3: what the file says, as of now
+    watch_form();
     m_sel = m_design.root();
     // The first row a user wants is usually the window's body.
     for (const auto& k : m_design.children(m_sel))
@@ -53,6 +60,16 @@ bool Shell::save_to(const std::string& path) {  // helper: write the .mort
         // s021: in a project the file's stem IS the class (forms/<Form>.mort).
         // The form renamed in the inspector + Save = the project renames it:
         // the file, the list, your halves (originals kept in removed/).
+        // s025 m3: the file changed on disk since we read or wrote it (an
+        // editor, git) -- don't write over it without asking. Keep Mine
+        // acknowledges what's there and saves again.
+        if (path == m_path && !m_disk_asking) {
+            const auto look = core::look_at_disk(path, m_disk, true);
+            if (look.what == core::DiskChange::Ask || look.what == core::DiskChange::Broken) {
+                ask_disk(look, [this, path] { save_to(path); });
+                return false;
+            }
+        }
         std::string to = path;
         std::string lead;
         if (!app.empty() && f.name != stem) {
@@ -73,6 +90,8 @@ bool Shell::save_to(const std::string& path) {  // helper: write the .mort
         m_path = to;
         m_app_dir = app;
         m_saved = core::form_to_json(f);
+        m_disk = m_saved;   // s025 m3: our own write -- the watch will find it the same
+        watch_form();
         update_title();
         if (!lead.empty()) note_recent(to);
         if (auto lg = log::get(log::Area::Io)) lg->info("saved '{}'", to);
@@ -264,16 +283,18 @@ void Shell::select(const std::string& key) {  // helper: move the selection (not
 }
 
 void Shell::update_undo_ui() {  // helper: labels + greying
-    if (m_act_undo) m_act_undo->set_enabled(m_journal.can_undo());
-    if (m_act_redo) m_act_redo->set_enabled(m_journal.can_redo());
-    const std::string u = m_journal.can_undo() ? "Undo " + m_journal.undo_label() : "Undo";
-    const std::string r = m_journal.can_redo() ? "Redo " + m_journal.redo_label() : "Redo";
+    // s025 m2: what Ctrl+Z / Ctrl+Y would do -- the one history's ends.
+    const bool cu = !m_done.empty(), cr = !m_undone.empty();
+    if (m_act_undo) m_act_undo->set_enabled(cu);
+    if (m_act_redo) m_act_redo->set_enabled(cr);
+    const std::string u = cu ? "Undo " + (m_done.back() == 'P' ? m_pjournal.undo_label() : m_journal.undo_label()) : "Undo";
+    const std::string r = cr ? "Redo " + (m_undone.back() == 'P' ? m_pjournal.redo_label() : m_journal.redo_label()) : "Redo";
     m_undo_button.set_tooltip_text(u + " (Ctrl+Z)");
     m_redo_button.set_tooltip_text(r + " (Ctrl+Shift+Z)");
     if (m_edit_menu) {
         m_edit_menu->remove_all();
-        m_edit_menu->append(u, "win.undo");
-        m_edit_menu->append(r, "win.redo");
+        append_keyed(m_edit_menu, u, "win.undo", "<Ctrl>z");
+        append_keyed(m_edit_menu, r, "win.redo", "<Ctrl><Shift>z");
     }
 }
 
@@ -375,6 +396,219 @@ bool Shell::focus_is_text() const {  // helper: the keyboard is in a text box (i
     for (const Gtk::Widget* w = get_focus(); w; w = w->get_parent())
         if (dynamic_cast<const Gtk::TextView*>(w) || dynamic_cast<const Gtk::Editable*>(w)) return true;
     return false;
+}
+
+}  // namespace mortimer
+
+namespace mortimer {
+
+// ── s025 m2: the project's verbs in the undo ──────────────────────────────
+
+bool Shell::project_step(const std::string& label, const std::function<void()>& op) {  // helper: a project verb, one undo step
+    return core::project_run(m_pjournal, label, op);   // op's exception comes back out, after the step is kept
+}
+
+// Keep m_done / m_undone in step with the two journals. A journal says only
+// "something changed"; what changed is read from its counts:
+//   kept() grew      -> new steps (a new action: everything redoable goes,
+//                       in BOTH journals -- one history, one future);
+//   done() < marked  -> steps went (a merge emptied one, a clear, the cap);
+//   redo count < marked -> redo steps went.
+// Undo / redo move their mark BEFORE calling the journal, so their notify
+// finds the counts already right.
+void Shell::reconcile_history() {  // helper: the one history <- both journals
+    if (m_reconciling) return;   // drop_redo() below notifies us again
+    m_reconciling = true;
+    auto erase_one = [](std::vector<char>& v, char c, bool from_front) {
+        if (from_front) { if (auto it = std::find(v.begin(), v.end(), c); it != v.end()) v.erase(it); }
+        else if (auto it = std::find(v.rbegin(), v.rend(), c); it != v.rend()) v.erase(std::next(it).base());
+    };
+    auto sync = [&](char c, std::size_t kept, std::size_t& seen, std::size_t done, std::size_t size, auto&& drop_other) {
+        const std::size_t fresh = kept - seen;
+        seen = kept;
+        for (std::size_t i = 0; i < fresh; ++i) m_done.push_back(c);
+        if (fresh > 0) {
+            m_undone.clear();
+            drop_other();
+        }
+        auto have = static_cast<std::size_t>(std::count(m_done.begin(), m_done.end(), c));
+        for (; have > done; --have) erase_one(m_done, c, fresh > 0);   // the cap drops the oldest; else the newest
+        auto later = static_cast<std::size_t>(std::count(m_undone.begin(), m_undone.end(), c));
+        for (; later > size - done; --later) erase_one(m_undone, c, true);   // the farthest redo first
+    };
+    sync('F', m_journal.kept(), m_kept_f, m_journal.done(), m_journal.size(), [this] { m_pjournal.drop_redo(); });
+    sync('P', m_pjournal.kept(), m_kept_p, m_pjournal.done(), m_pjournal.size(), [this] { m_journal.drop_redo(); });
+    m_reconciling = false;
+}
+
+// Undo (or redo) the project step at the history's end. Refused, in words,
+// when a file it would put back was changed since (yours, never overwritten),
+// or when it changes the open form's file while the form has unsaved edits.
+bool Shell::project_undo(bool undo) {  // helper: check, put the files back, follow
+    namespace fs = std::filesystem;
+    const std::string label = undo ? m_pjournal.undo_label() : m_pjournal.redo_label();
+    const std::string verb = undo ? "undo" : "redo";
+    if (const std::string c = core::project_conflict(m_pjournal, undo); !c.empty()) {
+        say("Can't " + verb + " \"" + label + "\": " + c + " changed since -- " + verb + "ing would lose that.", 2);
+        return false;
+    }
+    const auto touched = core::project_touched(m_pjournal, undo);
+    const std::string open_rel = m_path.empty() || m_app_dir.empty()
+        ? std::string{} : fs::path(m_path).lexically_relative(m_app_dir).generic_string();
+    const bool hits_open = std::find_if(touched.begin(), touched.end(), [&](const std::string& t) {
+        return t == open_rel || t == "mortimer.json";
+    }) != touched.end();
+    if (hits_open && dirty()) {
+        say("Save " + m_design.form_name() + " first -- " + verb + "ing \"" + label + "\" changes its file.", 1);
+        return false;
+    }
+    if (undo) { m_done.pop_back(); m_undone.push_back('P'); m_pjournal.undo(); }
+    else      { m_undone.pop_back(); m_done.push_back('P'); m_pjournal.redo(); }
+    // Follow the files: the open form gone (an add undone) -> the main form;
+    // its file (or the shared models) changed -> reopened as it is now.
+    try {
+        if (!m_path.empty() && !fs::exists(m_path) && !m_app_dir.empty()) {
+            const auto pr = core::load_project(m_app_dir);
+            const std::string main = (fs::path(m_app_dir) / "forms" / (pr.main_form + ".mort")).string();
+            load_form(core::load_form(main), main);
+        } else if (hits_open && !m_path.empty()) {
+            load_form(core::load_form(m_path), m_path);
+        }
+    } catch (const std::exception& e) {
+        say(e.what(), 2);
+    }
+    rebuild_forms_menu();
+    repaint();
+    say((undo ? "Undid: " : "Redid: ") + label);
+    if (auto lg = log::get(log::Area::Io)) lg->info("project {}: '{}' ({} files)", verb, label, touched.size());
+    return true;
+}
+
+}  // namespace mortimer
+
+namespace mortimer {
+
+// ── s025 m3: the open form vs its file ────────────────────────────────────
+
+void Shell::watch_form() {  // helper: watch m_path and its forms/
+    if (m_path != m_watched_path) {
+        m_watched_path = m_path;
+        m_disk_later.disconnect();
+        m_form_watch.reset();
+        if (!m_path.empty()) {
+            // Editors save by writing, or by renaming a new file over the old;
+            // git replaces it. Any event -> one look, a beat after the last.
+            m_form_watch = Gio::File::create_for_path(m_path)->monitor_file();
+            m_form_watch->signal_changed().connect([this](const Glib::RefPtr<Gio::File>&, const Glib::RefPtr<Gio::File>&,
+                                                          Gio::FileMonitor::Event) {
+                m_disk_later.disconnect();
+                m_disk_later = Glib::signal_timeout().connect([this] { check_disk(); return false; }, 250);
+            });
+        }
+    }
+    // The project's forms are mortimer.json's list (a loose .mort in forms/
+    // isn't one): a git pull that adds or drops a form changes that file.
+    const std::string dir = m_app_dir.empty() ? std::string{} : (std::filesystem::path(m_app_dir) / "mortimer.json").string();
+    if (dir != m_watched_dir) {
+        m_watched_dir = dir;
+        m_dir_later.disconnect();
+        m_forms_dir_watch.reset();
+        if (!dir.empty()) {
+            m_forms_dir_watch = Gio::File::create_for_path(dir)->monitor_file();
+            m_forms_dir_watch->signal_changed().connect([this](const Glib::RefPtr<Gio::File>&, const Glib::RefPtr<Gio::File>&,
+                                                               Gio::FileMonitor::Event) {
+                m_dir_later.disconnect();
+                m_dir_later = Glib::signal_timeout().connect([this] {
+                    // Just the list and the Forms menu -- a whole repaint would
+                    // also re-say the status line over what was just said.
+                    rebuild_forms_menu();
+                    m_project.repaint(m_app_dir, m_path.empty() ? "" : std::filesystem::path(m_path).stem().string());
+                    return false;
+                }, 400);
+            });
+        }
+    }
+}
+
+void Shell::check_disk() {  // helper: the file changed? reload / ask / say
+    if (m_path.empty() || m_disk_asking) return;
+    const auto look = core::look_at_disk(m_path, m_disk, dirty());
+    const std::string file = std::filesystem::path(m_path).filename().string();
+    switch (look.what) {
+        case core::DiskChange::Same:
+            return;
+        case core::DiskChange::Reload:
+            reload_from_disk();
+            say(file + " changed on disk -- reloaded. (Its undo history starts here.)");
+            return;
+        case core::DiskChange::Ask:
+            ask_disk(look);
+            return;
+        case core::DiskChange::Gone:
+            say(file + " was deleted or moved on disk -- the designer still has it; Save writes it back.", 1);
+            return;
+        case core::DiskChange::Broken:
+            say(file + " on disk doesn't read as a form (" + look.error + ") -- kept the designer's copy.", 2);
+            return;
+    }
+}
+
+void Shell::reload_from_disk() {  // helper: the file's form, the selection kept by name
+    std::vector<std::string> names;
+    for (const auto& k : m_sels)
+        if (const auto r = m_design.get(k)) names.push_back(r->name);
+    try {
+        load_form(core::load_form(m_path), m_path);
+    } catch (const std::exception& e) {
+        say(e.what(), 2);
+        return;
+    }
+    std::vector<std::string> keep;
+    for (const auto& n : names)
+        if (const auto k = m_design.find(n); !k.empty()) keep.push_back(k);
+    if (!keep.empty()) { m_sel = keep.front(); m_sels = keep; repaint(); }
+}
+
+// The file changed AND there are unsaved edits here (or it doesn't parse and
+// a Save is about to write over it). Reload -- lose mine; Keep Mine -- what's
+// on disk is acknowledged, the next Save overwrites it (after_keep: the Save
+// that asked goes ahead).
+void Shell::ask_disk(const core::DiskLook& look, std::function<void()> after_keep) {  // helper: reload or keep mine
+    m_disk_asking = true;
+    const std::string file = std::filesystem::path(m_path).filename().string();
+    const bool broken = look.what == core::DiskChange::Broken;
+    auto alert = Gtk::AlertDialog::create(file + (broken ? " on disk doesn't read as a form" : " changed on disk"));
+    alert->set_detail(broken
+        ? "Another program left it unreadable (" + look.error + "). Keep Mine writes the designer's copy over it."
+        : "Another program changed it (an editor, a git pull) while you have unsaved changes here.\n\n"
+          "Reload takes the file as it is now -- your unsaved changes are lost.\n"
+          "Keep Mine keeps editing; your next Save overwrites the file on disk.");
+    if (broken) alert->set_buttons({"Cancel", "Keep Mine"});
+    else alert->set_buttons({"Keep Mine", "Reload"});
+    alert->set_cancel_button(0);
+    alert->set_default_button(0);
+    const std::string json = look.json;
+    alert->choose(*this, [this, alert, broken, json, after_keep](const Glib::RefPtr<Gio::AsyncResult>& result) {
+        int which = 0;
+        try { which = alert->choose_finish(result); } catch (const Glib::Error&) { which = 0; }
+        m_disk_asking = false;
+        if (broken) {
+            if (which != 1) return;
+            m_disk = core::look_at_disk(m_path, "", true).json;   // "" for a broken file: Save goes ahead
+            m_disk_asking = true;   // the Save below must not ask again
+            if (after_keep) after_keep();
+            m_disk_asking = false;
+            return;
+        }
+        if (which == 1) {
+            reload_from_disk();
+            say("Reloaded " + std::filesystem::path(m_path).filename().string() + " from disk -- your unsaved changes are gone.");
+            return;
+        }
+        m_disk = json;   // acknowledged: the next Save overwrites it
+        say("Kept your copy -- Save overwrites " + std::filesystem::path(m_path).filename().string() + " on disk.", 1);
+        if (after_keep) after_keep();
+    });
 }
 
 }  // namespace mortimer

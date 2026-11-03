@@ -86,6 +86,8 @@ add_library(mortimer_core STATIC
     src/core/Xml.cpp      # s024 m4: just enough XML for a .ui (no new dependency)
     src/core/UiFile.cpp   # s024 m3: a form as a GtkBuilder .ui (export; what it can't say, named)
     src/core/Help.cpp     # s024 m6: the user guide -- pages, blocks, search (GTK-free)
+    src/core/ProjectUndo.cpp   # s025 m2: the project's files as an undo store
+    src/core/DiskForm.cpp      # s025 m3: the open form vs its file (changed under us?)
     ${MORTIMER_HELP_CPP}
     ${MORTIMER_TEMPLATES_CPP}
 )

@@ -77,7 +77,10 @@ void Shell::bind_model() {  // bindings: design <-> journal <-> panes
         if (!m_sels.empty() && m_sels.front() == m_sel) return m_sels;
         return std::vector<std::string>{m_sel};
     });
-    m_journal.set_on_change([this] { update_undo_ui(); });
+    m_journal.set_on_change([this] { reconcile_history(); update_undo_ui(); });
+    // s025 m2: the project's files, in the same history.
+    m_pjournal.prune_unchanged = true;   // a step names every file; keeps the changed ones
+    m_pjournal.set_on_change([this] { reconcile_history(); update_undo_ui(); });
 
     // What the panes report -> handlers. None of them writes the design itself
     // (the inspector writes only through core::design:: verbs).
@@ -134,7 +137,10 @@ void Shell::bind_keys() {  // bindings: Ctrl+Z, Delete, Alt+arrows
             if (z && mods == CTRL)                                           act = "win.undo";
             else if (z && mods == (CTRL | SHIFT))                            act = "win.redo";
             else if ((keyval == GDK_KEY_y || keyval == GDK_KEY_Y) && mods == CTRL) act = "win.redo";
-            else if (keyval == GDK_KEY_Delete && mods == Gdk::ModifierType{}) act = "win.delete";
+            // s025: Backspace too -- a laptop / Mac-style "delete" key sends
+            // BackSpace (Fn+delete is Delete; Scott's keyboard). Text boxes keep
+            // theirs: focus_is_text() below steps aside, as for Delete.
+            else if ((keyval == GDK_KEY_Delete || keyval == GDK_KEY_BackSpace) && mods == Gdk::ModifierType{}) act = "win.delete";
             // s020: the clipboard keys -- a text box keeps its own (focus_is_text below).
             else if ((keyval == GDK_KEY_c || keyval == GDK_KEY_C) && mods == CTRL) act = "win.copy";
             else if ((keyval == GDK_KEY_x || keyval == GDK_KEY_X) && mods == CTRL) act = "win.cut";
