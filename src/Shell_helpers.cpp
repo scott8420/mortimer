@@ -224,6 +224,10 @@ void Shell::repaint() {  // helper: every pane from the model
     if (m_act_delete) m_act_delete->set_enabled(child);
     if (m_act_up)     m_act_up->set_enabled(child);
     if (m_act_down)   m_act_down->set_enabled(child);
+    if (m_act_copy)   m_act_copy->set_enabled(child);
+    if (m_act_cut)    m_act_cut->set_enabled(child);
+    if (m_act_dup)    m_act_dup->set_enabled(child);
+    if (m_act_paste)  m_act_paste->set_enabled(!m_clip.empty() && !m_design.root().empty());
     update_title();
     if (!m_design.root().empty()) m_hooks.show(core::live_report(m_app_dir, m_design.to_form()), m_app_dir);
     if (keys_to_tree) m_tree.focus_selection();

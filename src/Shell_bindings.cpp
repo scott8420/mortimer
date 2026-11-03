@@ -37,6 +37,10 @@ void Shell::bind_actions() {  // bindings: win.* + recents group
     m_act_redo   = add_action("redo",      sigc::mem_fun(*this, &Shell::on_redo));
     m_act_delete = add_action("delete",    sigc::mem_fun(*this, &Shell::on_delete));
     m_act_up     = add_action("move-up",   sigc::mem_fun(*this, &Shell::on_move_up));
+    m_act_copy   = add_action("copy",      sigc::mem_fun(*this, &Shell::on_copy));        // s020
+    m_act_cut    = add_action("cut",       sigc::mem_fun(*this, &Shell::on_cut));
+    m_act_paste  = add_action("paste",     sigc::mem_fun(*this, &Shell::on_paste));
+    m_act_dup    = add_action("duplicate", sigc::mem_fun(*this, &Shell::on_duplicate));
     m_act_down   = add_action("move-down", sigc::mem_fun(*this, &Shell::on_move_down));
 
     // Open Recent: one parameterised action serves every row (recents.open(<path>)).
@@ -126,6 +130,11 @@ void Shell::bind_keys() {  // bindings: Ctrl+Z, Delete, Alt+arrows
             else if (z && mods == (CTRL | SHIFT))                            act = "win.redo";
             else if ((keyval == GDK_KEY_y || keyval == GDK_KEY_Y) && mods == CTRL) act = "win.redo";
             else if (keyval == GDK_KEY_Delete && mods == Gdk::ModifierType{}) act = "win.delete";
+            // s020: the clipboard keys -- a text box keeps its own (focus_is_text below).
+            else if ((keyval == GDK_KEY_c || keyval == GDK_KEY_C) && mods == CTRL) act = "win.copy";
+            else if ((keyval == GDK_KEY_x || keyval == GDK_KEY_X) && mods == CTRL) act = "win.cut";
+            else if ((keyval == GDK_KEY_v || keyval == GDK_KEY_V) && mods == CTRL) act = "win.paste";
+            else if ((keyval == GDK_KEY_d || keyval == GDK_KEY_D) && mods == CTRL) act = "win.duplicate";
             else if (keyval == GDK_KEY_Up && mods == ALT)                    act = "win.move-up";
             else if (keyval == GDK_KEY_Down && mods == ALT)                  act = "win.move-down";
             // s018: Escape lets go of the others -- the primary stays.

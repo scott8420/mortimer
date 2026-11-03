@@ -600,6 +600,56 @@ void selftest_design(const Check& check_) {
         (void)pages;
     }
 
+    // ── s020 m1: copy / paste / duplicate ─────────────────────────────────────
+    {
+        Fix f;
+        namespace dz = core::design;
+        const auto ok = f.d.find("ok"), cancel = f.d.find("cancel"), hint = f.d.find("hint"),
+                   body = f.d.find("body"), grid = f.d.find("grid"), cell = f.d.find("cell"),
+                   pages = f.d.find("pages"), side = f.d.find("side");
+        check("copy_name: hello -> hello2, label1 -> label2",
+              dz::copy_name(f.d, "ok") == "ok2" && dz::copy_name(f.d, "label1") == "label2");
+        std::string why;
+        const auto n0 = f.d.count();
+        auto made = dz::paste(f.j, f.d, dz::copy_of(f.d, {ok}), body, 1, &why);
+        check("paste: one, after ok", made.size() == 1 && f.d.children(body)[1] == made[0], why);
+        const auto ok2 = made.empty() ? std::string() : made[0];
+        check("paste: a fresh name, the hook comes along (its own)",
+              f.d.get(ok2) && f.d.get(ok2)->name == "ok2" && f.d.get(ok2)->signals.size() == 1 &&
+              f.d.get(ok2)->signals[0].handler.empty());
+        check("paste: the step names the copy", f.j.undo_label() == "Paste “ok2”", f.j.undo_label());
+        f.j.undo();
+        check("paste: one undo, gone", f.d.count() == n0 && !f.d.get(ok2));
+        made = dz::paste(f.j, f.d, dz::copy_of(f.d, {side, pages}), body, -1, &why);
+        const auto side2 = f.d.find("side2"), pages2 = f.d.find("pages2"), page_a2 = f.d.find("page_a2");
+        check("paste: a sidebar + its stack -> the copy's sidebar points at the copy's stack",
+              made.size() == 2 && f.d.get(side2) && f.d.get(side2)->props.at("stack") == Value(std::string("pages2")), why);
+        check("paste: the subtree comes whole (a page keeps its pack)",
+              f.d.get(page_a2) && f.d.get(page_a2)->parent == pages2 &&
+              f.d.get(page_a2)->pack == f.d.get(f.d.find("page_a"))->pack);
+        check("paste: valid after (names, hooks unique)", first_error(f.d.to_form()).empty(), first_error(f.d.to_form()));
+        f.j.undo();
+        made = dz::paste(f.j, f.d, dz::copy_of(f.d, {cell}), grid, -1, &why);
+        check("paste: into a Grid -> packed afresh (next row)",
+              made.size() == 1 && f.d.get(made[0])->pack != f.d.get(cell)->pack, why);
+        f.j.undo();
+        made = dz::duplicate(f.j, f.d, {cancel, ok}, &why);
+        const auto kids = f.d.children(body);
+        check("duplicate: two, right after the last, in order",
+              made.size() == 2 && kids.size() > 3 && kids[2] == made[0] && kids[3] == made[1] &&
+              f.d.get(made[0])->name == "ok2" && f.d.get(made[1])->name == "cancel2", why);
+        check("duplicate: one step", f.j.undo_label() == "Duplicate 2 widgets", f.j.undo_label());
+        f.j.undo();
+        check("duplicate: from two containers -> refused", dz::duplicate(f.j, f.d, {ok, cell}, &why).empty() &&
+              why.find("one container") != std::string::npos, why);
+        const auto paned = dz::add(f.j, f.d, "Paned", body, -1);
+        const auto n1 = f.d.count();
+        check("paste: more than a Paned holds -> refused, nothing added",
+              dz::paste(f.j, f.d, dz::copy_of(f.d, {ok, cancel, hint}), paned, -1, &why).empty() && f.d.count() == n1, why);
+        check("paste: an empty clip says so", dz::paste(f.j, f.d, dz::Clip{}, body, -1, &why).empty() &&
+              why.find("copy something") != std::string::npos);
+    }
+
     // ── s002 m3: the window's project awareness ─────────────────────────────
     {
         const fs::path tmp = fs::temp_directory_path() / "mortimer_design_selftest";

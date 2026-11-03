@@ -92,6 +92,10 @@ private:
     void on_redo();                              // category: handler
     void on_add(const std::string& type);        // category: handler: palette -> design::add
     void on_delete();                            // category: handler: design::remove; neighbour selected
+    void on_copy();                              // handler: s020 -- the selection's subtrees to m_clip
+    void on_cut();                               // handler: copy, then delete (one step: the delete)
+    void on_paste();                             // handler: into the selection if it takes it, else after
+    void on_duplicate();                         // handler: copy + paste after, one step
     void on_move_up();                           // category: handler
     void on_move_down();                         // category: handler
     void on_select(const std::string& key);      // category: handler: tree / canvas picked one
@@ -139,6 +143,7 @@ private:
     core::DesignJournal m_journal{m_design};
     std::string         m_sel;                 // the selected widget's key (the primary)
     std::vector<std::string> m_sels;           // s018: the whole selection, primary first
+    core::design::Clip  m_clip;                // s020: what Copy holds (outlives the form)
     std::string         m_path;                // "" = never saved
     std::string         m_app_dir;             // the project the form is in; "" = a loose form
     std::string         m_saved;               // form JSON as last saved / loaded
@@ -173,7 +178,8 @@ private:
     std::vector<std::string>        m_icons;   // s015: the project's icon names (the picker; the missing-icon check)
     Glib::RefPtr<Gio::SimpleAction> m_act_edit_style;   // s012: greyed outside a project   // s010: greyed when the project has an About
     std::vector<Glib::RefPtr<Gio::SimpleAction>> m_act_add_res;   // s009: icon, image, data, stylesheet
-    Glib::RefPtr<Gio::SimpleAction> m_act_undo, m_act_redo, m_act_delete, m_act_up, m_act_down;
+    Glib::RefPtr<Gio::SimpleAction> m_act_undo, m_act_redo, m_act_delete, m_act_up, m_act_down,
+                                    m_act_copy, m_act_cut, m_act_paste, m_act_dup;
 
     std::unique_ptr<AboutWindow>     m_about;
     std::unique_ptr<ShortcutsDialog> m_shortcuts;

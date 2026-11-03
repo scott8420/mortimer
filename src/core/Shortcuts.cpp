@@ -108,7 +108,8 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
     // carries one doc-only row so that half of the paradigm is exercised too.
     static const std::vector<ShortcutSpec> kReg = {
         // ── Diagnostics ───────────────────────────────────────────────────────
-        {"Diagnostics", "win.dump-registry", {"<Ctrl>d"}, "",
+        // s020: was Ctrl+D -- Duplicate has it now (the designer's usual key).
+        {"Diagnostics", "win.dump-registry", {"<Ctrl><Shift>d"}, "",
          "Dump the widget registry to the log"},
 
         // ── Edit ──────────────────────────────────────────────────────────────
@@ -118,6 +119,9 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
         {"Edit", "", {}, "Ctrl+Z", "Undo -- anywhere but a text box (which keeps its own)"},
         {"Edit", "", {}, "Ctrl+Shift+Z  /  Ctrl+Y", "Redo"},
         {"Edit", "", {}, "Delete", "Delete the selected widget (and what it holds)"},
+        {"Edit", "", {}, "Ctrl+C  /  Ctrl+X", "Copy / cut the selected widgets (and what they hold)"},
+        {"Edit", "", {}, "Ctrl+V", "Paste -- into the selection if it takes it, else after it"},
+        {"Edit", "", {}, "Ctrl+D", "Duplicate the selected widgets, right after them"},
         {"Edit", "", {}, "Alt+\u2191  /  Alt+\u2193", "Move the selected widget up / down among its siblings"},
 
         // ── File ──────────────────────────────────────────────────────────────

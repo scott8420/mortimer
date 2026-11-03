@@ -897,6 +897,25 @@ std::vector<Design::Id> split_keys(const std::string& s) {
 }
 
 namespace {
+// Between which two staying siblings `n = tops.size()` widgets go at `index`
+// (counted without `tops`): (lo, hi), to spread positions evenly inside.
+// A plain struct, not std::pair: GCC on aarch64 notes (-Wpsabi) that a
+// std::pair<double, double> passes differently since GCC 10.1 -- harmless
+// here, but chatter in every build.
+struct Span { double lo, hi; };
+Span spread(const Design& d, const Design::Id& parent, const std::vector<Design::Id>& tops,
+            int index, std::size_t count = 0) {
+    std::vector<Design::Id> stay = d.children(parent);
+    std::erase_if(stay, [&](const Design::Id& k) { return std::find(tops.begin(), tops.end(), k) != tops.end(); });
+    const auto n = static_cast<double>(count ? count : tops.size());
+    const std::size_t at = (index < 0 || static_cast<std::size_t>(index) > stay.size()) ? stay.size()
+                                                                                        : static_cast<std::size_t>(index);
+    if (stay.empty()) return {0, n + 1};
+    if (at == 0) { const double hi = d.get(stay.front())->pos; return {hi - (n + 1), hi}; }
+    if (at == stay.size()) { const double lo = d.get(stay.back())->pos; return {lo, lo + n + 1}; }
+    return {d.get(stay[at - 1])->pos, d.get(stay[at])->pos};
+}
+
 // The new records for a move of several, or nullopt (and why). Placed in a
 // scratch copy one at a time, so each one's packing sees the ones before it.
 std::optional<std::vector<std::pair<Design::Id, Rec>>>
@@ -906,18 +925,8 @@ plan_move(const Design& d, const std::vector<Design::Id>& tops, const Design::Id
     if (!d.get(parent) || parent == Design::kForm) { say(why, "nothing to put them in"); return std::nullopt; }
     for (const auto& t : tops)
         if (d.is_under(parent, t)) { say(why, "a widget can't go inside itself"); return std::nullopt; }
-    // Between which two staying siblings they go: positions spread evenly.
-    std::vector<Design::Id> stay = d.children(parent);
-    std::erase_if(stay, [&](const Design::Id& k) { return std::find(tops.begin(), tops.end(), k) != tops.end(); });
+    const auto [lo, hi] = spread(d, parent, tops, index);
     const auto n = static_cast<double>(tops.size());
-    const std::size_t at = (index < 0 || static_cast<std::size_t>(index) > stay.size()) ? stay.size()
-                                                                                        : static_cast<std::size_t>(index);
-    double lo = 0, hi = n + 1;
-    if (!stay.empty()) {
-        if (at == 0)               { hi = d.get(stay.front())->pos; lo = hi - (n + 1); }
-        else if (at == stay.size()) { lo = d.get(stay.back())->pos; hi = lo + n + 1; }
-        else                        { lo = d.get(stay[at - 1])->pos; hi = d.get(stay[at])->pos; }
-    }
     Design s = d;          // scratch: no door, no repaint
     s.set_door({});
     s.set_on_change({});
@@ -998,6 +1007,112 @@ Landing landing_at_many(const Design& d, const std::vector<Design::Id>& moving, 
     Landing after = landing_many(d, moving, target, Zone::After);
     if (used) *used = Zone::After;
     return after.parent.empty() ? at : after;
+}
+
+Clip copy_of(const Design& d, const std::vector<Design::Id>& ids) {
+    Clip c;
+    c.tops = top_level(d, ids);
+    for (const auto& t : c.tops)
+        for (const auto& k : d.subtree(t)) c.recs.emplace_back(k, *d.get(k));
+    return c;
+}
+
+std::string copy_name(const Design& d, const std::string& name) {
+    std::string stem = name;
+    while (!stem.empty() && std::isdigit(static_cast<unsigned char>(stem.back()))) stem.pop_back();
+    if (stem.empty()) stem = name + "_";
+    for (int n = 2;; ++n)
+        if (d.find(stem + std::to_string(n)).empty()) return stem + std::to_string(n);
+}
+
+namespace {
+// The pasted records (new keys, names, places), or nullopt and why. Built on a
+// scratch copy so every name / slot / row sees the ones placed before it.
+std::optional<std::vector<std::pair<Design::Id, Rec>>>
+plan_paste(const Design& d, const Clip& c, const Design::Id& parent, int index, std::string* why) {
+    if (c.empty()) { say(why, "nothing to paste -- copy something first"); return std::nullopt; }
+    if (!d.get(parent) || parent == Design::kForm) { say(why, "nothing to paste into"); return std::nullopt; }
+    const auto [lo, hi] = spread(d, parent, {}, index, c.tops.size());
+    const auto n = static_cast<double>(c.tops.size());
+    Design s = d;
+    s.set_door({});
+    s.set_on_change({});
+    std::map<Design::Id, Design::Id> keys;
+    std::map<std::string, std::string> names;
+    std::vector<std::pair<Design::Id, Rec>> out;
+    std::size_t k = 0;
+    for (const auto& [old, rec] : c.recs) {
+        Rec r = rec;
+        const Design::Id key = s.fresh_key();
+        keys[old] = key;
+        if (std::find(c.tops.begin(), c.tops.end(), old) != c.tops.end()) {
+            std::map<std::string, Value> pack;
+            if (auto no = can_hold(s, parent, r.type, &pack); !no.empty()) {
+                say(why, rec.name + ": " + no);
+                return std::nullopt;
+            }
+            r.parent = parent;
+            r.pack   = std::move(pack);
+            r.pos    = lo + (hi - lo) * static_cast<double>(++k) / (n + 1);
+        } else {
+            r.parent = keys.at(rec.parent);   // pre-order: the parent came first
+        }
+        r.name = copy_name(s, rec.name);
+        names[rec.name] = r.name;
+        for (auto& h : r.signals) h.handler.clear();   // hooks are one per form
+        s.put(key, r);
+        out.emplace_back(key, r);
+    }
+    // A Ref to a widget that came along follows it to the copy.
+    for (auto& [key, r] : out) {
+        const WidgetSpec* w = find_widget(r.type);
+        if (!w) continue;
+        for (auto& [p, v] : r.props) {
+            const PropSpec* ps = find_prop(*w, p);
+            if (ps && ps->kind == PropKind::Ref && std::holds_alternative<std::string>(v))
+                if (const auto it = names.find(std::get<std::string>(v)); it != names.end()) v = it->second;
+        }
+    }
+    return out;
+}
+
+std::vector<Design::Id> paste_as(DesignJournal& j, Design& d, const Clip& c, const Design::Id& parent, int index,
+                                 const std::string& verb, std::string* why) {
+    const auto plan = plan_paste(d, c, parent, index, why);
+    if (!plan) return {};
+    std::vector<Design::Id> tops, all;
+    for (const auto& [key, r] : *plan) {
+        all.push_back(key);
+        if (r.parent == parent) tops.push_back(key);
+    }
+    const std::string label = tops.size() == 1 ? verb + " " + curly(plan->front().second.name)
+                                               : verb + " " + std::to_string(tops.size()) + " widgets";
+    j.run(label, {}, [&] {
+        for (const auto& [key, r] : *plan) {
+            d.fresh_key();   // keep the counter where the scratch copy left it (keys never reused)
+            d.put(key, r);
+        }
+        return all;
+    });
+    return tops;
+}
+}  // namespace
+
+std::vector<Design::Id> paste(DesignJournal& j, Design& d, const Clip& c, const Design::Id& parent, int index,
+                              std::string* why) {
+    return paste_as(j, d, c, parent, index, "Paste", why);
+}
+
+std::vector<Design::Id> duplicate(DesignJournal& j, Design& d, const std::vector<Design::Id>& ids,
+                                  std::string* why) {
+    const auto tops = top_level(d, ids);
+    if (tops.empty()) { say(why, "the window is the form -- it can't be duplicated"); return {}; }
+    const Design::Id parent = d.get(tops.front())->parent;
+    for (const auto& t : tops)
+        if (d.get(t)->parent != parent) { say(why, "duplicate several from one container at a time"); return {}; }
+    const auto sib = d.children(parent);
+    const auto last = std::find(sib.begin(), sib.end(), tops.back());
+    return paste_as(j, d, copy_of(d, tops), parent, static_cast<int>(last - sib.begin()) + 1, "Duplicate", why);
 }
 
 Design::Id neighbour(const Design& d, const Design::Id& id) {

@@ -431,6 +431,55 @@ void Shell::on_delete() {  // handler: design::remove; neighbour selected
     m_journal.reselect({next});
 }
 
+// s020: the clipboard. Mortimer's own (subtrees, not text): it outlives the
+// form, so a copy pastes into another form opened after it.
+void Shell::on_copy() {  // handler
+    auto c = core::design::copy_of(m_design, m_sels.empty() ? std::vector<std::string>{m_sel} : m_sels);
+    if (c.empty()) { say("Nothing to copy -- the window is the form", 1); return; }
+    m_clip = std::move(c);
+    const std::size_t n = m_clip.tops.size();
+    say(n == 1 ? "Copied “" + m_clip.recs.front().second.name + "”" + (m_clip.recs.size() > 1 ? " (and what it holds)" : "")
+               : "Copied " + std::to_string(n) + " widgets");
+    if (m_act_paste) m_act_paste->set_enabled(true);
+}
+
+void Shell::on_cut() {  // handler
+    auto c = core::design::copy_of(m_design, m_sels.empty() ? std::vector<std::string>{m_sel} : m_sels);
+    if (c.empty()) { say("Nothing to cut -- the window is the form", 1); return; }
+    m_clip = std::move(c);
+    const std::size_t n = m_clip.tops.size();
+    const std::size_t before = m_journal.size();
+    on_delete();   // the step is the delete: Ctrl+Z puts them back (the clip stays)
+    if (m_journal.size() != before)
+        say(n == 1 ? "Cut “" + m_clip.recs.front().second.name + "” -- Ctrl+V puts it back somewhere"
+                   : "Cut " + std::to_string(n) + " widgets -- Ctrl+V puts them back somewhere");
+}
+
+void Shell::on_paste() {  // handler
+    if (m_clip.empty()) { say("Nothing to paste -- copy something first", 1); return; }
+    // Into the selection if it can take the first one, else just after it (the palette's rule).
+    const auto at = core::design::landing_on(m_design, m_clip.recs.front().second.type, "", m_sel);
+    std::string why;
+    const auto made = at.parent.empty() ? std::vector<std::string>{}
+                                        : core::design::paste(m_journal, m_design, m_clip, at.parent, at.index, &why);
+    if (made.empty()) { say("Can't paste here: " + (at.parent.empty() ? at.why : why), 2); return; }
+    m_sel = made.front();
+    m_sels = made;
+    m_journal.reselect(made);
+    m_keys_to_tree = true;
+}
+
+void Shell::on_duplicate() {  // handler
+    std::string why;
+    const auto made = core::design::duplicate(m_journal, m_design,
+                                              m_sels.empty() ? std::vector<std::string>{m_sel} : m_sels, &why);
+    if (made.empty()) { if (!why.empty()) say("Can't duplicate: " + why, 2); return; }
+    m_sel = made.front();
+    m_sels = made;
+    m_journal.reselect(made);
+    m_keys_to_tree = true;
+}
+
 void Shell::on_move_up() {  // handler
     core::design::move_up(m_journal, m_design, m_sel);
 }

@@ -242,6 +242,33 @@ Landing landing_many(const Design& d, const std::vector<Design::Id>& moving, con
 Landing landing_at_many(const Design& d, const std::vector<Design::Id>& moving, const Design::Id& target,
                         double pos, int extent, Zone* used = nullptr);
 
+// ── s020: copy / paste / duplicate ──────────────────────────────────────────
+// What Copy holds: whole subtrees, as they were (keys and names the
+// originals'), in the tree's order. It outlives the form -- open another and
+// paste there.
+struct Clip {
+    std::vector<std::pair<Design::Id, Rec>> recs;   // each top's subtree, pre-order
+    std::vector<Design::Id>                 tops;
+    bool empty() const { return tops.empty(); }
+};
+Clip copy_of(const Design& d, const std::vector<Design::Id>& ids);   // top_level's subtrees
+// A name for a copy: the stem (trailing digits off) + the first free number
+// from 2 -- "hello" -> "hello2", "label1" -> "label2".
+std::string copy_name(const Design& d, const std::string& name);
+// Put the clip's subtrees into `parent` at `index` (-1 = the end), side by
+// side, as ONE step ("Paste “hello2”" / "Paste 3 widgets"). Every widget gets
+// a fresh key and name; a Ref inside the clip (a sidebar's stack) follows its
+// widget's new name; a ticked signal comes along but not a custom handler
+// name (hooks are one per form -- the copy's hook is on_<newname>_<signal>).
+// The tops are packed in turn on a scratch copy: all or nothing. Returns the
+// new tops ({} = refused, `why` says).
+std::vector<Design::Id> paste(DesignJournal& j, Design& d, const Clip& c, const Design::Id& parent,
+                              int index, std::string* why = nullptr);
+// Copy + paste right after the last of them, one step ("Duplicate “hello”").
+// Several must share a parent.
+std::vector<Design::Id> duplicate(DesignJournal& j, Design& d, const std::vector<Design::Id>& ids,
+                                  std::string* why = nullptr);
+
 // Who takes the selection when `id` goes: next sibling, else previous, else parent.
 Design::Id neighbour(const Design& d, const Design::Id& id);
 

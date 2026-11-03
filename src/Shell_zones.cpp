@@ -135,6 +135,10 @@ Glib::RefPtr<Gio::Menu> Shell::build_menu() {  // zone: hamburger model
     menu->append_section(m_edit_menu);
 
     auto widget = Gio::Menu::create();
+    widget->append("Cut", "win.cut");             // s020
+    widget->append("Copy", "win.copy");
+    widget->append("Paste", "win.paste");
+    widget->append("Duplicate", "win.duplicate");
     widget->append("Delete Widget", "win.delete");
     widget->append("Move Up", "win.move-up");
     widget->append("Move Down", "win.move-down");
