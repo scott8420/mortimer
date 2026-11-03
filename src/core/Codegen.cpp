@@ -687,6 +687,28 @@ std::string unnamed_params(const std::string& params) {
     return out;
 }
 
+// s024 m5: "const Glib::RefPtr<X>& item, guint n" -> "item, n" (to forward them).
+static std::string param_names(const std::string& params) {
+    std::string out, one;
+    int depth = 0;
+    auto take = [&] {
+        while (!one.empty() && one.back() == ' ') one.pop_back();
+        const auto sp = one.find_last_of(" *&");
+        if (!one.empty()) out += (out.empty() ? "" : ", ") + one.substr(sp + 1);
+        one.clear();
+    };
+    for (char c : params) {
+        if (c == '<') ++depth;
+        if (c == '>') --depth;
+        if (c == ',' && depth == 0) { take(); continue; }
+        one += c;
+    }
+    take();
+    return out;
+}
+// s024 m5: every hook is CALLED through this -- the hook (the virtual), then its slot.
+static std::string fire(const std::string& hook) { return "fire_" + hook; }
+
 std::string pad(std::string s, std::size_t width) {
     if (s.size() < width) s.append(width - s.size(), ' ');
     return s;
@@ -865,9 +887,9 @@ static std::string file_chooser_def(const Form& f, const FileDef& d, const std::
       << "        } catch (const Glib::Error& e) {\n"
       << "            if (auto lg = log::get(log::Area::Ui)) lg->error(" << cpp_string(who + ": {}") << ", e.what());\n"
       << "        }\n"
-      << "        if (!" << (many ? "paths" : "path") << ".empty()) " << file_chosen_hook(d)
+      << "        if (!" << (many ? "paths" : "path") << ".empty()) " << fire(file_chosen_hook(d))
       << "(" << (many ? "paths" : "path") << ");\n";
-    if (d.cancel) c << "        else " << file_cancelled_hook(d) << "();\n";
+    if (d.cancel) c << "        else " << fire(file_cancelled_hook(d)) << "();\n";
     c << "    }, cancel);\n"
       << "}\n";
     return c.str();
@@ -1002,7 +1024,7 @@ static std::string row_wiring(const Form& f, const Node& v, const ModelDef& md) 
                 if (edited) c << "            m_ui->m_" << v.id << "_edited.emit(m_item, " << cpp_string(fd->name) << ");\n";
                 c << "        }\n";
             }
-            if (hk) c << "        m_ui->" << hook_name(n, *hk) << "(m_item);\n";
+            if (hk) c << "        m_ui->" << fire(hook_name(n, *hk)) << "(m_item);\n";
             c << "    });\n";
         }
     });
@@ -1257,7 +1279,8 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
       << (f.files.empty() ? "" : "#include <giomm/cancellable.h>\n")
       << (f.models.empty() ? "" : "#include <glibmm/object.h>\n#include <glibmm/refptr.h>\n#include <sigc++/signal.h>\n#include <cstdint>\n#include <map>\n#include <set>\n#include <string>\n")
       << (shared_used(f).empty() ? "" : "#include \"generated/Models.hpp\"\n")
-      << "#include <sigc++/connection.h>\n"
+       << "#include <sigc++/connection.h>\n"
+      << (hooks.empty() ? "" : "#include <functional>\n")
       << (f.files.empty() ? "" : "#include <map>\n#include <memory>\n#include <string>\n")
       << (opens_any(f) || !list_views(f).empty() ? "#include <memory>\n" : "")
       << "#include <vector>\n\n"
@@ -1324,7 +1347,18 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
             h << pad(d, width + 4) << "// " << k.widget << " (" << k.type << ") " << k.signal
               << (k.required ? " -- REQUIRED" : "") << "\n";
         }
-        h << "\n";
+        // s024 m5: the same hooks as slots, for code that isn't the subclass.
+        h << "\npublic:\n"
+          << "    // ── slots ── the same hooks, for code that ISN'T " << f.name << " (a controller,\n"
+          << "    // a test, a plugin): assign a function and it runs when the signal fires --\n"
+          << "    // AFTER the hook above; both run. A bool hook's answer is true if EITHER\n"
+          << "    // says true. Unset (the default) costs nothing.\n"
+          << "    //     ui.on_save_clicked_slot = [&] { doc.save(); };\n";
+        std::size_t sw = 0;
+        for (const auto& k : hooks) sw = std::max(sw, ("std::function<" + k.ret + "(" + k.params + ")>").size());
+        for (const auto& k : hooks)
+            h << "    " << pad("std::function<" + k.ret + "(" + k.params + ")>", sw) << " " << k.name << "_slot;\n";
+        h << "\nprotected:\n";
     }
     if (!members.empty()) {
         h << "    // ── widgets ── registry names \"" << reg << ".<id>\"\n";
@@ -1354,6 +1388,12 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
           << "> m_" << m->id << "_selection;   // over the sorted rows\n\n";
     }
     h << "private:\n"
+      << [&] {   // s024 m5
+             if (hooks.empty()) return std::string();
+             std::string o = "    // Every signal reaches its hook through fire_<hook>: the hook, then its slot.\n";
+             for (const auto& k : hooks) o += "    " + k.ret + " " + fire(k.name) + "(" + k.params + ");\n";
+             return o + "\n";
+         }()
       << "    void build_ui();     // construct: properties, then packing, top-down\n"
       << "    void bind_hooks();   // every ticked signal -> its hook (last, so no setter fires one)\n"
       << [&] {   // s016
@@ -1484,7 +1524,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
                 const std::string item = model_item(*md), sel = "m_" + n.id + "_selection";
                 if (hk.signal == "edited") {   // s007: the cells emit it after writing the row
                     c << "    m_hooks.push_back(m_" << n.id << "_edited.connect(\n"
-                      << "        sigc::mem_fun(*this, &" << ui << "::" << hook_name(n, hk) << ")));\n";
+                      << "        sigc::mem_fun(*this, &" << ui << "::" << fire(hook_name(n, hk)) << ")));\n";
                     continue;
                 }
                 if (hk.signal == "selected" && view_selection(n) == "multiple")
@@ -1495,22 +1535,22 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
                       << "            if (auto it = std::dynamic_pointer_cast<" << item << ">(" << sel
                       << "->get_object(picked->get_nth(i))))\n"
                       << "                items.push_back(it);\n"
-                      << "        " << hook_name(n, hk) << "(items);\n"
+                      << "        " << fire(hook_name(n, hk)) << "(items);\n"
                       << "    }));\n";
                 else if (hk.signal == "activated")
                     c << "    m_hooks.push_back(m_" << n.id << ".signal_activate().connect([this](guint position) {\n"
-                      << "        " << hook_name(n, hk) << "(std::dynamic_pointer_cast<" << item << ">(" << sel
+                      << "        " << fire(hook_name(n, hk)) << "(std::dynamic_pointer_cast<" << item << ">(" << sel
                       << "->get_object(position)));\n"
                       << "    }));\n";
                 else
                     c << "    m_hooks.push_back(" << sel << "->signal_selection_changed().connect([this](guint, guint) {\n"
-                      << "        " << hook_name(n, hk) << "(std::dynamic_pointer_cast<" << item << ">(" << sel
+                      << "        " << fire(hook_name(n, hk)) << "(std::dynamic_pointer_cast<" << item << ">(" << sel
                       << "->get_selected_item()));\n"
                       << "    }));\n";
                 continue;
             }
             c << "    m_hooks.push_back(" << obj << s->connect << ".connect(\n"
-              << "        sigc::mem_fun(*this, &" << ui << "::" << hook_name(n, hk) << ")"
+              << "        sigc::mem_fun(*this, &" << ui << "::" << fire(hook_name(n, hk)) << ")"
               << (s->before ? ", false" : "") << "));\n";
         }
     });
@@ -1545,7 +1585,7 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
                   << "        m_hooks.push_back(undo::on_change([a] { a->set_enabled(undo::can_" << a.does << "()); }));\n";
             else if (a.opens.empty())
                 c << "        m_hooks.push_back(a->signal_activate().connect(\n"
-                  << "            [this](const Glib::VariantBase&) { " << action_hook(a) << "(); }));\n";
+                  << "            [this](const Glib::VariantBase&) { " << fire(action_hook(a)) << "(); }));\n";
             else
                 c << opens_activate(a, app);
             c
@@ -1562,6 +1602,23 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
     c << "}\n";
     for (const auto& d : f.files) c << file_chooser_def(f, d, ui);
 
+    if (!hooks.empty()) {   // s024 m5
+        c << "\n// ── fire ── each signal's one way in: the hook (yours, or the default below),\n"
+          << "// then the slot if code outside " << f.name << " set one.\n";
+        for (const auto& k : hooks) {
+            const std::string args = param_names(k.params);
+            c << "\n" << k.ret << " " << ui << "::" << fire(k.name) << "(" << k.params << ") {\n";
+            if (k.ret == "void")
+                c << "    " << k.name << "(" << args << ");\n"
+                  << "    if (" << k.name << "_slot) " << k.name << "_slot(" << args << ");\n";
+            else
+                c << "    const bool hook = " << k.name << "(" << args << ");\n"
+                  << "    const bool slot = " << k.name << "_slot && " << k.name << "_slot(" << args << ");\n"
+                  << "    return hook || slot;   // either one saying true is the answer\n";
+            c << "}\n";
+        }
+    }
+
     bool any_default = false;
     for (const auto& k : hooks) any_default = any_default || !k.required;
     if (any_default) {
@@ -1571,7 +1628,8 @@ std::vector<OutFile> generate_form(const Form& f, const AppInfo& app) {
             if (k.required) continue;
             c << "\n" << k.ret << " " << ui << "::" << k.name << "(" << unnamed_params(k.params)
               << ") {\n"
-              << "    hooks::unhooked(" << cpp_string(f.name) << ", " << cpp_string(k.name) << ", "
+              << "    if (!" << k.name << "_slot)   // a slot is wired: not unhooked (s024 m5)\n"
+              << "        hooks::unhooked(" << cpp_string(f.name) << ", " << cpp_string(k.name) << ", "
               << cpp_string(k.widget) << ", " << cpp_string(k.signal) << ");\n";
             if (k.ret != "void") c << "    return " << k.ret_default << ";\n";
             c << "}\n";

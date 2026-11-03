@@ -251,7 +251,7 @@ void selftest_generator(const Check& check) {
         check("codegen: enums spelled for C++", has(c, "m_box.set_orientation(Gtk::Orientation::VERTICAL);"), "");
         check("codegen: packing", has(c, "m_box.append(m_ok);") && has(c, "set_child(m_box);"), "");
         check("codegen: close_request runs before GTK's default",
-              has(c, "&ProbeUi::on_probe_close_request), false));"), "");
+              has(c, "&ProbeUi::fire_on_probe_close_request), false));"), "");
         check("codegen: the destructor cuts hooks first",
               c.find("c.disconnect()") < c.find("registry::remove(this)"), "");
         check("codegen: bind_hooks after build_ui", c.find("    build_ui();") < c.find("    bind_hooks();"), "");
@@ -283,7 +283,7 @@ void selftest_generator(const Check& check) {
         check("codegen: a double as written", has(kc, "m_volume.set_value(7.25);"), "");
         check("codegen: range before value",
               kc.find("m_volume.get_adjustment()->set_upper") < kc.find("m_volume.set_value"), "");
-        check("codegen: a custom handler name", has(kc, "&KitchenSinkUi::on_name_edited"), "");
+        check("codegen: a custom handler name", has(kc, "&KitchenSinkUi::fire_on_name_edited"), "");
         check("codegen: a hook with a parameter",
               has(core::generate_form(k, app)[0].content, "virtual void on_rows_row_activated(Gtk::ListBoxRow* row);"), "");
     }
@@ -1049,7 +1049,7 @@ class X : public ui::XUi {
               has(h2, "virtual void on_t_del_clicked(const Glib::RefPtr<TaskItem>& item) = 0;"), "");
         check("s011 m2 codegen: the row calls it with its item, guarded",
               has(c2, "m_t_del.signal_clicked().connect([this] {") &&
-              has(c2, "if (m_binding || !m_item || !*m_alive) return;") && has(c2, "m_ui->on_t_del_clicked(m_item);"), "");
+              has(c2, "if (m_binding || !m_item || !*m_alive) return;") && has(c2, "m_ui->fire_on_t_del_clicked(m_item);"), "");
         check("s011 m2 codegen: edited is a member signal, emitted by the row, hooked by bind_hooks",
               has(h2, "m_task_list_edited;") && has(c2, "m_ui->m_task_list_edited.emit(m_item, \"done\");") &&
               has(c2, "m_task_list_edited.connect("), "");
@@ -1714,5 +1714,32 @@ class X : public ui::XUi {
         check("s024 m3 export: what a .ui can't say is NAMED (an action, a model, window state), in the header too",
               act && mdl && rem && has(x.xml, "Left out (a .ui can't say them):") &&
               x.xml.substr(c0 + 4, c1 - c0 - 4).find("--") == std::string::npos, "");
+    }
+
+    // ── s024 m5: a std::function slot beside every hook ─────────────────────
+    {
+        const auto k = core::load_form((std::filesystem::path(MORTIMER_SOURCE_DIR) / "tests" / "KitchenSink.mort").string());
+        const auto o = core::generate_form(k, core::derive_app("Kitchen Sink"));
+        const std::string& h = o[0].content;
+        const std::string& c = o[1].content;
+        check("s024 m5: a public slot per hook, its signature the hook's",
+              has(h, "\npublic:\n    // ── slots ──") && has(h, " on_go_clicked_slot;") &&
+              has(h, "std::function<bool()>") && has(h, " on_kitchen_sink_close_request_slot;") &&
+              has(h, "#include <functional>"), "");
+        check("s024 m5: every signal reaches fire_<hook>, never the hook itself",
+              has(c, "&KitchenSinkUi::fire_on_go_clicked)") && !has(c, "&KitchenSinkUi::on_go_clicked)") &&
+              has(c, "fire_on_action_refresh(); }") && has(c, "fire_on_open_doc_chosen(path);") &&
+              has(c, "m_ui->fire_on_task_del_clicked(m_item);") && has(c, "fire_on_notes_selected(std::dynamic_pointer_cast"), "");
+        check("s024 m5: fire = the hook, then the slot (both run)",
+              has(c, "void KitchenSinkUi::fire_on_go_clicked() {\n    on_go_clicked();\n    if (on_go_clicked_slot) on_go_clicked_slot();\n}"), "");
+        check("s024 m5: a bool hook's answer is true if either says true (both always run)",
+              has(c, "    const bool hook = on_kitchen_sink_close_request();\n"
+                     "    const bool slot = on_kitchen_sink_close_request_slot && on_kitchen_sink_close_request_slot();\n"
+                     "    return hook || slot;"), "");
+        check("s024 m5: arguments forwarded by name (a template's comma isn't a split)",
+              has(c, "on_notes_activated(item);\n    if (on_notes_activated_slot) on_notes_activated_slot(item);") &&
+              has(c, "on_tabs_switch_page(page, page_number);"), "");
+        check("s024 m5: an unhooked default stays quiet when a slot is wired",
+              has(c, "    if (!on_go_clicked_slot)   // a slot is wired: not unhooked (s024 m5)\n        hooks::unhooked("), "");
     }
 }
