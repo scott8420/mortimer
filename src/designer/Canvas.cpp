@@ -16,6 +16,7 @@
 #include <gtkmm/gestureclick.h>
 #include <gtkmm/droptarget.h>
 #include <gtkmm/dragsource.h>
+#include <gtkmm/orientable.h>
 #include <gtkmm/widgetpaintable.h>
 #include <gdkmm/contentprovider.h>
 #include <glibmm/main.h>
@@ -145,6 +146,10 @@ Canvas::Canvas()
     // widget under the pointer takes it if it can; else it lands just after it.
     auto drop = Gtk::DropTarget::create(G_TYPE_STRING, Gdk::DragAction::COPY | Gdk::DragAction::MOVE);
     drop->set_preload(true);
+    // s017 m2: where in the widget the pointer is picks before / into / after
+    // (core::design::landing_at, the tree's zones), measured along the axis
+    // its PARENT lays children out on. The spot is shown: a line on the
+    // widget's leading or trailing edge, or the dashed ring on what takes it.
     auto resolve = [this](const Glib::ValueBase& v, double x, double y, std::string* payload) {
         core::design::Landing none;
         if (!m_d || !G_VALUE_HOLDS_STRING(v.gobj())) return none;
@@ -164,8 +169,25 @@ Canvas::Canvas()
         if (key.empty()) return none;
         // Let go where it started (a drag that went nowhere): nothing to say.
         if (!add && key == what) { none.why.clear(); return none; }
-        auto at = core::design::landing_on(*m_d, type, add ? "" : what, key);
-        if (!at.parent.empty()) set_drop_mark(at.parent == key ? key : at.parent);
+        double pos = 0;
+        int extent = 0;
+        bool across = false;   // the parent lays out left-to-right
+        const auto rec = m_d->get(key);
+        const auto wit = m_widgets.find(key);
+        if (rec && !rec->parent.empty() && wit != m_widgets.end()) {
+            across = lays_out_across(rec->parent);
+            double wx = 0, wy = 0;
+            if (m_stage.translate_coordinates(*wit->second, x, y, wx, wy)) {
+                pos = across ? wx : wy;
+                extent = across ? wit->second->get_width() : wit->second->get_height();
+            }
+        }
+        core::design::Zone z = core::design::Zone::Inside;
+        auto at = core::design::landing_at(*m_d, type, add ? "" : what, key, pos, extent, &z);
+        if (!at.parent.empty()) {
+            set_drop_mark(at.parent);
+            if (z != core::design::Zone::Inside) set_drop_line(key, z == core::design::Zone::Before, across);
+        }
         return at;
     };
     drop->signal_motion().connect([this, resolve, d = drop.get()](double x, double y) {
@@ -199,9 +221,31 @@ std::string Canvas::key_at(double x, double y) const {
     return {};
 }
 
+// Does this container lay its children out left-to-right? An Orientable says
+// (Box, Paned, CenterBox -- GTK's default for a Box is horizontal, so ask the
+// built widget, not the props); a HeaderBar does; everything else stacks.
+bool Canvas::lays_out_across(const std::string& key) const {
+    const auto it = m_widgets.find(key);
+    if (it == m_widgets.end()) return false;
+    if (const auto* o = dynamic_cast<const Gtk::Orientable*>(it->second))
+        return o->get_orientation() == Gtk::Orientation::HORIZONTAL;
+    return dynamic_cast<const Gtk::HeaderBar*>(it->second) != nullptr;
+}
+
+void Canvas::set_drop_line(const std::string& key, bool before, bool across) {
+    if (const auto it = m_widgets.find(key); it != m_widgets.end()) {
+        m_line_class = across ? (before ? "mortimer-drop-left" : "mortimer-drop-right")
+                              : (before ? "mortimer-drop-top" : "mortimer-drop-bottom");
+        m_line_marked = it->second;
+        m_line_marked->add_css_class(m_line_class);
+    }
+}
+
 void Canvas::set_drop_mark(const std::string& key) {
     if (m_drop_marked) m_drop_marked->remove_css_class("mortimer-drop-target");
     m_drop_marked = nullptr;
+    if (m_line_marked) m_line_marked->remove_css_class(m_line_class);
+    m_line_marked = nullptr;
     if (const auto it = m_widgets.find(key); it != m_widgets.end()) {
         m_drop_marked = it->second;
         m_drop_marked->add_css_class("mortimer-drop-target");
@@ -224,6 +268,7 @@ void Canvas::show(const core::Design& d, const std::string& sel) {
 
     m_d = &d;
     m_drop_marked = nullptr;
+    m_line_marked = nullptr;
     if (m_card) m_stage.remove(*m_card);   // managed: the old tree goes with it
     m_card = nullptr;
     m_keys.clear();

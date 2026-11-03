@@ -194,6 +194,16 @@ Landing landing(const Design& d, const std::string& type, const Design::Id& movi
 Landing landing_on(const Design& d, const std::string& type, const Design::Id& moving,
                    const Design::Id& target);
 
+// s017 m2: a drop on the CANVAS with the tree's zones. `pos` is where the
+// pointer is along the target's PARENT's axis (y in a vertical Box, x in a
+// horizontal one), `extent` the target's size on that axis. The zone
+// (zone_at: a container's quarters, a leaf's halves) picks before / into /
+// after; when that spot refuses (a full window, a parent that can't hold the
+// type), it falls back to landing_on's into-or-after. `used` (optional) says
+// which it came to: Before / After = beside the target, Inside = into it.
+Landing landing_at(const Design& d, const std::string& type, const Design::Id& moving,
+                   const Design::Id& target, double pos, int extent, Zone* used = nullptr);
+
 // Who takes the selection when `id` goes: next sibling, else previous, else parent.
 Design::Id neighbour(const Design& d, const Design::Id& id);
 

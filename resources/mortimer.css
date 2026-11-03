@@ -83,6 +83,12 @@
 .mortimer-tree row.mortimer-drop-after  { box-shadow: inset 0 -2px 0 0 #3584e4; }
 .mortimer-tree row.mortimer-drop-inside { box-shadow: inset 0 0 0 2px #3584e4; border-radius: 6px; }
 .mortimer-drop-target { outline: 2px dashed #3584e4; outline-offset: -2px; }
+/* s017 m2: a canvas drop's spot -- a line on the edge it lands beside, along
+   the parent's axis (top / bottom in a column, left / right in a row). */
+.mortimer-stage .mortimer-drop-top    { box-shadow: inset 0 3px 0 0 #3584e4; }
+.mortimer-stage .mortimer-drop-bottom { box-shadow: inset 0 -3px 0 0 #3584e4; }
+.mortimer-stage .mortimer-drop-left   { box-shadow: inset 3px 0 0 0 #3584e4; }
+.mortimer-stage .mortimer-drop-right  { box-shadow: inset -3px 0 0 0 #3584e4; }
 
 /* s007: an "editable" name the ColumnView's model doesn't have -- untick it. */
 .mortimer-inspector checkbutton.stale label { text-decoration: line-through; opacity: 0.7; }

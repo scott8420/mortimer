@@ -788,6 +788,23 @@ Landing landing_on(const Design& d, const std::string& type, const Design::Id& m
     return (w && w->children != ChildKind::None) ? in : after;   // the more telling reason
 }
 
+Landing landing_at(const Design& d, const std::string& type, const Design::Id& moving,
+                   const Design::Id& target, double pos, int extent, Zone* used) {
+    const auto t = d.get(target);
+    const WidgetSpec* w = t ? find_widget(t->type) : nullptr;
+    const bool container = w && w->children != ChildKind::None;
+    const Zone z = zone_at(pos, extent, container, !t || t->parent.empty());
+    Landing at = landing(d, type, moving, target, z);
+    if (!at.parent.empty()) {
+        if (used) *used = z;
+        return at;
+    }
+    // Where the pointer says refused it -- do what a plain canvas drop did.
+    Landing on = landing_on(d, type, moving, target);
+    if (used) *used = on.parent == target ? Zone::Inside : Zone::After;
+    return on;
+}
+
 Design::Id neighbour(const Design& d, const Design::Id& id) {
     const auto r = d.get(id);
     if (!r) return {};

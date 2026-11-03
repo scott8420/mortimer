@@ -496,6 +496,26 @@ void selftest_design(const Check& check_) {
         check("landing_on: a Label -> just after it", l.parent == body && l.index == 3, std::to_string(l.index));
         l = dz::landing_on(f.d, "Entry", "", grid);
         check("landing_on: a Grid -> into it", l.parent == grid);
+        // s017 m2: the canvas's zones (pos along the parent's axis, of 40).
+        Zone used = Zone::Inside;
+        l = dz::landing_at(f.d, "Button", "", hint, 5, 40, &used);
+        check("landing_at: a leaf's first half -> before it", l.parent == body && l.index == 2 && used == Zone::Before,
+              std::to_string(l.index));
+        l = dz::landing_at(f.d, "Button", "", hint, 35, 40, &used);
+        check("landing_at: a leaf's second half -> after it", l.parent == body && l.index == 3 && used == Zone::After,
+              std::to_string(l.index));
+        l = dz::landing_at(f.d, "Entry", "", grid, 20, 40, &used);
+        check("landing_at: a container's middle -> into it", l.parent == grid && used == Zone::Inside);
+        l = dz::landing_at(f.d, "Entry", "", grid, 2, 40, &used);
+        check("landing_at: a container's top quarter -> before it", l.parent == body && l.index == 5 && used == Zone::Before,
+              std::to_string(l.index));
+        l = dz::landing_at(f.d, "Button", cancel, ok, 1, 40, &used);
+        check("landing_at: cancel onto ok's first half -> first", l.parent == body && l.index == 0, std::to_string(l.index));
+        l = dz::landing_at(f.d, "Label", "", f.d.root(), 1, 40, &used);
+        check("landing_at: the window -> into or nothing (refused, full)", l.parent.empty());
+        l = dz::landing_at(f.d, "Button", "", f.d.find("menu"), 2, 40, &used);
+        check("landing_at: a spot that refuses falls back to into-or-after",
+              l.parent == dz::landing_on(f.d, "Button", "", f.d.find("menu")).parent, l.why);
         // ...and the verb takes the landing as given.
         const auto r = dz::landing(f.d, "Button", cancel, ok, Zone::Before);
         dz::move(f.j, f.d, cancel, r.parent, r.index);

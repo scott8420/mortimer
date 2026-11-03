@@ -45,8 +45,9 @@ public:
     // A click on the stage picked a widget: its design key.
     sigc::signal<void(const std::string&)>& signal_pick() { return m_pick; }
 
-    // Something dragged from the palette or the tree was dropped on a widget:
-    // (payload, parent, index), resolved by core::design::landing_on.
+    // Something dragged from the palette, the tree or the canvas was dropped on
+    // a widget: (payload, parent, index), resolved by core::design::landing_at
+    // (before / into / after by where in the widget the pointer is).
     sigc::signal<void(const std::string&, const std::string&, int)>& signal_drop() { return m_drop; }
     sigc::signal<void(const std::string&)>& signal_refused() { return m_refused; }
 
@@ -75,10 +76,14 @@ private:
     Gtk::Widget* frame_for(const core::Design& d, const std::string& root);
     void on_press(int n, double x, double y);
     std::string key_at(double x, double y) const;   // the design key under a stage point
-    void set_drop_mark(const std::string& key);
+    void set_drop_mark(const std::string& key);   // also clears the line
+    void set_drop_line(const std::string& key, bool before, bool across);
+    bool lays_out_across(const std::string& key) const;
 
     const core::Design* m_d = nullptr;
     Gtk::Widget*        m_drop_marked = nullptr;
+    Gtk::Widget*        m_line_marked = nullptr;   // s017 m2: wears the before / after line
+    std::string         m_line_class;
     std::string         m_drag_key;          // s017: the widget a canvas drag carries
     double              m_drag_x = 0, m_drag_y = 0;   // where it was grabbed (stage coords)
     sigc::signal<void(const std::string&, const std::string&, int)> m_drop;
