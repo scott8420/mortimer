@@ -195,6 +195,40 @@ std::vector<WidgetSpec> build() {
                  {{"activate", "signal_activate()", "void", "", "", false, "Enter was pressed."},
                   {"changed", "signal_changed()", "void", "", "", false, "The text changed."}},
                  {}, "One line of text."});
+    // s022 m3: the everyday controls.
+    c.push_back({"SearchEntry", "Gtk::SearchEntry", "gtkmm/searchentry.h", ChildKind::None, false,
+                 {s("text", "set_text({v})"), s("placeholder", "set_placeholder_text({v})")},
+                 {{"search_changed", "signal_search_changed()", "void", "", "", false,
+                   "The text changed and the typing paused (debounced) -- search now."},
+                  {"stop_search", "signal_stop_search()", "void", "", "", false, "Escape was pressed."}},
+                 {}, "A search field: a magnifier, a clear button, and a change signal that waits for a pause."});
+    c.push_back({"ToggleButton", "Gtk::ToggleButton", "gtkmm/togglebutton.h", ChildKind::None, false,
+                 {s("label", "set_label({v})"), s("icon_name", "set_icon_name({v})"),
+                  b("active", "set_active({v})")},
+                 {{"toggled", "signal_toggled()", "void", "", "", false, "Pressed in or let out (ask get_active())."}},
+                 {}, "A button that stays pressed in until clicked again."});
+    c.push_back({"LinkButton", "Gtk::LinkButton", "gtkmm/linkbutton.h", ChildKind::None, false,
+                 {s("uri", "set_uri({v})"), s("label", "set_label({v})")},
+                 {{"activate_link", "signal_activate_link()", "bool", "", "false", true,
+                   "Clicked. Return true to handle it yourself; false lets GTK open the uri."}},
+                 {}, "A web-style link that opens its uri."});
+    c.push_back({"TextView", "Gtk::TextView", "gtkmm/textview.h", ChildKind::None, false,
+                 {s("text", "get_buffer()->set_text({v})", "The text it starts with (it lives in its TextBuffer)."),
+                  b("editable", "set_editable({v})"),
+                  e("wrap_mode", "set_wrap_mode({v})",
+                    {{"none", "Gtk::WrapMode::NONE"}, {"char", "Gtk::WrapMode::CHAR"},
+                     {"word", "Gtk::WrapMode::WORD"}, {"word_char", "Gtk::WrapMode::WORD_CHAR"}}),
+                  b("monospace", "set_monospace({v})")},
+                 {{"changed", "get_buffer()->signal_changed()", "void", "", "", false,
+                   "The text changed (get_buffer()->get_text() has it)."}},
+                 {}, "Many lines of text. Put it in a ScrolledWindow to scroll."});
+    c.push_back({"ProgressBar", "Gtk::ProgressBar", "gtkmm/progressbar.h", ChildKind::None, false,
+                 {d("fraction", "set_fraction({v})"), b("show_text", "set_show_text({v})"),
+                  s("text", "set_text({v})", "Shown when show_text is on; empty = the percentage.")},
+                 {}, {}, "How far along: set_fraction(0..1) from your code."});
+    c.push_back({"Separator", "Gtk::Separator", "gtkmm/separator.h", ChildKind::None, false,
+                 {e("orientation", "set_orientation({v})", orient())},
+                 {}, {}, "A thin line between things."});
     c.push_back({"CheckButton", "Gtk::CheckButton", "gtkmm/checkbutton.h", ChildKind::None, false,
                  {s("label", "set_label({v})"), b("active", "set_active({v})")},
                  {{"toggled", "signal_toggled()", "void", "", "", false, "Ticked or unticked."}},

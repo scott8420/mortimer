@@ -15,6 +15,12 @@
 #include <gtkmm/dropdown.h>
 #include <gtkmm/expander.h>
 #include <gtkmm/frame.h>
+#include <gtkmm/linkbutton.h>
+#include <gtkmm/progressbar.h>
+#include <gtkmm/searchentry.h>
+#include <gtkmm/separator.h>
+#include <gtkmm/textview.h>
+#include <gtkmm/togglebutton.h>
 #include <gtkmm/notebook.h>
 #include <gtkmm/overlay.h>
 #include <gtkmm/gestureclick.h>
@@ -439,6 +445,24 @@ Gtk::Widget* Canvas::make(const core::Rec& r) {
     if (t == "CenterBox")      return Gtk::make_managed<Gtk::CenterBox>();
     if (t == "ListBox")        return Gtk::make_managed<Gtk::ListBox>();
     if (t == "Entry")          return Gtk::make_managed<Gtk::Entry>();
+    if (t == "SearchEntry")    return Gtk::make_managed<Gtk::SearchEntry>();    // s022 m3
+    if (t == "ProgressBar")    return Gtk::make_managed<Gtk::ProgressBar>();
+    if (t == "Separator")      return Gtk::make_managed<Gtk::Separator>();
+    if (t == "TextView") {
+        auto* tv = Gtk::make_managed<Gtk::TextView>();
+        tv->set_size_request(-1, 60);   // empty, it would be a sliver
+        return tv;
+    }
+    if (t == "ToggleButton") {
+        auto* b = Gtk::make_managed<Gtk::ToggleButton>();
+        if (!r.props.count("label") && !r.props.count("icon_name")) { b->set_label(r.name); placeholder(*b); }
+        return b;
+    }
+    if (t == "LinkButton") {
+        auto* b = Gtk::make_managed<Gtk::LinkButton>();
+        if (!r.props.count("label") && !r.props.count("uri")) { b->set_label(r.name); placeholder(*b); }
+        return b;
+    }
     if (t == "Switch") {
         auto* s = Gtk::make_managed<Gtk::Switch>();
         s->set_halign(Gtk::Align::START);
@@ -520,6 +544,12 @@ void Canvas::apply(Gtk::Widget& w, const core::Rec& r) {
 bool Canvas::apply_one(Gtk::Widget& w, const core::Rec& r, const std::string& p, const Value& v) {
     // The spelled-out few.
     if (p == "margin") { w.set_margin(static_cast<int>(dbl(v))); return true; }
+    if (p == "text" && r.type == "TextView" && std::holds_alternative<std::string>(v)) {   // s022 m3
+        auto* tv = dynamic_cast<Gtk::TextView*>(&w);
+        if (!tv) return false;
+        tv->get_buffer()->set_text(std::get<std::string>(v));
+        return true;
+    }
     if (p == "tooltip" && std::holds_alternative<std::string>(v)) {
         w.set_tooltip_text(std::get<std::string>(v));
         return true;

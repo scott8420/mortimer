@@ -80,6 +80,24 @@
                       { "type": "Label", "id": "c_end", "pack": { "slot": "end" }, "props": { "label": "end" } }
                     ] }
                 ] },
+              { "type": "Box", "id": "controls", "pack": { "name": "controls", "title": "Controls" },
+                "props": { "orientation": "vertical", "spacing": 6 },
+                "children": [
+                  { "type": "SearchEntry", "id": "find", "props": { "placeholder": "Find notes", "text": "" },
+                    "signals": [ "search_changed", "stop_search" ] },
+                  { "type": "ToggleButton", "id": "bold", "props": { "label": "Bold", "icon_name": "format-text-bold-symbolic", "active": true },
+                    "signals": [ "toggled" ] },
+                  { "type": "LinkButton", "id": "site", "props": { "uri": "https://www.gtk.org", "label": "GTK" },
+                    "signals": [ "activate_link" ] },
+                  { "type": "Separator", "id": "rule", "props": { "orientation": "horizontal" } },
+                  { "type": "ScrolledWindow", "id": "text_scroller", "props": { "vexpand": true },
+                    "children": [
+                      { "type": "TextView", "id": "notes_text",
+                        "props": { "text": "Line one\nLine \"two\"", "editable": true, "wrap_mode": "word_char", "monospace": true },
+                        "signals": [ "changed" ] }
+                    ] },
+                  { "type": "ProgressBar", "id": "progress", "props": { "fraction": 0.4, "show_text": true, "text": "Loading" } }
+                ] },
               { "type": "ScrolledWindow", "id": "scroller", "pack": { "name": "list", "title": "List" },
                 "props": { "hscrollbar": "never", "vscrollbar": "automatic", "has_frame": true,
                            "propagate_natural_width": false, "propagate_natural_height": false },

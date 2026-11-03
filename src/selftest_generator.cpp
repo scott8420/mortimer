@@ -1496,4 +1496,30 @@ class X : public ui::XUi {
         { auto h = g; h.root.children[0].children[3].children[1].pack.erase("slot");
           check("s022 m2 validate: an Overlay has ONE main child", any_error_has(h, "holds ONE child"), ""); }
     }
+
+    // ── s022 m3: more controls ─────────────────────────────────────────────
+    {
+        using core::Value;
+        core::Form f;
+        f.name = "MainWindow";
+        core::Node tv{"TextView", "body_text", {{"text", Value(std::string("a\nb"))},
+                                                {"wrap_mode", Value(std::string("word_char"))}}, {}, {{"changed"}}, {}};
+        core::Node lb{"LinkButton", "site", {{"uri", Value(std::string("https://gtk.org"))}}, {}, {{"activate_link"}}, {}};
+        core::Node se{"SearchEntry", "find", {}, {}, {{"search_changed"}}, {}};
+        core::Node box{"Box", "body", {}, {}, {}, {tv, lb, se, core::Node{"Separator", "rule", {}, {}, {}, {}},
+                                                core::Node{"ProgressBar", "bar", {{"fraction", Value(0.25)}}, {}, {}, {}}}};
+        f.root = {"Window", "main_window", {}, {}, {}, {box}};
+        check("s022 m3: valid", !core::has_errors(core::validate(f)), "");
+        const auto o = core::generate_form(f, core::derive_app("Ctl"));
+        const std::string& c = o[1].content;
+        check("s022 m3 TextView: text into its buffer, changed from the buffer",
+              has(c, "m_body_text.get_buffer()->set_text(\"a\\nb\");") &&
+              has(c, "m_body_text.set_wrap_mode(Gtk::WrapMode::WORD_CHAR);") &&
+              has(c, "m_body_text.get_buffer()->signal_changed().connect("), "");
+        check("s022 m3 LinkButton: activate_link connected BEFORE GTK opens the uri, returns false unhooked",
+              has(c, "m_site.signal_activate_link().connect(") && has(c, ", false));") &&
+              has(o[0].content, "virtual bool on_site_activate_link();"), "");
+        check("s022 m3 SearchEntry / ProgressBar",
+              has(c, "m_find.signal_search_changed().connect(") && has(c, "m_bar.set_fraction(0.25);"), "");
+    }
 }
