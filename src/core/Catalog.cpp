@@ -146,6 +146,31 @@ std::vector<WidgetSpec> build() {
                   b("propagate_natural_width", "set_propagate_natural_width({v})"),
                   b("propagate_natural_height", "set_propagate_natural_height({v})")},
                  {}, {}, "Scrollbars around one child that may be bigger than the space."});
+    // s022: the rest of GTK's everyday containers.
+    c.push_back({"Frame", "Gtk::Frame", "gtkmm/frame.h", ChildKind::Single, false,
+                 {s("label", "set_label({v})"), d("label_xalign", "set_label_align({v})")},
+                 {}, {}, "A border around one child, with an optional title in it."});
+    c.push_back({"Expander", "Gtk::Expander", "gtkmm/expander.h", ChildKind::Single, false,
+                 {b("use_markup", "set_use_markup({v})"), s("label", "set_label({v})"),
+                  b("expanded", "set_expanded({v})")},
+                 {{"expanded_changed", "property_expanded().signal_changed()", "void", "", "", false,
+                   "Opened or closed (ask get_expanded())."}},
+                 {}, "A title that opens and closes to show one child."});
+    c.push_back({"Notebook", "Gtk::Notebook", "gtkmm/notebook.h", ChildKind::Notebook, false,
+                 {e("tab_pos", "set_tab_pos({v})",
+                    {{"top", "Gtk::PositionType::TOP"}, {"bottom", "Gtk::PositionType::BOTTOM"},
+                     {"left", "Gtk::PositionType::LEFT"}, {"right", "Gtk::PositionType::RIGHT"}}),
+                  b("scrollable", "set_scrollable({v})"),
+                  b("show_border", "set_show_border({v})"),
+                  b("show_tabs", "set_show_tabs({v})")},
+                 {{"switch_page", "signal_switch_page()", "void", "Gtk::Widget* page, guint page_number", "",
+                   false, "Another tab was picked."}},
+                 {}, "Pages with tabs; each page's tab says its title."});
+    c.push_back({"Overlay", "Gtk::Overlay", "gtkmm/overlay.h", ChildKind::Overlay, false, {}, {}, {},
+                 "One main child, and others laid over it (slot \"overlay\"; halign / valign place them)."});
+    c.push_back({"CenterBox", "Gtk::CenterBox", "gtkmm/centerbox.h", ChildKind::CenterBox, false,
+                 {e("orientation", "set_orientation({v})", orient())},
+                 {}, {}, "Three children: start, center (kept centred), end."});
     c.push_back({"HeaderBar", "Gtk::HeaderBar", "gtkmm/headerbar.h", ChildKind::HeaderBar, false,
                  {b("show_title_buttons", "set_show_title_buttons({v})")}, {}, {},
                  "The title bar: put it in a window's \"titlebar\" slot."});
@@ -361,6 +386,9 @@ const char* child_kind_name(ChildKind k) {
         case ChildKind::HeaderBar: return "start / end / title";
         case ChildKind::ListBox:   return "rows in order";
         case ChildKind::Row:       return "one row template";
+        case ChildKind::Notebook:  return "tabbed pages";
+        case ChildKind::Overlay:   return "one child + overlays";
+        case ChildKind::CenterBox: return "start / center / end";
     }
     return "?";
 }
@@ -372,6 +400,9 @@ std::vector<std::string> packing_keys(ChildKind k) {
         case ChildKind::Paned:     return {"slot", "resize", "shrink"};
         case ChildKind::Stack:     return {"name", "title", "icon_name"};
         case ChildKind::HeaderBar: return {"slot"};
+        case ChildKind::Notebook:  return {"title"};
+        case ChildKind::Overlay:   return {"slot"};
+        case ChildKind::CenterBox: return {"slot"};
         default:                   return {};
     }
 }

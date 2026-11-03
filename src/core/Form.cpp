@@ -879,7 +879,7 @@ std::vector<Issue> validate(const Form& f) {
         // children: does this container take them, and how many?
         if (!n.children.empty() && w->children == ChildKind::None)
             err(where, n.type + " cannot hold children");
-        int plain = 0, titlebar = 0, start = 0, end = 0, title = 0;
+        int plain = 0, titlebar = 0, start = 0, end = 0, title = 0, center = 0;
         for (const auto& c : n.children) {
             const auto keys = packing_keys(w->children);
             for (const auto& [k, v] : c.pack) {
@@ -928,6 +928,16 @@ std::vector<Issue> validate(const Form& f) {
                     if (!c.pack.count("column") || !c.pack.count("row"))
                         err(c.id, "a Grid child needs pack column and row");
                     break;
+                case ChildKind::Overlay:   // s022
+                    if (slot.empty()) ++plain;
+                    else if (slot != "overlay") err(c.id, "an Overlay's slot is \"overlay\" or nothing (the main child)");
+                    break;
+                case ChildKind::CenterBox:
+                    if (slot == "start") ++start;
+                    else if (slot == "end") ++end;
+                    else if (slot == "center") ++center;
+                    else err(c.id, "a CenterBox child needs slot \"start\", \"center\" or \"end\"");
+                    break;
                 default:
                     break;
             }
@@ -935,7 +945,9 @@ std::vector<Issue> validate(const Form& f) {
         if (plain > 1)
             err(where, n.type + " holds ONE child -- put a Box or Grid in it to hold more");
         if (titlebar > 1) err(where, "only one titlebar");
-        if (start > 1 || end > 1) err(where, "a Paned has one start and one end child");
+        if (start > 1 || end > 1 || center > 1)
+            err(where, "a " + n.type + " has one " + (w->children == ChildKind::CenterBox ? "start, one center" : "start") +
+                           " and one end child");
         if (title > 1) err(where, "a HeaderBar has one title widget");
         if (w->root && plain == 0 && !parent)
             warn(where, "the window is empty");

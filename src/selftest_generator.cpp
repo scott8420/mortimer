@@ -1443,4 +1443,57 @@ class X : public ui::XUi {
         }
         fs::remove_all(tmp);
     }
+
+    // ── s022 m2: more containers ───────────────────────────────────────────
+    {
+        using core::Value;
+        core::Form f;
+        f.name = "MainWindow";
+        core::Node body{"Box", "body", {}, {}, {}, {}};
+        for (const char* t : {"Frame", "Expander", "Notebook", "Overlay", "CenterBox"})
+            body.children.push_back(core::Node{t, std::string(t) == "CenterBox" ? "cb" : core::snake(t), {}, {}, {}, {}});
+        f.root = {"Window", "main_window", {}, {}, {}, {body}};
+        core::Design d;
+        core::DesignJournal j(d);
+        d.load(f);
+        auto pack_of = [&](const core::Design::Id& k, const std::string& key) {
+            const auto r = d.get(k);
+            const auto it = r->pack.find(key);
+            return it == r->pack.end() ? std::string("-") : std::get<std::string>(it->second);
+        };
+        const auto c1 = core::design::add(j, d, "Label", d.find("cb"));
+        const auto c2 = core::design::add(j, d, "Label", d.find("cb"));
+        const auto c3 = core::design::add(j, d, "Label", d.find("cb"));
+        std::string why;
+        const auto c4 = core::design::add(j, d, "Label", d.find("cb"), -1, &why);
+        check("s022 m2 CenterBox: start, center, end, then full",
+              pack_of(c1, "slot") == "start" && pack_of(c2, "slot") == "center" && pack_of(c3, "slot") == "end" &&
+              c4.empty() && has(why, "start, center and end"), why);
+        const auto o1 = core::design::add(j, d, "Label", d.find("overlay"));
+        const auto o2 = core::design::add(j, d, "Button", d.find("overlay"));
+        const auto o3 = core::design::add(j, d, "Button", d.find("overlay"));
+        check("s022 m2 Overlay: the main child, then overlays",
+              pack_of(o1, "slot") == "-" && pack_of(o2, "slot") == "overlay" && pack_of(o3, "slot") == "overlay", "");
+        const auto n1 = core::design::add(j, d, "Label", d.find("notebook"));
+        const auto n2 = core::design::add(j, d, "Label", d.find("notebook"));
+        check("s022 m2 Notebook: pages titled Page 1, Page 2",
+              pack_of(n1, "title") == "Page 1" && pack_of(n2, "title") == "Page 2", "");
+        const auto f1 = core::design::add(j, d, "Label", d.find("frame"));
+        const auto f2 = core::design::add(j, d, "Label", d.find("frame"), -1, &why);
+        check("s022 m2 Frame: one child", !f1.empty() && f2.empty() && has(why, "ONE child"), why);
+        const core::Form g = d.to_form();
+        check("s022 m2: all valid", !core::has_errors(core::validate(g)), "");
+        const auto o = core::generate_form(g, core::derive_app("Boxes"));
+        const std::string& c = o[1].content;
+        check("s022 m2 codegen: set_start/center/end_widget, add_overlay, append_page(title), set_child",
+              has(c, "m_cb.set_start_widget(m_label") && has(c, "m_cb.set_center_widget(") && has(c, "m_cb.set_end_widget(") &&
+              has(c, "m_overlay.add_overlay(") && has(c, "m_overlay.set_child(") &&
+              has(c, "m_notebook.append_page(") && has(c, "\"Page 2\");") && has(c, "m_frame.set_child("), "");
+        { auto h = g; h.root.children[0].children[4].children[0].pack["slot"] = Value(std::string("middle"));
+          check("s022 m2 validate: a CenterBox slot it doesn't have", any_error_has(h, "\"start\", \"center\" or \"end\""), ""); }
+        { auto h = g; h.root.children[0].children[4].children[1].pack["slot"] = Value(std::string("start"));
+          check("s022 m2 validate: two starts", any_error_has(h, "one start, one center"), ""); }
+        { auto h = g; h.root.children[0].children[3].children[1].pack.erase("slot");
+          check("s022 m2 validate: an Overlay has ONE main child", any_error_has(h, "holds ONE child"), ""); }
+    }
 }

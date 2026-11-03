@@ -13,6 +13,10 @@
 #include <gtkmm/centerbox.h>
 #include <gtkmm/checkbutton.h>
 #include <gtkmm/dropdown.h>
+#include <gtkmm/expander.h>
+#include <gtkmm/frame.h>
+#include <gtkmm/notebook.h>
+#include <gtkmm/overlay.h>
 #include <gtkmm/gestureclick.h>
 #include <gtkmm/droptarget.h>
 #include <gtkmm/dragsource.h>
@@ -330,6 +334,13 @@ void Canvas::show(const core::Design& d, const std::string& sel, const std::vect
             auto* page = m_widgets[k];
             if (st && page) st->set_visible_child(*page);
         }
+        if (pr && pr->type == "Notebook") {   // s022: the selection's tab, like a Stack's page
+            auto* nb = dynamic_cast<Gtk::Notebook*>(m_widgets[r->parent]);
+            auto* page = m_widgets[k];
+            if (nb && page) nb->set_current_page(nb->page_num(*page));
+        }
+        if (pr && pr->type == "Expander")
+            if (auto* ex = dynamic_cast<Gtk::Expander*>(m_widgets[r->parent])) ex->set_expanded(true);
         k = r->parent;
     }
     if (const auto it = m_widgets.find(sel); it != m_widgets.end())
@@ -416,6 +427,16 @@ Gtk::Widget* Canvas::make(const core::Rec& r) {
     if (t == "StackSidebar")   return Gtk::make_managed<Gtk::StackSidebar>();
     if (t == "ScrolledWindow") return Gtk::make_managed<Gtk::ScrolledWindow>();
     if (t == "HeaderBar")      return Gtk::make_managed<Gtk::HeaderBar>();
+    if (t == "Frame")          return Gtk::make_managed<Gtk::Frame>();      // s022
+    if (t == "Expander") {
+        auto* x = Gtk::make_managed<Gtk::Expander>();
+        if (!r.props.count("label")) x->set_label(r.name);
+        if (!r.props.count("expanded")) x->set_expanded(true);   // open on the canvas, so its child is there to pick
+        return x;
+    }
+    if (t == "Notebook")       return Gtk::make_managed<Gtk::Notebook>();
+    if (t == "Overlay")        return Gtk::make_managed<Gtk::Overlay>();
+    if (t == "CenterBox")      return Gtk::make_managed<Gtk::CenterBox>();
     if (t == "ListBox")        return Gtk::make_managed<Gtk::ListBox>();
     if (t == "Entry")          return Gtk::make_managed<Gtk::Entry>();
     if (t == "Switch") {
@@ -618,6 +639,19 @@ void Canvas::place(Gtk::Widget& parent, const core::Rec& prec, Gtk::Widget& chil
         else hb->pack_start(child);
     } else if (auto* sw = dynamic_cast<Gtk::ScrolledWindow*>(&parent)) {
         sw->set_child(child);
+    } else if (auto* fr = dynamic_cast<Gtk::Frame*>(&parent)) {          // s022
+        fr->set_child(child);
+    } else if (auto* ex = dynamic_cast<Gtk::Expander*>(&parent)) {
+        ex->set_child(child);
+    } else if (auto* nb = dynamic_cast<Gtk::Notebook*>(&parent)) {
+        nb->append_page(child, str(pk, "title", crec.name));
+    } else if (auto* ov = dynamic_cast<Gtk::Overlay*>(&parent)) {
+        if (slot == "overlay") ov->add_overlay(child);
+        else ov->set_child(child);
+    } else if (auto* cb = dynamic_cast<Gtk::CenterBox*>(&parent)) {
+        if (slot == "center") cb->set_center_widget(child);
+        else if (slot == "end") cb->set_end_widget(child);
+        else cb->set_start_widget(child);
     } else if (auto* lb = dynamic_cast<Gtk::ListBox*>(&parent)) {
         lb->append(child);
     } else if (auto lg = log::get(log::Area::Canvas)) {

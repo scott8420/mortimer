@@ -53,6 +53,33 @@
                   { "type": "Image", "id": "pic", "pack": { "column": 2, "row": 3 },
                     "props": { "icon_name": "face-smile-symbolic", "pixel_size": 48, "visible": true } }
                 ] },
+              { "type": "Box", "id": "containers", "pack": { "name": "containers", "title": "Containers" },
+                "props": { "orientation": "vertical", "spacing": 6 },
+                "children": [
+                  { "type": "Frame", "id": "frame", "props": { "label": "A frame", "label_xalign": 0.5 },
+                    "children": [
+                      { "type": "Expander", "id": "more", "props": { "use_markup": true, "label": "<b>More</b>", "expanded": true },
+                        "signals": [ "expanded_changed" ],
+                        "children": [ { "type": "Label", "id": "more_text", "props": { "label": "Inside the expander" } } ] }
+                    ] },
+                  { "type": "Notebook", "id": "tabs", "props": { "tab_pos": "left", "scrollable": true, "show_border": false, "show_tabs": true },
+                    "signals": [ "switch_page" ],
+                    "children": [
+                      { "type": "Label", "id": "tab_one", "pack": { "title": "One" }, "props": { "label": "First tab" } },
+                      { "type": "Label", "id": "tab_two", "pack": { "title": "Two \"quoted\"" }, "props": { "label": "Second tab" } }
+                    ] },
+                  { "type": "Overlay", "id": "overlay", "props": { "vexpand": true },
+                    "children": [
+                      { "type": "Label", "id": "under", "props": { "label": "Under" } },
+                      { "type": "Button", "id": "badge", "pack": { "slot": "overlay" }, "props": { "label": "!", "halign": "end", "valign": "start" } }
+                    ] },
+                  { "type": "CenterBox", "id": "centre", "props": { "orientation": "horizontal" },
+                    "children": [
+                      { "type": "Label", "id": "c_start", "pack": { "slot": "start" }, "props": { "label": "start" } },
+                      { "type": "Label", "id": "c_mid", "pack": { "slot": "center" }, "props": { "label": "center" } },
+                      { "type": "Label", "id": "c_end", "pack": { "slot": "end" }, "props": { "label": "end" } }
+                    ] }
+                ] },
               { "type": "ScrolledWindow", "id": "scroller", "pack": { "name": "list", "title": "List" },
                 "props": { "hscrollbar": "never", "vscrollbar": "automatic", "has_frame": true,
                            "propagate_natural_width": false, "propagate_natural_height": false },

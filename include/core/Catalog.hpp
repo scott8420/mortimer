@@ -46,6 +46,9 @@ enum class ChildKind {
     HeaderBar,  // slot "start" | "end" | "title"
     ListBox,    // append, in order
     Row,        // s011: ONE child -- the row template, built once per visible row (not a member)
+    Notebook,   // s022: append_page(child, title) -- pages with tabs
+    Overlay,    // s022: one main child (set_child) + slot "overlay" ones (add_overlay)
+    CenterBox,  // s022: slot "start" | "center" | "end", one each
 };
 
 struct SignalSpec {

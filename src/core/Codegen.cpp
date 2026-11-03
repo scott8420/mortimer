@@ -176,7 +176,17 @@ std::vector<std::string> pack_lines(const WidgetSpec& pw, const std::string& pob
                           m + ");");
             break;
         }
+        case ChildKind::Notebook:   // s022
+            out.push_back(pobj + "append_page(" + m + ", " + cpp_string(str_pack(c, "title", c.id)) + ");");
+            break;
+        case ChildKind::Overlay:
+            out.push_back(pobj + (str_pack(c, "slot", "") == "overlay" ? "add_overlay(" : "set_child(") + m + ");");
+            break;
+        case ChildKind::CenterBox:
+            out.push_back(pobj + "set_" + str_pack(c, "slot", "start") + "_widget(" + m + ");");
+            break;
         case ChildKind::None:
+        case ChildKind::Row:
             break;
     }
     return out;

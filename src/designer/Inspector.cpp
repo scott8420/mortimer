@@ -73,6 +73,8 @@ core::PropSpec pack_spec(core::ChildKind k, const std::string& key) {
         if (k == core::ChildKind::Window)    p.values = {{"", ""}, {"titlebar", ""}};
         if (k == core::ChildKind::Paned)     p.values = {{"start", ""}, {"end", ""}};
         if (k == core::ChildKind::HeaderBar) p.values = {{"start", ""}, {"end", ""}, {"title", ""}};
+        if (k == core::ChildKind::Overlay)   p.values = {{"", ""}, {"overlay", ""}};              // s022
+        if (k == core::ChildKind::CenterBox) p.values = {{"start", ""}, {"center", ""}, {"end", ""}};
     } else p.kind = PropKind::String;
     return p;
 }

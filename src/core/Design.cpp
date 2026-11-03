@@ -247,6 +247,22 @@ std::string can_hold(const Design& d, const Design::Id& parent, const std::strin
             where["column"] = std::int64_t{0};
             where["row"]    = next_row;
             break;
+        case ChildKind::Notebook:   // s022: a tab title, made from the next free page number
+            for (int n = static_cast<int>(sib.size()) + 1;; ++n) {
+                bool taken = false;
+                for (const auto& k : sib) taken = taken || str_of(d.get(k)->pack, "title") == "Page " + std::to_string(n);
+                if (!taken) { where["title"] = "Page " + std::to_string(n); break; }
+            }
+            break;
+        case ChildKind::Overlay:
+            if (slots.count("")) where["slot"] = std::string("overlay");
+            break;
+        case ChildKind::CenterBox:
+            if (!slots.count("start")) where["slot"] = std::string("start");
+            else if (!slots.count("center")) where["slot"] = std::string("center");
+            else if (!slots.count("end")) where["slot"] = std::string("end");
+            else return P + " has its start, center and end already";
+            break;
         case ChildKind::Stack:
             for (int n = 1;; ++n) {
                 const std::string nm = "page" + std::to_string(n);
