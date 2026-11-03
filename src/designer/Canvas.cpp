@@ -15,6 +15,9 @@
 #include <gtkmm/dropdown.h>
 #include <gtkmm/gestureclick.h>
 #include <gtkmm/droptarget.h>
+#include <gtkmm/dragsource.h>
+#include <gtkmm/widgetpaintable.h>
+#include <gdkmm/contentprovider.h>
 #include <glibmm/main.h>
 #include <gtkmm/grid.h>
 #include <gtkmm/headerbar.h>
@@ -99,6 +102,45 @@ Canvas::Canvas()
     });
     m_stage.add_controller(click);
 
+    // s017: drag FROM the canvas -- press a widget where you see it, move it.
+    // The drag source sits beside the click, also in CAPTURE, and the two are
+    // GROUPED: when the click claims the press, a grouped gesture shares the
+    // claim instead of being denied by it -- so the designed widget still never
+    // sees the press, and a press that travels past the drag threshold becomes
+    // a drag. The payload is the tree's own ("move:<key>"), so the canvas and
+    // the tree take it with the drop targets they already have, and the drop is
+    // one `move` verb (one Ctrl+Z). The window itself doesn't move.
+    auto drag = Gtk::DragSource::create();
+    drag->set_actions(Gdk::DragAction::COPY | Gdk::DragAction::MOVE);
+    drag->set_propagation_phase(Gtk::PropagationPhase::CAPTURE);
+    drag->signal_prepare().connect([this](double x, double y) -> Glib::RefPtr<Gdk::ContentProvider> {
+        m_drag_key.clear();
+        // Asked once the press has travelled: the pick already rebuilt the
+        // canvas, so this looks at the widgets that are there NOW.
+        const std::string key = key_at(x, y);
+        const auto r = (m_d && !key.empty()) ? m_d->get(key) : std::nullopt;
+        if (!r || r->parent.empty()) return {};   // nothing, or the window: no drag
+        m_drag_key = key;
+        m_drag_x = x;
+        m_drag_y = y;
+        Glib::Value<Glib::ustring> v;
+        v.init(v.value_type());
+        v.set("move:" + key);
+        if (auto lg = log::get(log::Area::Canvas)) lg->debug("drag {}", key);
+        return Gdk::ContentProvider::create(v);
+    }, false);
+    // The drag icon: a picture of the widget, held where you grabbed it.
+    drag->signal_drag_begin().connect([this, s = drag.get()](const Glib::RefPtr<Gdk::Drag>&) {
+        const auto it = m_widgets.find(m_drag_key);
+        if (it == m_widgets.end()) return;
+        double wx = 0, wy = 0;
+        if (!m_stage.translate_coordinates(*it->second, m_drag_x, m_drag_y, wx, wy)) wx = wy = 12;
+        s->set_icon(Gtk::WidgetPaintable::create(*it->second), static_cast<int>(wx), static_cast<int>(wy));
+    });
+    drag->signal_drag_end().connect([this](const Glib::RefPtr<Gdk::Drag>&, bool) { m_drag_key.clear(); });
+    m_stage.add_controller(drag);
+    click->group(drag);
+
     // Drops: from the palette ("add:<Type>") or the tree ("move:<key>"). The
     // widget under the pointer takes it if it can; else it lands just after it.
     auto drop = Gtk::DropTarget::create(G_TYPE_STRING, Gdk::DragAction::COPY | Gdk::DragAction::MOVE);
@@ -120,6 +162,8 @@ Canvas::Canvas()
         }
         const std::string key = key_at(x, y);
         if (key.empty()) return none;
+        // Let go where it started (a drag that went nowhere): nothing to say.
+        if (!add && key == what) { none.why.clear(); return none; }
         auto at = core::design::landing_on(*m_d, type, add ? "" : what, key);
         if (!at.parent.empty()) set_drop_mark(at.parent == key ? key : at.parent);
         return at;
@@ -128,7 +172,9 @@ Canvas::Canvas()
         set_drop_mark("");
         const auto at = resolve(d->get_value(), x, y, nullptr);
         if (at.parent.empty()) return Gdk::DragAction{};
-        return Gdk::DragAction::COPY;
+        // A move answers MOVE (the canvas's own drag offers it); an add, COPY.
+        const char* raw = G_VALUE_HOLDS_STRING(d->get_value().gobj()) ? g_value_get_string(d->get_value().gobj()) : nullptr;
+        return (raw && std::string(raw).rfind("move:", 0) == 0) ? Gdk::DragAction::MOVE : Gdk::DragAction::COPY;
     }, false);
     drop->signal_leave().connect([this] { set_drop_mark(""); }, false);
     drop->signal_drop().connect([this, resolve](const Glib::ValueBase& v, double x, double y) {

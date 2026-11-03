@@ -6,7 +6,8 @@
 // generated build_ui() will make, because it is the same widgets with the same
 // properties -- not a drawing of them. Nothing is connected (no hook can fire),
 // a capture-phase click on the stage picks the widget under the pointer and
-// selects it (the widget itself never sees the press), and the stage refuses
+// selects it (the widget itself never sees the press) -- and a press that
+// travels drags it (s017: the canvas is a drag source too), and the stage refuses
 // focus for its whole subtree, so typing never lands in a designed Entry.
 //
 // How a property reaches a widget (apply()): most catalog properties ARE the
@@ -78,6 +79,8 @@ private:
 
     const core::Design* m_d = nullptr;
     Gtk::Widget*        m_drop_marked = nullptr;
+    std::string         m_drag_key;          // s017: the widget a canvas drag carries
+    double              m_drag_x = 0, m_drag_y = 0;   // where it was grabbed (stage coords)
     sigc::signal<void(const std::string&, const std::string&, int)> m_drop;
     sigc::signal<void(const std::string&)> m_refused;
 
