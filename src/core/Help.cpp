@@ -1,4 +1,5 @@
 #include "core/Help.hpp"
+#include "core/Shortcuts.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -22,6 +23,32 @@ int count(const std::string& hay, const std::string& needle) {
     return n;
 }
 }  // namespace
+
+const std::vector<HelpPage>& help_pages() {
+    static const std::string keys = [] {
+        std::string t = "# Keyboard shortcuts\n\nThe designer's keys and gestures -- made from the list the keys are\n"
+                        "wired from, so this page can't be wrong about them. (Ctrl+? shows them in a\n"
+                        "window of their own.)\n";
+        std::string section;
+        for (const auto& r : shortcut_registry()) {
+            if (r.section != section) {
+                section = r.section;
+                t += "\n## " + section + "\n\n| Keys | Does |\n|---|---|\n";
+            }
+            std::string k = r.display_keys(), d = r.description;
+            for (auto* s : {&k, &d})
+                for (std::size_t at = 0; (at = s->find('|', at)) != std::string::npos; at += 2) s->insert(at, "\\");
+            t += "| " + k + " | " + d + " |\n";
+        }
+        return t;
+    }();
+    static const std::vector<HelpPage> all = [] {
+        std::vector<HelpPage> v = embedded_help_pages();
+        v.push_back({"99-keyboard-shortcuts.md", keys.c_str()});
+        return v;
+    }();
+    return all;
+}
 
 std::string help_title(const HelpPage& p) {
     std::istringstream in(p.text);

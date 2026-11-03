@@ -18,7 +18,11 @@ struct HelpPage {
     const char* file;   // "02-the-designer.md"
     const char* text;
 };
-const std::vector<HelpPage>& help_pages();   // in file order
+// help/*.md in file order, then the pages made from the code itself: the
+// designer's keys, from core::shortcut_registry() -- the list the keys are
+// wired from, so the page can't drift from them.
+const std::vector<HelpPage>& help_pages();
+const std::vector<HelpPage>& embedded_help_pages();   // help/*.md alone (embed_help.cmake)
 
 std::string help_title(const HelpPage& p);   // its "# Title" line, else the file
 

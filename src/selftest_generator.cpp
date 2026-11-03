@@ -1765,8 +1765,17 @@ class X : public ui::XUi {
               sp[5].text == "e" && sp[6].text == " f * g", std::to_string(sp.size()));
         const auto hits = core::help_search("undo gate");
         check("s024 m6 help: search -- pages with every word, most hits first; a page by its number",
-              !hits.empty() && std::string(pages[hits[0].page].file).find("building") != std::string::npos &&
-              core::help_search("03").size() == 1 && core::help_search("zzqqxx").empty(), "");
+              hits.size() >= 2 && std::is_sorted(hits.begin(), hits.end(), [](const auto& x, const auto& y) { return x.hits > y.hits; }) &&
+              std::all_of(hits.begin(), hits.end(), [&](const auto& h) {
+                  std::string t = pages[h.page].text;
+                  for (auto& ch : t) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                  return t.find("undo") != std::string::npos && t.find("gate") != std::string::npos;
+              }) && core::help_search("03").size() == 1 && core::help_search("zzqqxx").empty(), "");
+        bool keys_page = false;
+        for (const auto& p : pages)
+            keys_page = keys_page || (core::help_title(p) == "Keyboard shortcuts" &&
+                                      std::string(p.text).find("| Ctrl+Shift+D |") != std::string::npos);
+        check("s024 m7 help: the keys page is made from the shortcut registry", keys_page, "");
         bool f1 = false;
         for (const auto& r : core::shortcut_registry()) f1 = f1 || (r.action == "win.help" && !r.accels.empty() && r.accels[0] == "F1");
         check("s024 m6 help: F1 is Help", f1, "");
